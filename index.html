@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kick Tazzos: Copa da zoeira!</title>
+  <link rel="stylesheet" href="styles.css?v=20260518-online-invite">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand" aria-label="Kick Tazzos">
+        <img class="brand-logo" src="assets/copa%20da%20zoeira.png" alt="">
+        <div>
+          <strong>Kick Tazzos</strong>
+          <span>Copa da zoeira!</span>
+        </div>
+      </div>
+
+      <nav class="main-tabs" aria-label="Areas do jogo">
+        <button class="tab-button is-active" type="button" data-tab="battle">Batalha</button>
+        <button class="tab-button" type="button" data-tab="online">Online</button>
+        <button class="tab-button" type="button" data-tab="competitive">Torneios</button>
+        <button class="tab-button" type="button" data-tab="packs">Pacotinhos</button>
+        <button class="tab-button" type="button" data-tab="collection">Colecao</button>
+        <button class="tab-button" type="button" data-tab="edit">Edit</button>
+        <button class="tab-button" type="button" data-tab="friends">Amigos</button>
+        <button class="tab-button" type="button" data-tab="trade">Trocas</button>
+        <button class="tab-button" type="button" data-tab="shop">Loja</button>
+        <button class="tab-button" type="button" data-tab="missions">Missoes</button>
+      </nav>
+
+      <div class="wallet">
+        <span><strong id="wallet-merreis">0</strong> Merreis</span>
+        <span><strong id="wallet-fragments">0</strong> Fragmentos</span>
+        <span><strong id="wallet-album">0/0</strong> Album</span>
+        <span class="server-pill"><strong id="server-status">Local</strong> Servidor</span>
+        <button class="profile-button" type="button" id="profile-button">
+          <strong id="profile-name-label">Visitante</strong>
+          <span>Perfil</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="content">
+      <section class="tutorial-coach" id="tutorial-coach" aria-live="polite"></section>
+      <aside class="tutorial-popover" id="tutorial-popover" aria-live="polite"></aside>
+      <div class="tutorial-result-popup" id="tutorial-result-popup" hidden></div>
+
+      <section class="view is-active" id="view-battle" data-testid="battle-view" aria-labelledby="battle-title">
+        <div class="battle-home is-active" id="battle-home">
+          <div class="section-head">
+            <div>
+              <span class="eyebrow">Combate</span>
+              <h1 id="battle-title">Batalhas</h1>
+            </div>
+            <button class="primary-button" type="button" id="new-battle-button" data-testid="new-battle">Iniciar batalha</button>
+          </div>
+
+          <div class="battle-home-grid">
+            <article class="panel team-panel">
+              <div class="panel-heading">
+                <span class="eyebrow">Time</span>
+                <span class="chip">3v3</span>
+              </div>
+              <h2>Seu trio</h2>
+              <div class="team-list" id="player-team"></div>
+              <div class="team-cost" id="team-cost"></div>
+            </article>
+
+            <article class="panel battle-prep-panel">
+              <div class="panel-heading">
+                <span class="eyebrow">Preparacao</span>
+                <span class="chip">Arena 7x5</span>
+              </div>
+              <h2>Preparar batalha</h2>
+              <div class="battle-setup-menu" id="battle-setup-menu"></div>
+            </article>
+
+            <article class="panel battle-resume-card" id="battle-resume-card"></article>
+          </div>
+        </div>
+
+        <div class="battle-scene" id="battle-scene">
+          <div class="battle-layout">
+            <aside class="panel team-panel">
+              <div class="panel-heading">
+                <span class="eyebrow">Partida</span>
+                <button class="ghost-button" type="button" id="back-to-battle-menu-button">Menu</button>
+              </div>
+              <div class="scene-match-summary" id="scene-match-summary"></div>
+              <h2>Ordem</h2>
+              <div class="turn-order" id="turn-order"></div>
+            </aside>
+
+            <section class="arena-panel">
+              <div class="battle-head">
+                <div>
+                  <span class="eyebrow">Arena 7x5</span>
+                  <h1>Batalha 3v3</h1>
+                </div>
+                <div class="battle-state">
+                  <span id="match-label">0:00</span>
+                  <span id="round-label">Rodada -</span>
+                  <strong id="active-label">Sem batalha</strong>
+                </div>
+              </div>
+              <div class="arena-wrap">
+                <div class="arena" id="arena" data-testid="arena" role="grid" aria-label="Arena 7 por 5"></div>
+              </div>
+              <div class="arena-status" id="arena-status"></div>
+              <div class="battle-score" id="battle-score"></div>
+              <div class="battle-result" id="battle-result"></div>
+            </section>
+
+            <aside class="panel command-panel">
+              <div class="panel-heading">
+                <span class="eyebrow">Turno</span>
+                <span id="timer-chip" class="chip">--</span>
+              </div>
+              <div class="active-card" id="active-card"></div>
+              <div class="tactical-panel" id="tactical-panel"></div>
+              <div class="action-grid" id="action-grid">
+                <button type="button" data-action="move">Mover</button>
+                <button type="button" data-action="dribble">Driblar</button>
+                <button type="button" data-action="shot">Chutar</button>
+                <button type="button" data-action="keeper">Goleiro</button>
+                <button type="button" data-action="pressure">Pressionar</button>
+                <button type="button" data-action="retreat">Recuar</button>
+                <button type="button" data-action="swap">Trocar</button>
+                <button type="button" data-action="pass" class="wide">Passar</button>
+              </div>
+              <h2>Registro</h2>
+              <div class="battle-log" id="battle-log"></div>
+            </aside>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-online" data-testid="online-view" aria-labelledby="online-title">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Multiplayer</span>
+            <h1 id="online-title">Lobby online</h1>
+          </div>
+          <div class="online-actions">
+            <button class="ghost-button" type="button" id="refresh-lobbies-button">Atualizar</button>
+            <button class="primary-button" type="button" id="create-lobby-button">Criar sala</button>
+          </div>
+        </div>
+
+        <div class="online-grid">
+          <article class="panel online-current-card" id="online-current-card"></article>
+          <article class="panel online-rooms-panel">
+            <h2>Salas abertas</h2>
+            <form class="online-code-form" id="online-code-form">
+              <label for="online-code-input">Codigo da sala</label>
+              <div>
+                <input id="online-code-input" name="lobbyCode" type="text" inputmode="text" autocomplete="off" maxlength="6" placeholder="ABC123">
+                <button type="submit">Entrar</button>
+              </div>
+              <p id="online-code-message" aria-live="polite"></p>
+            </form>
+            <div class="online-lobby-list" id="online-lobby-list"></div>
+          </article>
+          <article class="panel online-team-card">
+            <h2>Seu trio</h2>
+            <div class="small-list" id="online-team-preview"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="view" id="view-competitive" data-testid="competitive-view" aria-labelledby="competitive-title">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Competitivo</span>
+            <h1 id="competitive-title">Liga e torneios</h1>
+          </div>
+          <button class="primary-button" type="button" id="ranked-button">Disputar ranqueada</button>
+        </div>
+        <div class="competitive-grid">
+          <article class="panel rank-card" id="rank-card"></article>
+          <article class="panel">
+            <h2>Ranqueada</h2>
+            <div class="small-list" id="ranked-summary"></div>
+          </article>
+          <article class="panel tournaments-panel">
+            <h2>Torneios ativos</h2>
+            <div class="tournament-list" id="tournament-list"></div>
+          </article>
+          <article class="panel">
+            <h2>Ranking local</h2>
+            <div class="small-list" id="leaderboard-list"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="view" id="view-packs" data-testid="packs-view" aria-labelledby="packs-title">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Pacotinhos</span>
+            <h1 id="packs-title">Abrir salgadinhos</h1>
+          </div>
+          <button class="ghost-button" type="button" id="reveal-all-button">Virar todos</button>
+        </div>
+        <div class="pack-pity" id="pack-pity"></div>
+        <div class="pack-grid" id="pack-grid"></div>
+        <div class="pack-results" id="pack-results"></div>
+      </section>
+
+      <section class="view" id="view-collection" data-testid="collection-view" aria-labelledby="collection-title">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Album digital</span>
+            <h1 id="collection-title">Colecao</h1>
+          </div>
+          <div class="slot-picker" id="slot-picker" aria-label="Slot do time">
+            <button type="button" class="is-active" data-slot="0">Slot 1</button>
+            <button type="button" data-slot="1">Slot 2</button>
+            <button type="button" data-slot="2">Slot 3</button>
+          </div>
+        </div>
+        <div class="filters">
+          <label>
+            Funcao
+            <select id="type-filter">
+              <option value="all">Todos</option>
+            </select>
+          </label>
+          <label>
+            Raridade
+            <select id="rarity-filter">
+              <option value="all">Todas</option>
+            </select>
+          </label>
+          <label>
+            Estado
+            <select id="owned-filter">
+              <option value="all">Todos</option>
+              <option value="owned">Obtidos</option>
+              <option value="missing">Faltantes</option>
+              <option value="duplicates">Repetidos</option>
+            </select>
+          </label>
+        </div>
+        <div class="collection-grid" id="collection-grid"></div>
+      </section>
+
+      <section class="view" id="view-edit" data-testid="edit-view" aria-labelledby="edit-title">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Catalogo</span>
+            <h1 id="edit-title">Edit</h1>
+          </div>
+          <button class="primary-button" type="button" id="edit-new-button">Novo tazzo</button>
+        </div>
+        <div class="edit-layout">
+          <article class="panel edit-list-panel">
+            <h2>Selecionar</h2>
+            <label class="edit-main-select">
+              Tazzo
+              <select id="edit-tazzo-select"></select>
+            </label>
+            <div class="small-list edit-roster" id="edit-roster"></div>
+          </article>
+
+          <article class="panel edit-form-panel">
+            <h2>Dados</h2>
+            <form class="edit-form" id="edit-tazzo-form"></form>
+          </article>
+
+          <article class="panel edit-preview-panel" id="edit-preview"></article>
+        </div>
+      </section>
+
+      <section class="view" id="view-friends" data-testid="friends-view" aria-labelledby="friends-title">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Social</span>
+            <h1 id="friends-title">Amigos</h1>
+          </div>
+          <span class="chip" id="friend-message">Presentes renovam diariamente</span>
+        </div>
+        <div class="friends-grid" id="friends-grid"></div>
+      </section>
+
+      <section class="view" id="view-trade" data-testid="trade-view" aria-labelledby="trade-title">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Amigos e trocas</span>
+            <h1 id="trade-title">Mesa de trocas</h1>
+          </div>
+          <button class="primary-button" type="button" id="trade-button">Trocar repetido</button>
+        </div>
+        <div class="trade-board">
+          <div class="panel trade-direct">
+            <h2>Troca direta</h2>
+            <div class="trade-form">
+              <label>
+                Seu repetido
+                <select id="trade-offer"></select>
+              </label>
+              <label>
+                Desejo
+                <select id="trade-wish"></select>
+              </label>
+            </div>
+            <p class="evolution-note" id="trade-message">Taxa de 60 Merreis por troca.</p>
+          </div>
+          <div class="panel">
+            <h2>Repetidos</h2>
+            <div id="duplicate-list" class="small-list"></div>
+          </div>
+          <div class="panel">
+            <h2>Lista de desejo</h2>
+            <div id="wish-list" class="small-list"></div>
+          </div>
+          <div class="panel">
+            <h2>Historico</h2>
+            <div class="battle-log" id="trade-log"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-shop" data-testid="shop-view" aria-labelledby="shop-title">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Loja</span>
+            <h1 id="shop-title">Cosmeticos e extras</h1>
+          </div>
+          <span class="chip" id="shop-message">Itens sem vantagem direta</span>
+        </div>
+        <div class="shop-grid" id="shop-grid"></div>
+      </section>
+
+      <section class="view" id="view-missions" data-testid="missions-view" aria-labelledby="missions-title">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">Progresso diario</span>
+            <h1 id="missions-title">Missoes</h1>
+          </div>
+          <button class="ghost-button" type="button" id="reset-save-button">Reiniciar save</button>
+        </div>
+        <div class="tutorial-panel" id="tutorial-panel"></div>
+        <div class="mission-grid" id="mission-grid"></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="tazzo-viewer" id="tazzo-viewer" aria-hidden="true"></div>
+
+  <div class="profile-modal" id="profile-modal" hidden>
+    <section class="profile-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-title">
+      <button class="viewer-close" type="button" id="profile-close-button" aria-label="Fechar perfil">Fechar</button>
+      <span class="eyebrow">Perfil online</span>
+      <h2 id="profile-title">Jogador</h2>
+      <div class="profile-current">
+        <strong id="profile-current-name">Visitante</strong>
+        <span id="profile-current-meta">Save local com sincronizacao anonima.</span>
+      </div>
+      <div class="profile-mode-tabs" role="tablist" aria-label="Modo de perfil">
+        <button type="button" class="is-active" data-profile-mode="login">Entrar</button>
+        <button type="button" data-profile-mode="register">Criar jogador</button>
+      </div>
+      <form class="profile-form" id="profile-form">
+        <label>
+          Nome
+          <input id="profile-name-input" type="text" maxlength="24" autocomplete="username" required>
+        </label>
+        <label>
+          PIN
+          <input id="profile-pin-input" type="password" minlength="4" maxlength="32" autocomplete="current-password" required>
+        </label>
+        <button class="primary-button" type="submit" id="profile-submit-button">Entrar</button>
+      </form>
+      <p class="profile-message" id="profile-message"></p>
+      <button class="ghost-button profile-logout" type="button" id="profile-logout-button">Sair do perfil</button>
+    </section>
+  </div>
+
+  <aside class="music-player" id="music-player" aria-label="Player de musicas">
+    <button class="music-disc-button" type="button" id="music-toggle-button" aria-label="Tocar musica">
+      <img src="assets/music-diskman.png" alt="">
+    </button>
+    <div class="music-player-main">
+      <span class="eyebrow">Diskman do recreio</span>
+      <strong id="music-track-name">Sem musica</strong>
+      <div class="music-controls">
+        <button type="button" id="music-play-button" aria-label="Tocar ou pausar">Play</button>
+        <button type="button" id="music-next-button" aria-label="Proxima musica">Proxima</button>
+      </div>
+      <label class="music-volume">
+        <span>Volume</span>
+        <input id="music-volume-control" type="range" min="0" max="1" step="0.01" value="0.55">
+      </label>
+    </div>
+    <audio id="music-audio" preload="metadata"></audio>
+  </aside>
+
+  <script src="data.js?v=20260518-holos-2"></script>
+  <script src="app.js?v=20260518-online-invite"></script>
+  <script src="battle-render.js?v=20260518-online-invite"></script>
+  <script src="battle-engine.js?v=20260518-online-invite"></script>
+</body>
+</html>

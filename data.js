@@ -1,0 +1,550 @@
+(() => {
+const ASSETS = Array.from({ length: 97 }, (_, index) => `tazzos/${index + 1}.png`);
+
+const BACKS = [
+  "tazzos back/back1.png"
+];
+
+const DEFAULT_BACK_IMAGE = BACKS[0];
+
+const TYPES = {
+  Atacante: { color: "#e45138" },
+  Meia: { color: "#0f7d79" },
+  Defensor: { color: "#5f6f7b" },
+  Goleiro: { color: "#f0b429" }
+};
+
+const RARITIES = {
+  Comum: { chance: 40, cost: 1, fragments: 3 },
+  Incomum: { chance: 30, cost: 2, fragments: 5 },
+  Raro: { chance: 20, cost: 3, fragments: 8 },
+  Epico: { chance: 9, cost: 4, fragments: 12 },
+  Lendario: { chance: 0.9, cost: 5, fragments: 18 },
+  Mistico: { chance: 0.099, cost: 6, fragments: 28 },
+  "Mistico Secreto": { chance: 0.001, cost: 7, fragments: 45, secret: true }
+};
+
+const MONSTERS = [
+  mon("artilheiro-brasil", 1, "Menino Ney", ["Atacante"], "Mistico", 78, 89, 95, 94, "Atacante"),
+  keeperCard("goleiro-brasil-alison", 2, ASSETS[1], "Allishow", "Epico", "extraTurn"),
+  mon("vinicius-jr-tazzo", 3, "Vini Malvadeza", ["Atacante"], "Mistico", 82, 91, 97, 96, "Atacante"),
+  mon("rodrygo-tazzo", 4, "Raiogo", ["Atacante"], "Lendario", 80, 88, 92, 90, "Atacante"),
+  mon("raphinha-tazzo", 5, "Rafinhaço", ["Atacante"], "Epico", 79, 86, 90, 89, "Atacante"),
+  mon("gabriel-martinelli-tazzo", 6, "Gabi Martelinho", ["Atacante"], "Epico", 81, 84, 88, 93, "Atacante"),
+  mon("bruno-guimaraes-tazzo", 7, "Brunão Guias", ["Meia"], "Raro", 86, 82, 85, 79, "Meia"),
+  mon("casemiro-tazzo", 8, "Caseirão", ["Meia"], "Comum", 91, 81, 78, 74, "Meia"),
+  mon("lucas-paqueta-tazzo", 9, "Lukinhas Paquerá", ["Meia"], "Epico", 84, 84, 87, 82, "Meia"),
+  mon("marquinhos-tazzo", 10, "Marquinhóis", ["Defensor"], "Raro", 88, 76, 79, 80, "Zagueiro"),
+  mon("eder-militao-tazzo", 11, "Éder Milhantão", ["Defensor"], "Raro", 87, 75, 77, 83, "Zagueiro"),
+  mon("danilo-tazzo", 12, "Dani Lô", ["Defensor"], "Comum", 85, 74, 76, 78, "Zagueiro"),
+  mon("richarlison-tazzo", 13, "Richa Liso", ["Atacante"], "Epico", 84, 85, 82, 81, "Atacante"),
+  mon("endrick-tazzo", 14, "Endrikito", ["Atacante"], "Lendario", 83, 87, 84, 86, "Atacante"),
+  mon("savinho-tazzo", 15, "Sabinho", ["Atacante"], "Epico", 79, 82, 89, 88, "Atacante"),
+  mon("joao-gomes-tazzo", 16, "Jão Gomos", ["Meia"], "Comum", 88, 78, 77, 80, "Meia"),
+  mon("douglas-luiz-tazzo", 17, "Doug Lulz", ["Meia"], "Incomum", 86, 80, 79, 78, "Meia"),
+  mon("andreas-pereira-tazzo", 18, "André Pira", ["Meia"], "Incomum", 82, 81, 80, 77, "Meia"),
+  mon("bremer-tazzo", 19, "Bremerão", ["Defensor"], "Incomum", 89, 76, 72, 79, "Zagueiro"),
+  mon("gabriel-magalhaes-tazzo", 20, "Gabi Magalha", ["Defensor"], "Epico", 90, 77, 71, 76, "Zagueiro"),
+  mon("alex-sandro-tazzo", 21, "Alek Sandrão", ["Defensor"], "Comum", 84, 75, 74, 77, "Zagueiro"),
+  mon("wendell-tazzo", 22, "Wendeloco", ["Defensor"], "Incomum", 82, 74, 76, 81, "Zagueiro"),
+  mon("julian-alvarez-tazzo", 23, "Juligol", ["Atacante"], "Epico", 82, 88, 84, 86, "Atacante"),
+  mon("lautaro-martinez-tazzo", 24, "Toro Lau", ["Atacante"], "Raro", 86, 89, 82, 84, "Atacante"),
+  mon("angel-di-maria-tazzo", 25, "Di Mágia", ["Atacante"], "Lendario", 79, 87, 90, 88, "Atacante"),
+  mon("rodrigo-de-paul-tazzo", 26, "Rodri de Pau", ["Meia"], "Comum", 89, 79, 83, 82, "Meia"),
+  mon("enzo-fernandez-tazzo", 27, "Enzinho", ["Meia"], "Incomum", 87, 84, 82, 81, "Meia"),
+  mon("alexis-mac-allister-tazzo", 28, "Alexis Mac Alista", ["Meia"], "Comum", 85, 83, 84, 80, "Meia"),
+  mon("cristian-romero-tazzo", 29, "Cuti Romerão", ["Defensor"], "Raro", 92, 76, 72, 78, "Zagueiro"),
+  mon("lisandro-martinez-tazzo", 30, "Licha Martelo", ["Defensor"], "Comum", 90, 74, 73, 77, "Zagueiro"),
+  mon("nahuel-molina-tazzo", 31, "Molininha", ["Defensor"], "Incomum", 83, 80, 78, 85, "Zagueiro"),
+  mon("nico-tagliaficoo-tazzo", 32, "Nico Tagliaficoo", ["Defensor"], "Raro", 88, 75, 76, 81, "Zagueiro"),
+  mon("leandrao-paredao-tazzo", 33, "Leandrão Paredão", ["Meia"], "Epico", 86, 80, 82, 79, "Meia"),
+  mon("nico-golez-tazzo", 34, "Nico Golez", ["Atacante"], "Epico", 80, 84, 83, 85, "Atacante"),
+  mon("gonza-montilla-tazzo", 35, "Gonza Montilla", ["Defensor"], "Comum", 87, 77, 75, 81, "Zagueiro"),
+  mon("marcos-acunhatico-tazzo", 36, "Marcos Acunhático", ["Defensor"], "Comum", 88, 78, 79, 80, "Zagueiro"),
+  mon("guido-rodrigao-tazzo", 37, "Guido Rodrigão", ["Meia"], "Comum", 90, 75, 73, 74, "Meia"),
+  mon("exequiel-palacioso-tazzo", 38, "Exequiel Palacioso", ["Meia"], "Raro", 84, 79, 80, 82, "Meia"),
+  mon("german-pesadella-tazzo", 39, "Germán Pesadella", ["Defensor"], "Incomum", 91, 74, 71, 76, "Zagueiro"),
+  mon("facu-medinada-tazzo", 40, "Facu Medinada", ["Defensor"], "Incomum", 89, 76, 74, 79, "Zagueiro"),
+  mon("thiaguinho-almadaco-tazzo", 41, "Thiaguinho Almadaço", ["Meia"], "Epico", 78, 82, 86, 84, "Meia"),
+  mon("paulo-dibala-tazzo", 42, "Paulo Dibala", ["Atacante"], "Epico", 79, 86, 88, 83, "Atacante", null, 21),
+  goalie("emiliana-goleiro-tazzo", 43, "Emilianão", "Comum", "investidaTotal"),
+  mon("judao-bellingol-tazzo", 44, "Judão Bellingol", ["Meia"], "Lendario", 84, 88, 91, 87, "Meia"),
+  mon("bukayo-sacada-tazzo", 45, "Bukayo Sacada", ["Atacante"], "Lendario", 83, 86, 92, 91, "Atacante"),
+  mon("harri-kane-tazzo", 46, "Harri Kane", ["Atacante"], "Lendario", 88, 93, 85, 77, "Atacante"),
+  mon("phil-fodao-tazzo", 47, "Phil Fodão", ["Atacante"], "Epico", 80, 88, 93, 86, "Atacante"),
+  mon("declan-arroz-tazzo", 48, "Declan Arroz", ["Meia"], "Raro", 90, 82, 82, 79, "Meia"),
+  mon("cole-palmeirao-tazzo", 49, "Cole Palmeirão", ["Meia"], "Epico", 79, 86, 90, 84, "Meia"),
+  mon("trento-alexarnaldo-tazzo", 50, "Trento Alexarnaldo", ["Meia"], "Raro", 80, 87, 86, 82, "Meia"),
+  mon("kobbie-mainu-tazzo", 51, "Kobbie Mainu", ["Meia"], "Comum", 82, 79, 87, 81, "Meia"),
+  mon("antony-gordao-tazzo", 52, "Antony Gordão", ["Atacante"], "Epico", 80, 83, 85, 91, "Atacante"),
+  mon("john-stonao-tazzo", 53, "John Stonão", ["Defensor"], "Comum", 87, 76, 78, 75, "Zagueiro"),
+  mon("ollie-watkins-tazzo", 54, "Ollie Watkins", ["Atacante"], "Epico", 84, 87, 84, 90, "Atacante"),
+  mon("jude-bellingham-tazzo", 55, "Jude Bellingham", ["Meia"], "Epico", 86, 88, 91, 87, "Meia"),
+  mon("marcus-rashford-tazzo", 56, "Marcus Rashford", ["Atacante"], "Epico", 81, 87, 90, 93, "Atacante"),
+  mon("jack-grealish-tazzo", 57, "Jack Grealish", ["Meia"], "Raro", 82, 84, 90, 83, "Meia"),
+  mon("eberechi-eze-tazzo", 58, "Eberechi Eze", ["Meia"], "Comum", 80, 85, 89, 87, "Meia"),
+  mon("ivan-toney-tazzo", 59, "Ivan Tonelada", ["Atacante"], "Comum", 85, 89, 81, 78, "Atacante"),
+  mon("kyle-walker-tazzo", 60, "Kyle Walker", ["Defensor"], "Raro", 84, 77, 79, 95, "Zagueiro"),
+  mon("reece-james-tazzo", 61, "Reece James", ["Defensor"], "Incomum", 84, 83, 82, 84, "Zagueiro"),
+  mon("levi-colwill-tazzo", 62, "Levi Colwill", ["Defensor"], "Incomum", 85, 75, 74, 79, "Zagueiro"),
+  mon("conor-gallagher-tazzo", 63, "Conor Gallagher", ["Meia"], "Incomum", 86, 80, 78, 84, "Meia"),
+  mon("noni-madukeke-tazzo", 64, "Noni Madukeke", ["Atacante"], "Raro", 79, 84, 88, 87, "Atacante"),
+  goalie("pickford-tazzo", 65, "Pickford", "Lendario", "teamHeal"),
+  mon("ruben-diaszao-tazzo", 66, "Rúben Dibras", ["Defensor"], "Raro", 85, 75, 71, 77, "Zagueiro"),
+  mon("cristianildo-tazzo", 74, "Cristianildo", ["Atacante"], "Lendario", 89, 96, 88, 86, "Atacante"),
+  mon("brunao-fernandes-tazzo", 68, "Brunão das Tabelas", ["Meia"], "Epico", 82, 91, 83, 75, "Meia"),
+  mon("bernardao-silva-tazzo", 69, "Bernas Silvaço", ["Meia"], "Raro", 78, 80, 87, 79, "Meia"),
+  mon("leaozao-tazzo", 70, "Leãozão", ["Atacante"], "Incomum", 79, 81, 81, 88, "Atacante"),
+  mon("joao-felix-tazzo", 71, "João FeliX", ["Atacante"], "Comum", 88, 73, 80, 86, "Atacante"),
+  mon("diogo-jota-tazzo", 72, "Diogo Jotá", ["Atacante"], "Comum", 77, 81, 81, 79, "Atacante"),
+  mon("joao-cancel0-tazzo", 73, "João CanceL0", ["Defensor"], "Comum", 79, 78, 82, 83, "Zagueiro"),
+  mon("nunao-mendes-tazzo", 67, "Nunão Mendes", ["Defensor"], "Comum", 77, 84, 83, 75, "Zagueiro"),
+  mon("vitinhaco-tazzo", 75, "Vitinhaço", ["Meia"], "Comum", 77, 77, 84, 79, "Meia"),
+  mon("gonca-ramos-tazzo", 76, "Gonça Ramos", ["Atacante"], "Raro", 80, 82, 77, 78, "Atacante"),
+  mon("diogo-dalotado-tazzo", 77, "Diogo Dalotado", ["Defensor"], "Incomum", 79, 75, 74, 78, "Zagueiro"),
+  mon("joao-nevez-tazzo", 78, "João Nevez", ["Meia"], "Incomum", 76, 73, 77, 75, "Meia"),
+  mon("ruben-nevasca-tazzo", 79, "Rúben Nevasca", ["Meia"], "Incomum", 78, 77, 74, 71, "Meia"),
+  mon("chico-conceicao-tazzo", 80, "Chico Conceição", ["Atacante"], "Incomum", 71, 74, 80, 79, "Atacante"),
+  mon("pedrao-neto-tazzo", 81, "Pedrão Neto", ["Atacante"], "Incomum", 73, 76, 79, 80, "Atacante"),
+  mon("joao-palhinhaco-tazzo", 82, "João Palhinhaço", ["Meia"], "Comum", 81, 72, 69, 70, "Meia"),
+  mon("gonca-inacio-tazzo", 83, "Gonça Inácio", ["Defensor"], "Comum", 79, 71, 70, 72, "Zagueiro"),
+  mon("tonho-silva-tazzo", 84, "Tonho Silva", ["Defensor"], "Comum", 77, 70, 69, 71, "Zagueiro"),
+  mon("nelson-sem-medo-tazzo", 85, "Nelson Sem Medo", ["Defensor"], "Incomum", 76, 73, 75, 79, "Zagueiro"),
+  mon("matheusao-nunez-tazzo", 86, "Matheusão Nunez", ["Meia"], "Incomum", 78, 78, 81, 82, "Meia"),
+  mon("robozao-cr-7-tazzo", 87, "Robozão CR 7", ["Atacante"], "Mistico Secreto", 90, 97, 89, 87, "Atacante"),
+  goalie("diogo-costaco-tazzo", 88, "Diogo Costaço", "Epico", "substitution"),
+  mon("malo-gustozo-tazzo", 89, "Malo Gustozo", ["Defensor"], "Comum", 78, 72, 80, 84, "Zagueiro"),
+  mon("kylian-mbrappe-tazzo", 90, "Kylian Mbrappé", ["Atacante"], "Mistico", 88, 88, 87, 97, "Atacante"),
+  mon("griezmanninho-tazzo", 91, "GriezManninho", ["Atacante"], "Epico", 81, 82, 83, 77, "Atacante"),
+  mon("dembeletico-tazzo", 92, "Dembelético", ["Atacante"], "Lendario", 80, 80, 86, 90, "Atacante"),
+  mon("edu-camavingaco-tazzo", 93, "Edu Camavingaço", ["Meia"], "Raro", 82, 78, 84, 83, "Meia"),
+  mon("tchouamago-tazzo", 94, "TchouaMago", ["Meia"], "Raro", 84, 79, 80, 78, "Meia"),
+  mon("theo-hernandezao-tazzo", 95, "Theo Hernandezão", ["Defensor"], "Epico", 82, 81, 80, 85, "Zagueiro"),
+  mon("jules-konde-tazzo", 96, "Jules Kondê", ["Defensor"], "Raro", 83, 77, 78, 82, "Zagueiro"),
+  mon("salibao-tazzo", 97, "Salibão", ["Defensor"], "Incomum", 84, 74, 77, 80, "Zagueiro")
+];
+
+const MONSTER_BY_ID = Object.fromEntries(MONSTERS.map((monster) => [monster.id, monster]));
+MONSTER_BY_ID["artilheiro-brasil"].holoImage = "tazzos/1(2).png";
+MONSTER_BY_ID["vinicius-jr-tazzo"].holoImage = "tazzos/3(2).png";
+MONSTER_BY_ID["rodrygo-tazzo"].holoImage = "tazzos/4(2).png";
+MONSTER_BY_ID["endrick-tazzo"].holoImage = "tazzos/14(2).png";
+MONSTER_BY_ID["angel-di-maria-tazzo"].holoImage = "tazzos/25(2).png";
+MONSTER_BY_ID["judao-bellingol-tazzo"].holoImage = "tazzos/44(2).png";
+MONSTER_BY_ID["bukayo-sacada-tazzo"].holoImage = "tazzos/45(2).png";
+MONSTER_BY_ID["harri-kane-tazzo"].holoImage = "tazzos/46(2).png";
+MONSTER_BY_ID["pickford-tazzo"].holoImage = "tazzos/65(2).png";
+MONSTER_BY_ID["robozao-cr-7-tazzo"].holoImage = "tazzos/87(2).png";
+MONSTER_BY_ID["kylian-mbrappe-tazzo"].holoImage = "tazzos/90(2).png";
+MONSTER_BY_ID["dembeletico-tazzo"].holoImage = "tazzos/92(2).png";
+
+const RANKS = [
+  { name: "Tampinha", min: 0 },
+  { name: "Recreio", min: 120 },
+  { name: "Crocante", min: 280 },
+  { name: "Holografico", min: 520 },
+  { name: "Lendario", min: 840 },
+  { name: "Mestre dos Tazzos", min: 1250 }
+];
+
+const TOURNAMENTS = [
+  { id: "daily", name: "Diario", entry: 180, reward: 420, difficulty: 0.45, prize: "Merreis" },
+  { id: "weekly", name: "Semanal", entry: 420, reward: 980, difficulty: 0.58, prize: "Merreis e fragmentos" },
+  { id: "event", name: "Evento Monstronho", entry: 300, reward: 0, difficulty: 0.52, prize: "Pacotinho Recheado" }
+];
+
+const SHOP_ITEMS = [
+  { id: "frame-holo", name: "Moldura Holografica", cost: 380, note: "Realce visual para tazzos do seu time." },
+  { id: "album-crocante", name: "Capa Crocante", cost: 460, note: "Capa cosmetica para o album digital." },
+  { id: "tear-effect", name: "Efeito Rasgo Neon", cost: 520, note: "Efeito cosmetico para abertura de pacotinhos." },
+  { id: "avatar-master", name: "Avatar Mestre", cost: 620, note: "Avatar de perfil para colecionador competitivo." }
+];
+
+const PACKS = [
+  { id: "simples", name: "Simples", cards: 1, cost: 120, note: "1 tazzo", image: "assets/pack-simples.png", openImage: "assets/pack-simples-open.png" },
+  { id: "crocante", name: "Crocante", cards: 3, cost: 300, note: "3 tazzos", image: "assets/pack-crocante.png", openImage: "assets/pack-crocante-open.png" },
+  { id: "recheado", name: "Recheado", cards: 5, cost: 650, note: "5 tazzos, raro garantido", image: "assets/pack-recheado.png", openImage: "assets/pack-recheado-open.png" },
+  { id: "familia", name: "Familia", cards: 8, cost: 1, note: "8 tazzos, mais fragmentos", image: "assets/pack-familia.png", openImage: "assets/pack-familia-open.png" }
+];
+
+const MISSIONS = [
+  { id: "login", title: "Fazer login", target: 1, reward: 100 },
+  { id: "pack", title: "Abrir 1 pacotinho", target: 1, reward: 100 },
+  { id: "battle", title: "Jogar 1 batalha", target: 1, reward: 150 },
+  { id: "win", title: "Vencer 1 batalha", target: 1, reward: 250 },
+  { id: "push", title: "Empurrar contra borda", target: 1, reward: 180 },
+  { id: "keeper", title: "Usar habilidade de goleiro", target: 1, reward: 160 },
+  { id: "collision", title: "Causar 1 colisao", target: 1, reward: 200 },
+  { id: "trade", title: "Fazer 1 troca", target: 1, reward: 200 },
+  { id: "evolve", title: "Melhorar 1 tazzo", target: 1, reward: 220 },
+  { id: "ranked", title: "Disputar ranqueada", target: 1, reward: 180 },
+  { id: "tournament", title: "Entrar em torneio", target: 1, reward: 240 },
+  { id: "gift", title: "Enviar presente", target: 1, reward: 120 },
+  { id: "album-brasil", title: "Completar selecao do Brasil", target: 22, reward: 1000, scope: "album", range: [1, 22] },
+  { id: "album-argentina", title: "Completar selecao da Argentina", target: 21, reward: 1000, scope: "album", range: [23, 43] },
+  { id: "album-inglaterra", title: "Completar selecao da Inglaterra", target: 22, reward: 1100, scope: "album", range: [44, 65] },
+  { id: "album-portugal", title: "Completar selecao de Portugal", target: 23, reward: 1300, scope: "album", range: [66, 88] },
+  { id: "album-franca", title: "Completar selecao da Franca", target: 9, reward: 900, scope: "album", range: [89, 97] }
+];
+
+const FRIENDS = [
+  {
+    id: "nina",
+    name: "Nina Holo",
+    rank: "Lendario",
+    avatar: 18,
+    team: ["vinicius-jr-tazzo", "lucas-paqueta-tazzo", "marquinhos-tazzo"],
+    goalkeeper: "goleiro-brasil-alison",
+    collection: ["goleiro-brasil-alison", "vinicius-jr-tazzo", "lucas-paqueta-tazzo", "marquinhos-tazzo", "angel-di-maria-tazzo", "artilheiro-brasil"],
+    wants: ["endrick-tazzo", "gabriel-magalhaes-tazzo", "lautaro-martinez-tazzo"]
+  },
+  {
+    id: "bia",
+    name: "Bia Caps",
+    rank: "Holografico",
+    avatar: 47,
+    team: ["savinho-tazzo", "bruno-guimaraes-tazzo", "eder-militao-tazzo"],
+    goalkeeper: "goleiro-brasil-alison",
+    collection: ["goleiro-brasil-alison", "savinho-tazzo", "bruno-guimaraes-tazzo", "eder-militao-tazzo", "raphinha-tazzo"],
+    wants: ["rodrygo-tazzo", "joao-gomes-tazzo", "bremer-tazzo"]
+  },
+  {
+    id: "lipe",
+    name: "Lipe Snack",
+    rank: "Crocante",
+    avatar: 23,
+    team: ["julian-alvarez-tazzo", "enzo-fernandez-tazzo", "cristian-romero-tazzo"],
+    goalkeeper: "goleiro-brasil-alison",
+    collection: ["goleiro-brasil-alison", "julian-alvarez-tazzo", "enzo-fernandez-tazzo", "cristian-romero-tazzo", "lautaro-martinez-tazzo", "rodrigo-de-paul-tazzo"],
+    wants: ["artilheiro-brasil", "alexis-mac-allister-tazzo", "lisandro-martinez-tazzo"]
+  },
+  {
+    id: "madu",
+    name: "Madu Tazo",
+    rank: "Recreio",
+    avatar: 8,
+    team: ["lautaro-martinez-tazzo", "alexis-mac-allister-tazzo", "lisandro-martinez-tazzo"],
+    goalkeeper: "goleiro-brasil-alison",
+    collection: ["goleiro-brasil-alison", "lautaro-martinez-tazzo", "alexis-mac-allister-tazzo", "lisandro-martinez-tazzo", "danilo-tazzo", "wendell-tazzo"],
+    wants: ["marquinhos-tazzo", "raphinha-tazzo", "gabriel-martinelli-tazzo"]
+  }
+];
+
+const BATTLE_MODES = {
+  casual: { name: "Casual", meta: "8 min / 30s", matchTime: 480, actionTime: 30 },
+  training: { name: "Treino", meta: "8 min / 30s", matchTime: 480, actionTime: 30 },
+  friend: { name: "Amigo", meta: "6 min / 20s", matchTime: 360, actionTime: 20 },
+  ranked: { name: "Ranqueada", meta: "6 min / 20s", matchTime: 360, actionTime: 20 },
+  tournament: { name: "Torneio", meta: "5 min / 15s", matchTime: 300, actionTime: 15 }
+};
+
+const BATTLE_FORMATIONS = {
+  center: {
+    name: "Centro",
+    meta: "Trio alinhado",
+    positions: [{ x: 0, y: 1 }, { x: 0, y: 2 }, { x: 0, y: 3 }]
+  },
+  wall: {
+    name: "Muralha",
+    meta: "Dois na frente",
+    positions: [{ x: 1, y: 1 }, { x: 0, y: 2 }, { x: 1, y: 3 }]
+  },
+  spread: {
+    name: "Aberta",
+    meta: "Controle largo",
+    positions: [{ x: 0, y: 0 }, { x: 1, y: 2 }, { x: 0, y: 4 }]
+  }
+};
+
+const BATTLE_OPPONENTS = [
+  { id: "random", mode: "casual", name: "IA surpresa", meta: "Time sorteado", team: null, goalkeeper: null },
+  { id: "tampinha", mode: "casual", name: "Liga Tampinha", meta: "Basico equilibrado", team: ["richarlison-tazzo", "joao-gomes-tazzo", "danilo-tazzo"], goalkeeper: "goleiro-brasil-alison" },
+  { id: "crocante", mode: "casual", name: "Liga Crocante", meta: "Chute e colisao", team: ["rodrygo-tazzo", "casemiro-tazzo", "bremer-tazzo"], goalkeeper: "goleiro-brasil-alison" },
+  { id: "holo", mode: "casual", name: "Desafio Holo", meta: "Equipe veloz", team: ["vinicius-jr-tazzo", "raphinha-tazzo", "gabriel-magalhaes-tazzo"], goalkeeper: "goleiro-brasil-alison" },
+  { id: "edge", mode: "training", name: "Treino de borda", meta: "Empurroes e risco", team: ["bremer-tazzo", "gabriel-magalhaes-tazzo", "cristian-romero-tazzo"], goalkeeper: "goleiro-brasil-alison" },
+  { id: "speed", mode: "training", name: "Treino veloz", meta: "Chutes longos", team: ["vinicius-jr-tazzo", "rodrygo-tazzo", "gabriel-martinelli-tazzo"], goalkeeper: "goleiro-brasil-alison" },
+  { id: "keepers", mode: "training", name: "Treino de goleiros", meta: "Habilidades unicas", team: ["artilheiro-brasil", "lucas-paqueta-tazzo", "marquinhos-tazzo"], goalkeeper: "goleiro-brasil-alison" }
+];
+
+const TOURNAMENT_OPPONENTS = {
+  daily: { name: "Chave Diario", team: ["richarlison-tazzo", "joao-gomes-tazzo", "bremer-tazzo"], goalkeeper: "goleiro-brasil-alison" },
+  weekly: { name: "Final Semanal", team: ["vinicius-jr-tazzo", "lucas-paqueta-tazzo", "marquinhos-tazzo"], goalkeeper: "goleiro-brasil-alison" },
+  event: { name: "Mascote Monstronho", team: ["endrick-tazzo", "angel-di-maria-tazzo", "cristian-romero-tazzo"], goalkeeper: "goleiro-brasil-alison" }
+};
+
+const RANKED_OPPONENTS = [
+  { rank: "Tampinha", name: "Rival Tampinha", team: ["danilo-tazzo", "andreas-pereira-tazzo", "alex-sandro-tazzo"], goalkeeper: "goleiro-brasil-alison" },
+  { rank: "Recreio", name: "Colecionador Recreio", team: ["richarlison-tazzo", "bruno-guimaraes-tazzo", "wendell-tazzo"], goalkeeper: "goleiro-brasil-alison" },
+  { rank: "Crocante", name: "Capitao Crocante", team: ["julian-alvarez-tazzo", "enzo-fernandez-tazzo", "bremer-tazzo"], goalkeeper: "goleiro-brasil-alison" },
+  { rank: "Holografico", name: "Bia Holografica", team: ["lautaro-martinez-tazzo", "alexis-mac-allister-tazzo", "lisandro-martinez-tazzo"], goalkeeper: "goleiro-brasil-alison" },
+  { rank: "Lendario", name: "Nina Lendaria", team: ["vinicius-jr-tazzo", "lucas-paqueta-tazzo", "gabriel-magalhaes-tazzo"], goalkeeper: "goleiro-brasil-alison" },
+  { rank: "Mestre dos Tazzos", name: "Mestre Kick Tazzos", team: ["artilheiro-brasil", "angel-di-maria-tazzo", "cristian-romero-tazzo"], goalkeeper: "goleiro-brasil-alison" }
+];
+
+const TUTORIAL_STEPS = [
+  {
+    id: "pack",
+    title: "Primeiro pacotinho",
+    description: "Abra um pacotinho para sentir o loop principal: comprar, rasgar, revelar e guardar os tazzos.",
+    action: "Abrir pacotinhos",
+    steps: ["Clique em Abrir pacotinhos.", "Compre um pacote simples.", "Rasgue a embalagem e revele os discos."],
+    tip: "Pacotes simples sao baratos e bons para entender novos, repetidos e fragmentos.",
+    completes: "Conclui quando voce abre qualquer pacotinho."
+  },
+  {
+    id: "collection",
+    title: "Abrir album",
+    description: "Entre na colecao para ver obtidos, faltantes, raridades e copias repetidas.",
+    action: "Ver colecao",
+    steps: ["Abra a Colecao.", "Compare os tazzos coloridos com os faltantes.", "Use filtros para achar repetidos ou uma raridade."],
+    tip: "O album e onde voce decide quem entra no trio, quem vira troca e quem vale melhorar.",
+    completes: "Conclui quando voce entra na aba Colecao."
+  },
+  {
+    id: "inspect",
+    title: "Ver atributos",
+    description: "Clique na arte de qualquer tazzo para abrir o popup com chute, drible, velocidade e vitalidade.",
+    action: "Inspecionar tazzo",
+    steps: ["Abra a Colecao.", "Clique na imagem de um tazzo obtido.", "Leia os atributos e a funcao dele."],
+    tip: "Chute atinge em linha e causa metade do valor. Drible e adjacente e usa o valor inteiro.",
+    completes: "Conclui quando o popup de um tazzo abre."
+  },
+  {
+    id: "team",
+    title: "Montar trio",
+    description: "Escolha tres jogadores de campo e um goleiro. Goleiros ficam fora do campo e viram habilidade unica.",
+    action: "Montar time",
+    steps: ["Escolha um slot do trio.", "Clique em Colocar no slot em um jogador de campo.", "Escolha um goleiro ativo na colecao."],
+    tip: "Um time equilibrado costuma ter atacante, meia e zagueiro para aproveitar os bonus de zona.",
+    completes: "Conclui quando voce troca um jogador do trio ou escolhe um goleiro."
+  },
+  {
+    id: "position",
+    title: "Posicionar na arena",
+    description: "Ajuste a formacao ou clique nas casas da zona inicial antes de iniciar a partida.",
+    action: "Preparar batalha",
+    steps: ["Volte para Batalha.", "Escolha uma formacao ou clique nas casas da esquerda.", "Comece a batalha quando os 3 estiverem posicionados."],
+    tip: "Zagueiros gostam da sua area, meias do centro, atacantes do campo inimigo.",
+    completes: "Conclui quando voce muda formacao ou posiciona um tazzo."
+  },
+  {
+    id: "shot",
+    title: "Chutar",
+    description: "Use Chutar em linha reta para avancar e causar metade do valor de chute como dano.",
+    action: "Treinar chute",
+    steps: ["O cenario ja deixa um rival em linha reta.", "Clique em Chutar.", "Escolha o alvo destacado no campo."],
+    tip: "Chute causa 50% do atributo. Com a habilidade da Argentina, o proximo chute usa o valor cheio.",
+    completes: "Conclui quando voce acerta um Chute."
+  },
+  {
+    id: "dribble",
+    title: "Driblar",
+    description: "Use Driblar contra um inimigo adjacente. O dano usa o valor cheio de drible.",
+    action: "Treinar drible",
+    steps: ["O cenario ja comeca com o rival colado em voce.", "Clique em Driblar.", "Escolha o inimigo adjacente destacado."],
+    tip: "Drible e forte de perto. Atacante causa 1.25x contra Meia, Meia contra Zagueiro, Zagueiro contra Atacante.",
+    completes: "Conclui quando voce causa dano com Driblar."
+  },
+  {
+    id: "pressure",
+    title: "Pressionar",
+    description: "Use Pressionar em um inimigo adjacente para empurrar sem dano direto.",
+    action: "Treinar pressao",
+    steps: ["O cenario deixa um rival adjacente.", "Clique em Pressionar.", "Escolha o alvo para empurrar uma casa."],
+    tip: "Pressionar nao da dano direto, mas prepara borda, colisao e controle de espaco.",
+    completes: "Conclui quando voce pressiona um inimigo."
+  },
+  {
+    id: "collision",
+    title: "Causar colisao",
+    description: "Empurre um inimigo contra borda ou outro tazzo para causar dano extra de colisao.",
+    action: "Treino de borda",
+    steps: ["O cenario coloca o rival na borda.", "Clique em Pressionar.", "Empurre o alvo para fora da arena."],
+    tip: "Colisao causa dano extra. Borda causa dano e o tazzo volta para a ultima casa valida.",
+    completes: "Conclui quando um empurrao gera borda ou colisao."
+  },
+  {
+    id: "retreat",
+    title: "Recuar",
+    description: "Use Recuar quando estiver marcado por inimigo e quiser escapar do contato.",
+    action: "Treinar recuo",
+    steps: ["O cenario comeca com seu tazzo marcado.", "Clique em Recuar.", "Escolha uma casa que saia da marcacao."],
+    tip: "Quando voce esta colado em inimigo, Mover mantem contato. Recuar e a fuga segura.",
+    completes: "Conclui quando voce escapa usando Recuar."
+  },
+  {
+    id: "move",
+    title: "Mover na arena",
+    description: "Selecione Mover e escolha uma casa brilhando para reposicionar o tazzo ativo.",
+    action: "Treinar movimento",
+    steps: ["O cenario comeca sem contato direto.", "Clique em Mover.", "Clique numa casa destacada para ganhar posicao."],
+    tip: "Mover prepara dribles, chutes em linha e bonus de zona. Velocidade maior abre mais casas.",
+    completes: "Conclui quando um tazzo seu se move."
+  },
+  {
+    id: "swap",
+    title: "Trocar posicao",
+    description: "Use Trocar para inverter a casa do tazzo ativo com um aliado.",
+    action: "Treinar troca",
+    steps: ["O cenario deixa um aliado ao seu lado.", "Clique em Trocar.", "Escolha o aliado destacado."],
+    tip: "Trocar salva tazzos em perigo e prepara novas linhas de chute sem gastar movimento longo.",
+    completes: "Conclui quando dois aliados trocam de lugar."
+  },
+  {
+    id: "keeper",
+    title: "Usar goleiro",
+    description: "Use a habilidade do goleiro uma vez por partida para virar o ritmo do turno.",
+    action: "Usar goleiro",
+    steps: ["O cenario ja vem com goleiro pronto.", "No seu turno, clique em Goleiro.", "Observe o efeito criado pela habilidade."],
+    tip: "Allishow da turno extra para a mesma unidade: use a habilidade, faca uma acao, e jogue de novo.",
+    completes: "Conclui quando voce usa a habilidade de goleiro."
+  },
+  {
+    id: "pass",
+    title: "Passar turno",
+    description: "Use Passar quando nenhuma jogada melhora sua posicao ou quando voce quer preservar a formacao.",
+    action: "Treinar passe",
+    steps: ["O cenario nao exige alvo.", "Clique em Passar.", "Veja o turno encerrar sem gastar outra acao."],
+    tip: "Passar e raro, mas evita movimentos ruins quando o melhor plano e esperar o rival se expor.",
+    completes: "Conclui quando voce passa o turno."
+  },
+  {
+    id: "win",
+    title: "Vencer batalha",
+    description: "Derrube os tres tazzos do rival, ou venca no tempo por vivos, vitalidade e dano causado.",
+    action: "Ir para batalha",
+    steps: ["Mantenha tazzos vivos.", "Use vantagem de funcao e bonus de zona.", "Finalize alvos com pouca vitalidade."],
+    tip: "Se o tempo acabar, vivos decidem primeiro. Depois vem vitalidade total e dano causado.",
+    completes: "Conclui quando voce vence uma partida."
+  },
+  {
+    id: "trade",
+    title: "Fazer troca",
+    description: "Troque repetidos por tazzos faltantes para acelerar o album.",
+    action: "Abrir trocas",
+    steps: ["Abra Trocas.", "Escolha um repetido para oferecer.", "Escolha um tazzo faltante na lista de desejo e confirme."],
+    tip: "Trocas sao melhores quando voce tem duplicatas. Tazzos unicos devem ficar protegidos.",
+    completes: "Conclui quando uma troca e feita."
+  },
+  {
+    id: "tournament",
+    title: "Entrar em torneio",
+    description: "Use torneios para encarar uma chave com entrada, premio e batalha resolvida na arena.",
+    action: "Ver torneios",
+    steps: ["Abra Torneios.", "Escolha um torneio disponivel.", "Entre e veja a batalha ser criada na arena."],
+    tip: "No tutorial, a entrada fica liberada se voce estiver sem Merreis ou com time fora do limite.",
+    completes: "Conclui quando voce inicia qualquer torneio."
+  },
+  {
+    id: "ranked",
+    title: "Ranqueada",
+    description: "Entre na liga competitiva quando seu trio estiver pronto dentro do limite de custo.",
+    action: "Ver liga",
+    steps: ["Abra Torneios.", "Confira custo do time e chance estimada.", "Clique em Disputar ranqueada quando estiver pronto."],
+    tip: "Ranqueada usa limite de custo. Raro forte e comum bem posicionado podem valer mais que so raridade alta.",
+    completes: "Conclui quando voce inicia uma ranqueada."
+  }
+];
+
+function mon(id, assetNumber, name, types, rarity, vitality, shot, dribble, speed, role, keeperAbility = null, shirtNumber = null) {
+  return {
+    id,
+    number: assetNumber,
+    shirtNumber,
+    name,
+    types,
+    rarity,
+    vitality,
+    shot,
+    dribble,
+    speed,
+    role,
+    keeperAbility,
+    image: ASSETS[assetNumber - 1],
+    backImage: DEFAULT_BACK_IMAGE,
+    cost: RARITIES[rarity].cost
+  };
+}
+
+function player(id, number, name, image, types, rarity, vitality, shot, dribble, speed, role) {
+  return {
+    id,
+    number,
+    shirtNumber: null,
+    name,
+    types,
+    rarity,
+    vitality,
+    shot,
+    dribble,
+    speed,
+    role,
+    keeperAbility: null,
+    image,
+    backImage: DEFAULT_BACK_IMAGE,
+    cost: RARITIES[rarity].cost
+  };
+}
+
+function keeperCard(id, number, image, name, rarity, keeperAbility) {
+  return {
+    id,
+    number,
+    shirtNumber: null,
+    name,
+    types: ["Goleiro"],
+    rarity,
+    vitality: 0,
+    shot: 0,
+    dribble: 0,
+    speed: 0,
+    role: "Goleiro",
+    keeperAbility,
+    image,
+    backImage: DEFAULT_BACK_IMAGE,
+    cost: RARITIES[rarity].cost
+  };
+}
+
+function goalie(id, assetNumber, name, rarity, keeperAbility) {
+  return {
+    id,
+    number: assetNumber,
+    shirtNumber: null,
+    name,
+    types: ["Goleiro"],
+    rarity,
+    vitality: 0,
+    shot: 0,
+    dribble: 0,
+    speed: 0,
+    role: "Goleiro",
+    keeperAbility,
+    image: ASSETS[assetNumber - 1],
+    backImage: DEFAULT_BACK_IMAGE,
+    cost: RARITIES[rarity].cost
+  };
+}
+
+window.TAZZOMON_DATA = {
+  ASSETS,
+  BACKS,
+  DEFAULT_BACK_IMAGE,
+  TYPES,
+  RARITIES,
+  MONSTERS,
+  MONSTER_BY_ID,
+  RANKS,
+  TOURNAMENTS,
+  SHOP_ITEMS,
+  PACKS,
+  MISSIONS,
+  FRIENDS,
+  BATTLE_MODES,
+  BATTLE_FORMATIONS,
+  BATTLE_OPPONENTS,
+  TOURNAMENT_OPPONENTS,
+  RANKED_OPPONENTS,
+  TUTORIAL_STEPS
+};
+})();

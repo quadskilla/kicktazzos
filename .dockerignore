@@ -1,0 +1,7 @@
+.git
+server-data
+node_modules
+npm-debug.log
+Dockerfile
+.dockerignore
+*.tmp
