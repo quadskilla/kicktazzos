@@ -2,6 +2,9 @@
 server-data
 node_modules
 npm-debug.log
-Dockerfile
-.dockerignore
 *.tmp
+.env
+.env.*
+*.db
+*.db-shm
+*.db-wal
