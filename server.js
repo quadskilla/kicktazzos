@@ -698,16 +698,15 @@ function sanitizeOnlineLoadout(save = {}) {
   return { team, goalkeeper, positions, upgrades };
 }
 
-async function onlinePlayerLoadout(playerId, fallbackSave = null) {
-  const record = await readSave(playerId);
-  return sanitizeOnlineLoadout(record?.save || fallbackSave || defaultServerSave());
+async function onlinePlayerLoadout(playerId) {
+  const record = await readOrCreateSave(playerId);
+  return sanitizeOnlineLoadout(record.save);
 }
 
-function updateOnlinePlayerLoadout(lobby, playerId, save) {
-  if (!save) return;
+async function updateOnlinePlayerLoadout(lobby, playerId) {
   const player = lobby.players.find((item) => item.playerId === playerId);
   if (!player) return;
-  player.loadout = sanitizeOnlineLoadout(save);
+  player.loadout = await onlinePlayerLoadout(playerId);
 }
 
 function publicOnlineLobby(lobby, viewerId) {
@@ -1425,8 +1424,8 @@ async function resolveOnlineMatchRewards(lobby, winnerSlot, finishReason = "norm
 }
 
 async function applyOnlineResultToPlayer(playerId, outcome, finishReason = "normal") {
-  const record = await readSave(playerId);
-  const save = normalizeServerSave(record?.save || defaultServerSave());
+  const record = await readOrCreateSave(playerId);
+  const save = normalizeServerSave(record.save);
   progressServerMission(save, "battle", 1);
   const forfeit = finishReason === "forfeit";
 
@@ -1873,7 +1872,7 @@ async function onlineLobbyPayload(playerId) {
   };
 }
 
-async function createOnlineLobby(playerId, fallbackSave = null) {
+async function createOnlineLobby(playerId) {
   cleanupOnlineLobbies();
   removePlayerFromOnlineLobbies(playerId);
   const now = Date.now();
@@ -1886,7 +1885,7 @@ async function createOnlineLobby(playerId, fallbackSave = null) {
     players: [{
       playerId,
       name: await onlinePlayerName(playerId),
-      loadout: await onlinePlayerLoadout(playerId, fallbackSave),
+      loadout: await onlinePlayerLoadout(playerId),
       ready: false,
       joinedAt: now,
       lastSeenAt: now
@@ -1896,7 +1895,7 @@ async function createOnlineLobby(playerId, fallbackSave = null) {
   return lobby;
 }
 
-async function joinOnlineLobby(playerId, lobbyId, fallbackSave = null) {
+async function joinOnlineLobby(playerId, lobbyId) {
   cleanupOnlineLobbies();
   const id = String(lobbyId || "").trim().toUpperCase();
   if (!/^[A-F0-9]{6}$/.test(id)) {
@@ -1914,7 +1913,7 @@ async function joinOnlineLobby(playerId, lobbyId, fallbackSave = null) {
   if (existing) {
     existing.lastSeenAt = Date.now();
     existing.awaySince = null;
-    if (fallbackSave) existing.loadout = await onlinePlayerLoadout(playerId, fallbackSave);
+    existing.loadout = await onlinePlayerLoadout(playerId);
     pruneOnlineRematchVotes(lobby);
     lobby.updatedAt = Date.now();
     return lobby;
@@ -1929,7 +1928,7 @@ async function joinOnlineLobby(playerId, lobbyId, fallbackSave = null) {
   lobby.players.push({
     playerId,
     name: await onlinePlayerName(playerId),
-    loadout: await onlinePlayerLoadout(playerId, fallbackSave),
+    loadout: await onlinePlayerLoadout(playerId),
     ready: false,
     joinedAt: now,
     lastSeenAt: now
@@ -1957,7 +1956,7 @@ async function leaveOnlineLobby(playerId) {
   removePlayerFromOnlineLobbies(playerId);
 }
 
-function setOnlineLobbyReady(playerId, ready, fallbackSave = null) {
+async function setOnlineLobbyReady(playerId, ready) {
   cleanupOnlineLobbies();
   const lobby = currentLobbyForPlayer(playerId);
   if (!lobby) {
@@ -1966,7 +1965,7 @@ function setOnlineLobbyReady(playerId, ready, fallbackSave = null) {
     throw error;
   }
   const player = lobby.players.find((item) => item.playerId === playerId);
-  if (fallbackSave) player.loadout = sanitizeOnlineLoadout(fallbackSave);
+  await updateOnlinePlayerLoadout(lobby, playerId);
   player.ready = Boolean(ready);
   if (!lobby.match?.battleState?.over) lobby.rematchVotes = {};
   player.lastSeenAt = Date.now();
@@ -2326,12 +2325,18 @@ async function writeSave(playerId, save) {
   return { updatedAt, save: normalizedSave };
 }
 
+async function readOrCreateSave(playerId) {
+  const record = await readSave(playerId);
+  if (record) return record;
+  return writeSave(playerId, defaultServerSave());
+}
+
 async function deleteSave(playerId) {
   if (!isValidPlayerId(playerId)) return;
   db().prepare("DELETE FROM saves WHERE player_id = ?").run(playerId);
 }
 
-async function registerProfile({ currentPlayerId, name, pin, save }) {
+async function registerProfile({ currentPlayerId, name, pin }) {
   const input = validateProfileInput(name, pin);
   const profiles = await readProfiles();
   if (profiles.profiles[input.key]) {
@@ -2355,8 +2360,8 @@ async function registerProfile({ currentPlayerId, name, pin, save }) {
   profiles.profiles[input.key] = profile;
   await writeProfiles(profiles);
 
-  const currentRecord = currentPlayerId ? await readSave(currentPlayerId) : null;
-  const profileSave = normalizeServerSave(save || currentRecord?.save || defaultServerSave());
+  const currentRecord = currentPlayerId ? await readOrCreateSave(currentPlayerId) : null;
+  const profileSave = normalizeServerSave(currentRecord?.save || defaultServerSave());
   await writeSave(playerId, profileSave);
   return { profile, save: profileSave };
 }
@@ -2411,6 +2416,7 @@ function defaultServerSave() {
     friendGifts: {},
     musicTrackIndex: 0,
     musicVolume: 0.55,
+    migratedFromLocalAt: null,
     tutorial: Object.fromEntries(TUTORIAL_STEPS.map((step) => [step.id, false])),
     tutorialRewardClaimed: false,
     missionDate: new Date().toISOString().slice(0, 10),
@@ -2509,6 +2515,7 @@ function normalizeServerSave(rawSave = {}) {
   const customTazzos = sanitizeServerCustomCatalog(save.customTazzos || []);
   const catalog = serverCatalogForSave({ ...save, customTazzos });
   const musicVolume = Number(save.musicVolume ?? fresh.musicVolume);
+  const migratedFromLocalAt = safeText(save.migratedFromLocalAt, "", 64) || null;
   const collection = {};
   Object.entries({ ...fresh.collection, ...(save.collection || {}) }).forEach(([id, count]) => {
     if (catalog.has(id)) collection[id] = Math.max(0, Math.floor(Number(count)) || 0);
@@ -2549,8 +2556,141 @@ function normalizeServerSave(rawSave = {}) {
     friendGifts: save.friendGifts && typeof save.friendGifts === "object" ? save.friendGifts : fresh.friendGifts,
     packPity: sanitizePackPity(save.packPity || fresh.packPity),
     musicTrackIndex: Math.max(0, Math.floor(Number(save.musicTrackIndex ?? fresh.musicTrackIndex)) || 0),
-    musicVolume: Number.isFinite(musicVolume) ? clamp(musicVolume, 0, 1) : fresh.musicVolume
+    musicVolume: Number.isFinite(musicVolume) ? clamp(musicVolume, 0, 1) : fresh.musicVolume,
+    migratedFromLocalAt
   };
+}
+
+function economicSaveFingerprint(save) {
+  const normalized = normalizeServerSave(save);
+  return JSON.stringify({
+    merreis: normalized.merreis,
+    fragments: normalized.fragments,
+    collection: normalized.collection,
+    customTazzos: normalized.customTazzos,
+    upgrades: normalized.upgrades,
+    packPity: normalized.packPity,
+    trophies: normalized.trophies,
+    rankedWins: normalized.rankedWins,
+    rankedLosses: normalized.rankedLosses,
+    tournamentWins: normalized.tournamentWins,
+    onlineTrophies: normalized.onlineTrophies,
+    onlineWins: normalized.onlineWins,
+    onlineLosses: normalized.onlineLosses,
+    onlineDraws: normalized.onlineDraws,
+    activeCompetitive: normalized.activeCompetitive,
+    cosmetics: normalized.cosmetics,
+    friendGifts: normalized.friendGifts,
+    missions: normalized.missions,
+    tutorialRewardClaimed: normalized.tutorialRewardClaimed
+  });
+}
+
+function hasServerEconomyProgress(save) {
+  return economicSaveFingerprint(save) !== economicSaveFingerprint(defaultServerSave());
+}
+
+const PROTECTED_SAVE_FIELDS = [
+  "createdAt",
+  "merreis",
+  "fragments",
+  "collection",
+  "customTazzos",
+  "upgrades",
+  "packPity",
+  "trophies",
+  "rankedWins",
+  "rankedLosses",
+  "tournamentWins",
+  "onlineTrophies",
+  "onlineWins",
+  "onlineLosses",
+  "onlineDraws",
+  "activeCompetitive",
+  "cosmetics",
+  "friendGifts",
+  "missions",
+  "tutorialRewardClaimed",
+  "migratedFromLocalAt"
+];
+
+function changedProtectedFields(currentSave, incomingSave = {}) {
+  if (!incomingSave || typeof incomingSave !== "object" || Array.isArray(incomingSave)) return [];
+  const current = normalizeServerSave(currentSave);
+  const incoming = normalizeServerSave({ ...current, ...incomingSave });
+  return PROTECTED_SAVE_FIELDS.filter((field) => {
+    if (!Object.prototype.hasOwnProperty.call(incomingSave, field)) return false;
+    return JSON.stringify(current[field]) !== JSON.stringify(incoming[field]);
+  });
+}
+
+function mergeClientSafeSave(currentSave, incomingSave = {}) {
+  const current = normalizeServerSave(currentSave);
+  const incoming = incomingSave && typeof incomingSave === "object" && !Array.isArray(incomingSave) ? incomingSave : {};
+  const next = normalizeServerSave(current);
+  const catalog = serverCatalogForSave(next);
+
+  if (Array.isArray(incoming.team)) {
+    next.team = normalizeServerTeam(incoming.team, next.collection, catalog, next.team);
+  }
+  if (Object.prototype.hasOwnProperty.call(incoming, "goalkeeper")) {
+    next.goalkeeper = normalizeServerGoalkeeper(incoming.goalkeeper, next.collection, catalog, next.goalkeeper);
+  }
+  if (Object.prototype.hasOwnProperty.call(incoming, "selectedCosmetic")) {
+    const selected = String(incoming.selectedCosmetic || "");
+    const exists = SHOP_ITEMS.some((item) => item.id === selected);
+    next.selectedCosmetic = selected && exists && next.cosmetics?.[selected] ? selected : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(incoming, "musicTrackIndex")) {
+    next.musicTrackIndex = Math.max(0, Math.floor(Number(incoming.musicTrackIndex)) || 0);
+  }
+  if (Object.prototype.hasOwnProperty.call(incoming, "musicVolume")) {
+    const volume = Number(incoming.musicVolume);
+    next.musicVolume = Number.isFinite(volume) ? clamp(volume, 0, 1) : next.musicVolume;
+  }
+  if (incoming.tutorial && typeof incoming.tutorial === "object" && !Array.isArray(incoming.tutorial)) {
+    next.tutorial = Object.fromEntries(TUTORIAL_STEPS.map((step) => [
+      step.id,
+      Boolean(current.tutorial?.[step.id] || incoming.tutorial?.[step.id])
+    ]));
+  }
+
+  return next;
+}
+
+async function updateSafeSaveForPlayer(playerId, incomingSave) {
+  const record = await readOrCreateSave(playerId);
+  const ignoredFields = changedProtectedFields(record.save, incomingSave);
+  const safeSave = mergeClientSafeSave(record.save, incomingSave);
+  const saved = await writeSave(playerId, safeSave);
+  return { ...saved, ignoredFields };
+}
+
+async function migrateSaveForPlayer(playerId, incomingSave) {
+  if (!incomingSave || typeof incomingSave !== "object" || Array.isArray(incomingSave)) {
+    const error = new Error("Save de migracao invalido.");
+    error.status = 400;
+    throw error;
+  }
+  const profile = await profileForPlayer(playerId);
+  if (profile) {
+    const error = new Error("Perfil online ja vinculado. A migracao inicial nao esta mais disponivel.");
+    error.status = 409;
+    throw error;
+  }
+
+  const record = await readSave(playerId);
+  const currentSave = record?.save || defaultServerSave();
+  if (currentSave.migratedFromLocalAt || (record && hasServerEconomyProgress(currentSave))) {
+    const error = new Error("Este jogador ja tem progresso no servidor. A importacao local foi ignorada.");
+    error.status = 409;
+    error.save = currentSave;
+    throw error;
+  }
+
+  const migrated = normalizeServerSave(incomingSave);
+  migrated.migratedFromLocalAt = new Date().toISOString();
+  return writeSave(playerId, migrated);
 }
 
 function sanitizePackPity(packPity = {}) {
@@ -2761,15 +2901,15 @@ function drawPackPulls(save, pack) {
   return pulls;
 }
 
-async function openPackForPlayer(playerId, packId, fallbackSave) {
+async function openPackForPlayer(playerId, packId) {
   const pack = PACKS.find((item) => item.id === packId);
   if (!pack) {
     const error = new Error("Pacotinho nao encontrado.");
     error.status = 404;
     throw error;
   }
-  const record = await readSave(playerId);
-  const save = normalizeServerSave(record?.save || fallbackSave || defaultServerSave());
+  const record = await readOrCreateSave(playerId);
+  const save = normalizeServerSave(record.save);
   if (save.merreis < pack.cost) {
     const error = new Error("Merreis insuficientes.");
     error.status = 400;
@@ -2785,7 +2925,7 @@ async function openPackForPlayer(playerId, packId, fallbackSave) {
   return { save, pulls, pack };
 }
 
-async function buyShopItemForPlayer(playerId, itemId, fallbackSave) {
+async function buyShopItemForPlayer(playerId, itemId) {
   const item = SHOP_ITEMS.find((entry) => entry.id === itemId);
   if (!item) {
     const error = new Error("Item da loja nao encontrado.");
@@ -2793,8 +2933,8 @@ async function buyShopItemForPlayer(playerId, itemId, fallbackSave) {
     throw error;
   }
 
-  const record = await readSave(playerId);
-  const save = normalizeServerSave(record?.save || fallbackSave || defaultServerSave());
+  const record = await readOrCreateSave(playerId);
+  const save = normalizeServerSave(record.save);
   save.cosmetics = save.cosmetics || {};
 
   let message = "";
@@ -2818,7 +2958,7 @@ async function buyShopItemForPlayer(playerId, itemId, fallbackSave) {
   return { save, item, message };
 }
 
-async function upgradeMonsterForPlayer(playerId, monsterId, fallbackSave) {
+async function upgradeMonsterForPlayer(playerId, monsterId) {
   const monster = MONSTER_BY_ID[monsterId];
   if (!monster || isGoalkeeper(monster)) {
     const error = new Error("Tazzo nao pode ser melhorado.");
@@ -2826,8 +2966,8 @@ async function upgradeMonsterForPlayer(playerId, monsterId, fallbackSave) {
     throw error;
   }
 
-  const record = await readSave(playerId);
-  const save = normalizeServerSave(record?.save || fallbackSave || defaultServerSave());
+  const record = await readOrCreateSave(playerId);
+  const save = normalizeServerSave(record.save);
   if (!save.collection[monsterId]) {
     const error = new Error("Tazzo ainda nao obtido.");
     error.status = 400;
@@ -2860,7 +3000,7 @@ async function upgradeMonsterForPlayer(playerId, monsterId, fallbackSave) {
   return { save, monster, level: level + 1, cost };
 }
 
-async function claimMissionForPlayer(playerId, missionId, fallbackSave) {
+async function claimMissionForPlayer(playerId, missionId) {
   const mission = MISSIONS.find((item) => item.id === missionId);
   if (!mission) {
     const error = new Error("Missao nao encontrada.");
@@ -2868,8 +3008,8 @@ async function claimMissionForPlayer(playerId, missionId, fallbackSave) {
     throw error;
   }
 
-  const record = await readSave(playerId);
-  const save = normalizeServerSave(record?.save || fallbackSave || defaultServerSave());
+  const record = await readOrCreateSave(playerId);
+  const save = normalizeServerSave(record.save);
   if (!save.missions[mission.id]) save.missions[mission.id] = { progress: 0, claimed: false };
   const status = missionStatus(save, mission);
   if (status.claimed) {
@@ -2891,7 +3031,7 @@ async function claimMissionForPlayer(playerId, missionId, fallbackSave) {
   return { save, mission };
 }
 
-async function tradeForPlayer(playerId, offerId, wishId, fallbackSave) {
+async function tradeForPlayer(playerId, offerId, wishId) {
   const offered = MONSTER_BY_ID[offerId];
   const received = MONSTER_BY_ID[wishId];
   if (!offered || !received || offered.id === received.id) {
@@ -2900,8 +3040,8 @@ async function tradeForPlayer(playerId, offerId, wishId, fallbackSave) {
     throw error;
   }
 
-  const record = await readSave(playerId);
-  const save = normalizeServerSave(record?.save || fallbackSave || defaultServerSave());
+  const record = await readOrCreateSave(playerId);
+  const save = normalizeServerSave(record.save);
   if ((save.collection[offered.id] || 0) <= 1 || save.collection[received.id]) {
     const error = new Error("Troca indisponivel para essa colecao.");
     error.status = 400;
@@ -2928,7 +3068,7 @@ async function tradeForPlayer(playerId, offerId, wishId, fallbackSave) {
   };
 }
 
-async function sendFriendGiftForPlayer(playerId, friendId, fallbackSave) {
+async function sendFriendGiftForPlayer(playerId, friendId) {
   const friend = FRIENDS.find((item) => item.id === friendId);
   if (!friend) {
     const error = new Error("Amigo nao encontrado.");
@@ -2936,8 +3076,8 @@ async function sendFriendGiftForPlayer(playerId, friendId, fallbackSave) {
     throw error;
   }
 
-  const record = await readSave(playerId);
-  const save = normalizeServerSave(record?.save || fallbackSave || defaultServerSave());
+  const record = await readOrCreateSave(playerId);
+  const save = normalizeServerSave(record.save);
   const today = new Date().toISOString().slice(0, 10);
   save.friendGifts = save.friendGifts && typeof save.friendGifts === "object" ? save.friendGifts : {};
   save.friendGifts[today] = save.friendGifts[today] && typeof save.friendGifts[today] === "object" ? save.friendGifts[today] : {};
@@ -2960,9 +3100,9 @@ async function sendFriendGiftForPlayer(playerId, friendId, fallbackSave) {
   };
 }
 
-async function startRankedForPlayer(playerId, fallbackSave) {
-  const record = await readSave(playerId);
-  const save = normalizeServerSave(record?.save || fallbackSave || defaultServerSave());
+async function startRankedForPlayer(playerId) {
+  const record = await readOrCreateSave(playerId);
+  const save = normalizeServerSave(record.save);
   if (save.activeCompetitive && !save.activeCompetitive.resolved) {
     const error = new Error("Ja existe uma partida competitiva ativa.");
     error.status = 409;
@@ -2988,15 +3128,15 @@ async function startRankedForPlayer(playerId, fallbackSave) {
   return { save, match, rank, opponent };
 }
 
-async function startTournamentForPlayer(playerId, tournamentId, fallbackSave) {
+async function startTournamentForPlayer(playerId, tournamentId) {
   const tournament = TOURNAMENTS.find((item) => item.id === tournamentId);
   if (!tournament) {
     const error = new Error("Torneio nao encontrado.");
     error.status = 404;
     throw error;
   }
-  const record = await readSave(playerId);
-  const save = normalizeServerSave(record?.save || fallbackSave || defaultServerSave());
+  const record = await readOrCreateSave(playerId);
+  const save = normalizeServerSave(record.save);
   if (save.activeCompetitive && !save.activeCompetitive.resolved) {
     const error = new Error("Ja existe uma partida competitiva ativa.");
     error.status = 409;
@@ -3107,8 +3247,8 @@ function tournamentResolution(save, tournament, won, reason = "") {
 }
 
 async function resolveCompetitiveForPlayer(playerId, payload = {}) {
-  const record = await readSave(playerId);
-  const save = normalizeServerSave(record?.save || defaultServerSave());
+  const record = await readOrCreateSave(playerId);
+  const save = normalizeServerSave(record.save);
   const match = save.activeCompetitive;
   if (!match || match.resolved || match.id !== payload.matchId) {
     const error = new Error("Partida competitiva nao encontrada.");
@@ -3214,9 +3354,8 @@ async function handleApi(req, res, url) {
       });
       return;
     }
-    const body = await readBody(req);
-    const bodyPayload = body ? JSON.parse(body) : {};
-    await createOnlineLobby(playerId, bodyPayload.save);
+    await readBody(req);
+    await createOnlineLobby(playerId);
     const payload = await onlineLobbyPayload(playerId);
     await persistOnlineLobbies();
     json(res, 200, payload, headers);
@@ -3235,7 +3374,7 @@ async function handleApi(req, res, url) {
     try {
       const body = await readBody(req);
       const payload = body ? JSON.parse(body) : {};
-      await joinOnlineLobby(playerId, payload.lobbyId, payload.save);
+      await joinOnlineLobby(playerId, payload.lobbyId);
       const result = await onlineLobbyPayload(playerId);
       await persistOnlineLobbies();
       json(res, 200, result, headers);
@@ -3283,7 +3422,7 @@ async function handleApi(req, res, url) {
     try {
       const body = await readBody(req);
       const payload = body ? JSON.parse(body) : {};
-      setOnlineLobbyReady(playerId, payload.ready, payload.save);
+      await setOnlineLobbyReady(playerId, payload.ready);
       const result = await onlineLobbyPayload(playerId);
       await persistOnlineLobbies();
       json(res, 200, result, headers);
@@ -3382,8 +3521,7 @@ async function handleApi(req, res, url) {
       const result = await registerProfile({
         currentPlayerId: playerId,
         name: payload.name,
-        pin: payload.pin,
-        save: payload.save
+        pin: payload.pin
       });
       json(res, 200, {
         ok: true,
@@ -3454,7 +3592,7 @@ async function handleApi(req, res, url) {
     try {
       const body = await readBody(req);
       const payload = body ? JSON.parse(body) : {};
-      const result = await tradeForPlayer(playerId, payload.offerId, payload.wishId, payload.save);
+      const result = await tradeForPlayer(playerId, payload.offerId, payload.wishId);
       json(res, 200, {
         ok: true,
         playerId,
@@ -3485,7 +3623,7 @@ async function handleApi(req, res, url) {
     try {
       const body = await readBody(req);
       const payload = body ? JSON.parse(body) : {};
-      const result = await sendFriendGiftForPlayer(playerId, payload.friendId, payload.save);
+      const result = await sendFriendGiftForPlayer(playerId, payload.friendId);
       json(res, 200, {
         ok: true,
         playerId,
@@ -3516,7 +3654,7 @@ async function handleApi(req, res, url) {
     try {
       const body = await readBody(req);
       const payload = body ? JSON.parse(body) : {};
-      const result = await openPackForPlayer(playerId, payload.packId, payload.save);
+      const result = await openPackForPlayer(playerId, payload.packId);
       json(res, 200, {
         ok: true,
         playerId,
@@ -3546,7 +3684,7 @@ async function handleApi(req, res, url) {
     try {
       const body = await readBody(req);
       const payload = body ? JSON.parse(body) : {};
-      const result = await buyShopItemForPlayer(playerId, payload.itemId, payload.save);
+      const result = await buyShopItemForPlayer(playerId, payload.itemId);
       json(res, 200, {
         ok: true,
         playerId,
@@ -3576,7 +3714,7 @@ async function handleApi(req, res, url) {
     try {
       const body = await readBody(req);
       const payload = body ? JSON.parse(body) : {};
-      const result = await upgradeMonsterForPlayer(playerId, payload.monsterId, payload.save);
+      const result = await upgradeMonsterForPlayer(playerId, payload.monsterId);
       json(res, 200, {
         ok: true,
         playerId,
@@ -3607,7 +3745,7 @@ async function handleApi(req, res, url) {
     try {
       const body = await readBody(req);
       const payload = body ? JSON.parse(body) : {};
-      const result = await claimMissionForPlayer(playerId, payload.missionId, payload.save);
+      const result = await claimMissionForPlayer(playerId, payload.missionId);
       json(res, 200, {
         ok: true,
         playerId,
@@ -3636,7 +3774,7 @@ async function handleApi(req, res, url) {
     try {
       const body = await readBody(req);
       const payload = body ? JSON.parse(body) : {};
-      const result = await startRankedForPlayer(playerId, payload.save);
+      const result = await startRankedForPlayer(playerId);
       json(res, 200, {
         ok: true,
         playerId,
@@ -3667,7 +3805,7 @@ async function handleApi(req, res, url) {
     try {
       const body = await readBody(req);
       const payload = body ? JSON.parse(body) : {};
-      const result = await startTournamentForPlayer(playerId, payload.tournamentId, payload.save);
+      const result = await startTournamentForPlayer(playerId, payload.tournamentId);
       json(res, 200, {
         ok: true,
         playerId,
@@ -3716,13 +3854,44 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (url.pathname === "/api/save/migrate") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const record = await migrateSaveForPlayer(playerId, payload.save);
+      const profile = await profileForPlayer(playerId);
+      json(res, 200, {
+        ok: true,
+        playerId,
+        profile: publicProfile(profile),
+        save: record.save,
+        updatedAt: record.updatedAt,
+        migrated: true
+      }, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Migracao local recusada.",
+        save: error.save || null
+      }, headers);
+    }
+    return;
+  }
+
   if (url.pathname !== "/api/save") {
     json(res, 404, { ok: false, error: "API nao encontrada." }, headers);
     return;
   }
 
   if (req.method === "GET") {
-    const record = await readSave(playerId);
+    const record = await readOrCreateSave(playerId);
     const profile = await profileForPlayer(playerId);
     json(res, 200, {
       ok: true,
@@ -3742,14 +3911,18 @@ async function handleApi(req, res, url) {
       json(res, 400, { ok: false, error: "Payload de save invalido." }, headers);
       return;
     }
-    const record = await writeSave(playerId, payload.save);
+    const record = await updateSafeSaveForPlayer(playerId, payload.save);
     const profile = await profileForPlayer(playerId);
     json(res, 200, {
       ok: true,
       playerId,
       profile: publicProfile(profile),
       save: record.save,
-      updatedAt: record.updatedAt
+      updatedAt: record.updatedAt,
+      ignoredProtectedFields: record.ignoredFields,
+      message: record.ignoredFields.length
+        ? "Campos protegidos foram ignorados; use as acoes do servidor para progresso."
+        : "Preferencias salvas."
     }, headers);
     return;
   }

@@ -25,6 +25,7 @@ const SERVER_PROFILE_ENDPOINT = "/api/profile";
 const SERVER_LEADERBOARD_ENDPOINT = "/api/leaderboard";
 const SERVER_LOBBIES_ENDPOINT = "/api/lobbies";
 const SERVER_SAVE_ENDPOINT = "/api/save";
+const SERVER_MIGRATE_SAVE_ENDPOINT = "/api/save/migrate";
 const SERVER_OPEN_PACK_ENDPOINT = "/api/open-pack";
 const SERVER_SHOP_ENDPOINT = "/api/shop";
 const SERVER_UPGRADE_ENDPOINT = "/api/upgrade";
@@ -556,9 +557,7 @@ async function loadServerSave() {
         state.save = localSave;
         persistLocalSave();
         setServerStatus("syncing", "Migrando");
-        await pushServerSave();
-        renderAll();
-        return;
+        if (await migrateServerSave(localSave)) return;
       }
 
       state.save = serverSave;
@@ -574,6 +573,40 @@ async function loadServerSave() {
     state.server.loading = false;
     disconnectOnlineSocket();
     setServerStatus("error", "Local");
+  }
+}
+
+async function migrateServerSave(save) {
+  try {
+    const response = await fetch(SERVER_MIGRATE_SAVE_ENDPOINT, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ save })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      if (payload.save) {
+        state.save = normalizeSave(payload.save);
+        persistLocalSave();
+      }
+      setServerStatus("online", "Salvo");
+      renderAll();
+      return true;
+    }
+
+    state.server.playerId = payload.playerId || state.server.playerId;
+    if (payload.save) {
+      state.save = normalizeSave(payload.save);
+      persistLocalSave();
+    }
+    applyProfile(payload.profile);
+    state.server.localChangedWhileLoading = false;
+    setServerStatus("online", "Migrado");
+    renderAll();
+    return true;
+  } catch (error) {
+    return false;
   }
 }
 
@@ -612,7 +645,7 @@ async function pushServerSave() {
     }
     applyProfile(payload.profile);
     state.server.localChangedWhileLoading = false;
-    setServerStatus("online", "Salvo");
+    setServerStatus("online", payload.ignoredProtectedFields?.length ? "Protegido" : "Salvo");
   } catch (error) {
     setServerStatus("error", "Local");
   }
@@ -897,7 +930,7 @@ async function postOnlineLobbyAction(path, body, statusLabel) {
   state.online.error = "";
   renderOnline();
   try {
-    const payload = await postServerMutation(`${SERVER_LOBBIES_ENDPOINT}/${path}`, { ...body, save: state.save }, statusLabel);
+    const payload = await postServerMutation(`${SERVER_LOBBIES_ENDPOINT}/${path}`, body, statusLabel);
     applyOnlineLobbyPayload(payload);
     state.online.message = "";
     return payload;
@@ -1764,7 +1797,7 @@ async function submitProfileForm(event) {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, pin, save: state.save })
+      body: JSON.stringify({ name, pin })
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.error || "Nao foi possivel usar esse perfil.");
@@ -4782,8 +4815,7 @@ async function doTrade() {
     try {
       const payload = await postServerMutation(SERVER_TRADE_ENDPOINT, {
         offerId: offered.id,
-        wishId: received.id,
-        save: state.save
+        wishId: received.id
       }, "Trocando");
       state.tradeLog.unshift(payload.message || `${offered.name} virou ${received.name}.`);
       progressTutorial("trade");
@@ -4814,8 +4846,7 @@ async function sendFriendGift(friendId) {
   if (state.server.enabled) {
     try {
       const payload = await postServerMutation(SERVER_FRIEND_GIFT_ENDPOINT, {
-        friendId,
-        save: state.save
+        friendId
       }, "Enviando presente");
       state.tradeLog.unshift(payload.message || `Presente enviado para ${friend.name}: +80 Merreis.`);
       renderAll();
