@@ -21,7 +21,7 @@ DATA_DIR=/data
 
 ## Deploy com Docker
 
-O repositorio ja inclui `Dockerfile`.
+O repositorio ja inclui `Dockerfile`. Em producao na Railway, o volume persistente deve ser criado no dashboard; o Dockerfile nao usa a instrucao `VOLUME` porque a Railway rejeita essa instrucao no build.
 
 ```bash
 docker build -t kick-tazzos .

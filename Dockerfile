@@ -10,7 +10,6 @@ ENV DATA_DIR=/data
 COPY . .
 RUN mkdir -p /data
 
-VOLUME ["/data"]
 EXPOSE 8025
 
 CMD ["npm", "start"]

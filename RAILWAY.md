@@ -29,6 +29,8 @@ Nao defina `PORT`. A Railway define `PORT` automaticamente.
 2. Anexe ao servico do jogo.
 3. Mount path: `/data`.
 
+O volume e configurado no painel da Railway. O Dockerfile nao deve conter `VOLUME ["/data"]`, porque a Railway rejeita essa instrucao durante o build.
+
 O SQLite ficara em:
 
 ```text
