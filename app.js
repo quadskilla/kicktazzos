@@ -50,6 +50,18 @@ const AI_ACTION_WINDUP_MS = 760;
 const AI_ACTION_RESULT_MS = 820;
 const ONLINE_TARGET_ACTIONS = ["move", "retreat", "swap", "dribble", "shot", "pressure"];
 const ONLINE_INSTANT_ACTIONS = ["pass", "keeper"];
+const ENABLE_PLAYER_EDIT = false;
+const PLAYER_TABS = new Set([
+  "battle",
+  "online",
+  "competitive",
+  "packs",
+  "collection",
+  "friends",
+  "trade",
+  "shop",
+  "missions"
+]);
 const KEEPER_ABILITY_LABELS = {
   extraTurn: "Ganha um turno extra",
   fullShot: "Proximo chute causa dano cheio",
@@ -1092,12 +1104,12 @@ function setupTabs() {
 }
 
 function switchTab(tabName) {
-  state.currentTab = tabName;
+  state.currentTab = PLAYER_TABS.has(tabName) ? tabName : "battle";
   if (tabName === "collection") progressTutorial("collection");
-  if (tabName === "competitive") refreshLeaderboard({ force: true });
-  if (tabName === "online") refreshOnlineLobbies({ force: true });
+  if (state.currentTab === "competitive") refreshLeaderboard({ force: true });
+  if (state.currentTab === "online") refreshOnlineLobbies({ force: true });
   document.querySelectorAll(".tab-button").forEach((tab) => {
-    tab.classList.toggle("is-active", tab.dataset.tab === tabName);
+    tab.classList.toggle("is-active", tab.dataset.tab === state.currentTab);
   });
   document.querySelectorAll(".view").forEach((view) => {
     view.classList.toggle("is-active", view.id === `view-${state.currentTab}`);
@@ -1177,7 +1189,6 @@ function buttonImageIcon(button, label) {
     Torneios: "trophy",
     Pacotinhos: "pack",
     Colecao: "book",
-    Edit: "edit",
     Amigos: "friends",
     Trocas: "trade",
     Loja: "shop",
@@ -1419,7 +1430,7 @@ function setupActions() {
     state.selectedTrade.wish = event.target.value;
   });
 
-  setupEditActions();
+  if (ENABLE_PLAYER_EDIT) setupEditActions();
 
   document.getElementById("tournament-list").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-tournament]");
@@ -3112,7 +3123,7 @@ function renderAll() {
   renderBattle();
   renderPacks();
   renderCollection();
-  renderEdit();
+  if (ENABLE_PLAYER_EDIT) renderEdit();
   renderFriends();
   renderTrade();
   renderOnline();
