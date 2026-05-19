@@ -541,6 +541,46 @@ function cleanText(value, fallback, maxLength) {
   return text || fallback;
 }
 
+function profileInitial(name = "") {
+  const letter = String(name || "Visitante").trim().charAt(0) || "V";
+  return letter.toLocaleUpperCase("pt-BR");
+}
+
+function profileAvatarUrl(profile) {
+  const value = String(profile?.authPicture || "").trim();
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url.href : "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function renderProfileAvatar(element, profile) {
+  if (!element) return;
+  const avatarUrl = profileAvatarUrl(profile);
+  element.textContent = profileInitial(profile?.name);
+  element.classList.toggle("has-image", Boolean(avatarUrl));
+  element.style.backgroundImage = avatarUrl ? `url("${avatarUrl.replace(/"/g, "%22")}")` : "";
+}
+
+function profileProviderText(profile) {
+  if (!profile) return "Perfil";
+  if (profile.authProvider === "firebase") return "Google";
+  return "Nome/PIN";
+}
+
+function profileMetaText(profile) {
+  if (!profile) return "Save anonimo sincronizado neste navegador.";
+  if (profile.authProvider === "firebase") {
+    return profile.authEmail
+      ? `Conta Google conectada: ${profile.authEmail}`
+      : "Conta Google conectada. Colecao, Merreis e partidas salvas no servidor.";
+  }
+  return "Colecao, Merreis e progresso salvos no servidor por nome/PIN.";
+}
+
 function nextCatalogNumber() {
   return MONSTERS.reduce((max, monster) => Math.max(max, Number(monster.number) || 0), 0) + 1;
 }
@@ -839,9 +879,13 @@ function applyProfile(profile) {
 
 function updateProfileStatus() {
   const label = document.getElementById("profile-name-label");
+  const provider = document.getElementById("profile-provider-label");
+  const avatar = document.getElementById("profile-avatar");
   const button = document.getElementById("profile-button");
   if (!label || !button) return;
   label.textContent = state.server.profile?.name || "Visitante";
+  if (provider) provider.textContent = profileProviderText(state.server.profile);
+  renderProfileAvatar(avatar, state.server.profile);
   button.dataset.profileState = state.server.profile ? "logged" : "guest";
 }
 
@@ -1893,10 +1937,10 @@ async function loginWithFirebase(providerId = "google") {
     }
     applyProfile(payload.profile);
     setEntryGateDismissed(true);
-    setServerStatus("online", "Salvo");
+    setServerStatus("online", payload.migratedGuestSave ? "Migrado" : "Salvo");
     reconnectOnlineSocket();
     closeProfileModal();
-    state.firebase.message = "";
+    state.firebase.message = payload.migratedGuestSave ? "Progresso visitante importado para sua conta Google." : "";
     renderAll();
   } catch (error) {
     const message = firebaseErrorMessage(error, providerId);
@@ -1989,21 +2033,22 @@ function renderProfileModal() {
   const profile = state.server.profile;
   const currentName = document.getElementById("profile-current-name");
   const currentMeta = document.getElementById("profile-current-meta");
+  const currentAvatar = document.getElementById("profile-current-avatar");
   const title = document.getElementById("profile-title");
   const submit = document.getElementById("profile-submit-button");
   const message = document.getElementById("profile-message");
   const logoutButton = document.getElementById("profile-logout-button");
   if (!currentName || !currentMeta || !title || !submit || !message || !logoutButton) return;
 
+  renderProfileAvatar(currentAvatar, profile);
   currentName.textContent = profile?.name || "Visitante";
-  currentMeta.textContent = profile
-    ? `Colecao, Merreis e progresso salvos no servidor${profile.authProvider === "firebase" ? " pelo Firebase" : ""}.`
-    : "Save anonimo sincronizado neste navegador.";
+  currentMeta.textContent = profileMetaText(profile);
   title.textContent = mode === "register" ? "Criar jogador" : "Entrar no perfil";
   submit.textContent = mode === "register" ? "Criar jogador" : "Entrar";
   message.textContent = state.server.profileMessage;
   message.classList.toggle("is-error", state.server.profileMessageType === "error");
   logoutButton.hidden = !profile;
+  logoutButton.textContent = profile?.authProvider === "firebase" ? "Sair da conta Google" : "Sair do perfil";
   document.querySelectorAll("[data-profile-mode]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.profileMode === mode);
   });

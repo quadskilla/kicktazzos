@@ -187,7 +187,9 @@ img {
 }
 
 .profile-button {
-  display: grid;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-height: auto;
   padding: 7px 10px;
   color: var(--muted);
@@ -214,6 +216,57 @@ img {
   background: none;
   border: 0;
   box-shadow: none;
+}
+
+.profile-avatar,
+.profile-current-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  color: #ffffff;
+  background:
+    radial-gradient(circle at 30% 24%, rgba(255, 255, 255, 0.44), transparent 32%),
+    linear-gradient(135deg, var(--accent), var(--accent-2));
+  background-position: center;
+  background-size: cover;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  border-radius: 50%;
+  box-shadow: 0 4px 10px rgba(28, 36, 48, 0.18);
+  font-weight: 900;
+}
+
+.profile-avatar {
+  width: 32px;
+  height: 32px;
+  font-size: 0.82rem;
+}
+
+.profile-current-avatar {
+  width: 48px;
+  height: 48px;
+  font-size: 1rem;
+}
+
+.profile-avatar.has-image,
+.profile-current-avatar.has-image {
+  color: transparent;
+  text-shadow: none;
+}
+
+.profile-copy,
+.profile-current-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.profile-copy strong,
+.profile-copy span,
+.profile-current-copy strong,
+.profile-current-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .server-pill[data-server-state="online"] strong {
@@ -4420,7 +4473,9 @@ body[data-tutorial-step="ranked"] #ranked-button {
 
 .profile-current {
   display: grid;
-  gap: 3px;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
   padding: 10px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(236, 245, 240, 0.86)),
@@ -4429,10 +4484,14 @@ body[data-tutorial-step="ranked"] #ranked-button {
   border-radius: 8px;
 }
 
-.profile-current span,
+.profile-current-copy span,
 .profile-message {
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.profile-current-copy strong {
+  color: var(--ink);
 }
 
 .profile-mode-tabs {
@@ -4497,6 +4556,16 @@ body[data-tutorial-step="ranked"] #ranked-button {
 
 .profile-logout[hidden] {
   display: none;
+}
+
+.profile-logout {
+  min-height: 38px;
+  color: #ffffff;
+  background:
+    linear-gradient(180deg, rgba(180, 35, 24, 0.82), rgba(128, 22, 16, 0.94)),
+    var(--recess-action) center / cover no-repeat;
+  border: 1px solid rgba(128, 22, 16, 0.28);
+  box-shadow: 0 4px 0 rgba(128, 22, 16, 0.22);
 }
 
 @media (max-width: 1180px) {

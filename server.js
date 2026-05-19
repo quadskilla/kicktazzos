@@ -461,6 +461,15 @@ function firebaseProfileEntry(profiles, uid) {
   )) || null;
 }
 
+function safeProfileImageUrl(value) {
+  try {
+    const url = new URL(String(value || ""));
+    return url.protocol === "https:" ? url.href.slice(0, 500) : "";
+  } catch (error) {
+    return "";
+  }
+}
+
 function profileEntryForPlayer(profiles, playerId) {
   return Object.entries(profiles.profiles || {}).find(([, profile]) => (
     profile?.playerId === playerId
@@ -469,12 +478,17 @@ function profileEntryForPlayer(profiles, playerId) {
 
 function publicProfile(profile) {
   if (!profile) return null;
+  const firebaseAuth = profile.authProviders?.firebase || null;
   return {
     playerId: profile.playerId,
     name: profile.name,
     createdAt: profile.createdAt,
     lastLoginAt: profile.lastLoginAt || profile.createdAt,
-    authProvider: profile.authProviders?.firebase ? "firebase" : "pin"
+    authProvider: firebaseAuth ? "firebase" : "pin",
+    authLabel: firebaseAuth ? "Google" : "Nome/PIN",
+    authEmail: firebaseAuth ? safeText(firebaseAuth.email, "", 160) : "",
+    authEmailVerified: firebaseAuth ? Boolean(firebaseAuth.emailVerified) : false,
+    authPicture: firebaseAuth ? safeProfileImageUrl(firebaseAuth.picture) : ""
   };
 }
 
@@ -2578,9 +2592,21 @@ async function loginFirebaseProfile({ currentPlayerId, decodedToken }) {
     await writeProfiles(profiles);
 
     const record = await readSave(profile.playerId);
-    const save = normalizeServerSave(record?.save || defaultServerSave());
-    if (!record) await writeSave(profile.playerId, save);
-    return { profile, save };
+    let save = normalizeServerSave(record?.save || defaultServerSave());
+    let migratedGuestSave = false;
+
+    if (existingFirebaseEntry && !currentProfileEntry && currentPlayerId && currentPlayerId !== profile.playerId) {
+      const guestRecord = await readSave(currentPlayerId);
+      const guestSave = normalizeServerSave(guestRecord?.save || defaultServerSave());
+      if (guestRecord && hasServerEconomyProgress(guestSave) && (!record || !hasServerEconomyProgress(save))) {
+        save = { ...guestSave, migratedFromLocalAt: now };
+        await writeSave(profile.playerId, save);
+        migratedGuestSave = true;
+      }
+    }
+
+    if (!record && !migratedGuestSave) await writeSave(profile.playerId, save);
+    return { profile, save, migratedGuestSave };
   }
 
   let key = firebaseProfileKey(uid);
@@ -2605,8 +2631,10 @@ async function loginFirebaseProfile({ currentPlayerId, decodedToken }) {
 
   const currentRecord = currentPlayerId ? await readOrCreateSave(currentPlayerId) : null;
   const save = normalizeServerSave(currentRecord?.save || defaultServerSave());
+  const migratedGuestSave = Boolean(currentRecord && hasServerEconomyProgress(save));
+  if (migratedGuestSave) save.migratedFromLocalAt = now;
   await writeSave(playerId, save);
-  return { profile, save };
+  return { profile, save, migratedGuestSave };
 }
 
 function defaultServerSave() {
@@ -3770,7 +3798,8 @@ async function handleApi(req, res, url) {
         ok: true,
         playerId: result.profile.playerId,
         profile: publicProfile(result.profile),
-        save: result.save
+        save: result.save,
+        migratedGuestSave: Boolean(result.migratedGuestSave)
       }, { "Set-Cookie": playerCookie(result.profile.playerId) });
     } catch (error) {
       json(res, error.status || 500, {
