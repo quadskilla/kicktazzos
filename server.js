@@ -27,6 +27,8 @@ const ONLINE_LOBBY_TTL_MS = 45 * 60 * 1000;
 const ONLINE_PLAYER_IDLE_MS = 8 * 60 * 1000;
 const ONLINE_PLAYER_AWAY_MS = Number(process.env.ONLINE_PLAYER_AWAY_MS) || 15000;
 const ONLINE_FORFEIT_GRACE_MS = Number(process.env.ONLINE_FORFEIT_GRACE_MS) || 60000;
+const ACCOUNT_EVENT_RETENTION = Math.max(50, Math.floor(Number(process.env.ACCOUNT_EVENT_RETENTION) || 500));
+const ACCOUNT_EVENT_DATA_BYTES = 4096;
 const FIREBASE_AUTH_PROVIDER_LABELS = {
   google: "Google",
   facebook: "Facebook"
@@ -214,11 +216,20 @@ async function initializeStorage() {
       updated_at TEXT NOT NULL,
       save_json TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS account_events (
+      id TEXT PRIMARY KEY,
+      player_id TEXT NOT NULL,
+      type TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      data_json TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS lobbies (
       id TEXT PRIMARY KEY,
       updated_at INTEGER NOT NULL,
       data_json TEXT NOT NULL
     );
+    CREATE INDEX IF NOT EXISTS idx_account_events_player_created ON account_events(player_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_account_events_type_created ON account_events(type, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_lobbies_updated_at ON lobbies(updated_at);
   `);
   await migrateJsonStorageToDatabase();
@@ -731,6 +742,108 @@ async function requireProfileForPlayer(playerId) {
     throw error;
   }
   return profile;
+}
+
+function cleanAccountEventType(type) {
+  return String(type || "event")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9:_-]+/g, "_")
+    .slice(0, 64) || "event";
+}
+
+function accountEventDataJson(data = {}) {
+  const payload = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+  try {
+    const jsonText = JSON.stringify(payload);
+    if (Buffer.byteLength(jsonText, "utf8") <= ACCOUNT_EVENT_DATA_BYTES) return jsonText;
+  } catch (error) {
+    return "{}";
+  }
+  return JSON.stringify({ truncated: true });
+}
+
+function publicAccountEvent(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    type: row.type,
+    createdAt: row.created_at,
+    data: jsonFromDb(row.data_json, {})
+  };
+}
+
+function accountEventBalance(save = {}) {
+  return {
+    merreis: Math.max(0, Math.floor(Number(save.merreis)) || 0),
+    fragments: Math.max(0, Math.floor(Number(save.fragments)) || 0),
+    trophies: Math.max(0, Math.floor(Number(save.trophies)) || 0)
+  };
+}
+
+function accountEventMonster(monster) {
+  if (!monster) return null;
+  return {
+    id: monster.id,
+    number: monster.number,
+    name: monster.name,
+    rarity: monster.rarity
+  };
+}
+
+function accountEventPulls(pulls = []) {
+  return Array.isArray(pulls)
+    ? pulls.map((pull) => ({
+      monster: accountEventMonster(MONSTER_BY_ID[pull.monsterId]),
+      isNew: Boolean(pull.isNew),
+      fragments: Math.max(0, Math.floor(Number(pull.fragments)) || 0)
+    })).filter((pull) => pull.monster)
+    : [];
+}
+
+function recordAccountEvent(playerId, type, data = {}) {
+  if (!isValidPlayerId(playerId)) return null;
+  const dataJson = accountEventDataJson(data);
+  const event = {
+    id: crypto.randomUUID(),
+    playerId,
+    type: cleanAccountEventType(type),
+    createdAt: new Date().toISOString(),
+    data: jsonFromDb(dataJson, {})
+  };
+
+  try {
+    db().prepare(`
+      INSERT INTO account_events (id, player_id, type, created_at, data_json)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(event.id, event.playerId, event.type, event.createdAt, dataJson);
+    db().prepare(`
+      DELETE FROM account_events
+      WHERE player_id = ?
+        AND id NOT IN (
+          SELECT id FROM account_events
+          WHERE player_id = ?
+          ORDER BY created_at DESC
+          LIMIT ?
+        )
+    `).run(playerId, playerId, ACCOUNT_EVENT_RETENTION);
+    return event;
+  } catch (error) {
+    console.error("Erro ao registrar evento de conta.", error);
+    return null;
+  }
+}
+
+function accountEventsForPlayer(playerId, limit = 40) {
+  if (!isValidPlayerId(playerId)) return [];
+  const safeLimit = clamp(Math.floor(Number(limit)) || 40, 1, 100);
+  return db().prepare(`
+    SELECT id, player_id, type, created_at, data_json
+    FROM account_events
+    WHERE player_id = ?
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(playerId, safeLimit).map(publicAccountEvent).filter(Boolean);
 }
 
 function profilesByPlayerId(profiles) {
@@ -2553,8 +2666,13 @@ async function registerProfile({ currentPlayerId, name, pin }) {
 
   const currentRecord = currentPlayerId ? await readOrCreateSave(currentPlayerId) : null;
   const profileSave = normalizeServerSave(currentRecord?.save || defaultServerSave());
+  const migratedGuestSave = Boolean(currentRecord && hasServerEconomyProgress(profileSave));
   await writeSave(playerId, profileSave);
-  return { profile, save: profileSave };
+  recordAccountEvent(playerId, "account:create", {
+    method: "pin",
+    migratedGuestSave
+  });
+  return { profile, save: profileSave, migratedGuestSave };
 }
 
 async function loginProfile({ name, pin }) {
@@ -2574,6 +2692,7 @@ async function loginProfile({ name, pin }) {
   const record = await readSave(profile.playerId);
   const save = normalizeServerSave(record?.save || defaultServerSave());
   if (!record) await writeSave(profile.playerId, save);
+  recordAccountEvent(profile.playerId, "account:login", { method: "pin" });
   return { profile, save };
 }
 
@@ -2621,6 +2740,12 @@ async function loginFirebaseProfile({ currentPlayerId, decodedToken }) {
     }
 
     if (!record && !migratedGuestSave) await writeSave(profile.playerId, save);
+    recordAccountEvent(profile.playerId, "account:login", {
+      method: "firebase",
+      provider: authData.provider,
+      emailVerified: authData.emailVerified,
+      migratedGuestSave
+    });
     return { profile, save, migratedGuestSave };
   }
 
@@ -2649,6 +2774,12 @@ async function loginFirebaseProfile({ currentPlayerId, decodedToken }) {
   const migratedGuestSave = Boolean(currentRecord && hasServerEconomyProgress(save));
   if (migratedGuestSave) save.migratedFromLocalAt = now;
   await writeSave(playerId, save);
+  recordAccountEvent(playerId, "account:create", {
+    method: "firebase",
+    provider: authData.provider,
+    emailVerified: authData.emailVerified,
+    migratedGuestSave
+  });
   return { profile, save, migratedGuestSave };
 }
 
@@ -3189,6 +3320,16 @@ async function openPackForPlayer(playerId, packId) {
   if (pack.id === "familia") save.fragments += 8;
   progressServerMission(save, "pack", 1);
   await writeSave(playerId, save);
+  recordAccountEvent(playerId, "pack:open", {
+    pack: {
+      id: pack.id,
+      name: pack.name,
+      cost: pack.cost,
+      cards: pack.cards
+    },
+    pulls: accountEventPulls(pulls),
+    balances: accountEventBalance(save)
+  });
   return { save, pulls, pack };
 }
 
@@ -3204,9 +3345,10 @@ async function buyShopItemForPlayer(playerId, itemId) {
   const record = await readOrCreateSave(playerId);
   const save = normalizeServerSave(record.save);
   save.cosmetics = save.cosmetics || {};
+  const alreadyOwned = Boolean(save.cosmetics[item.id]);
 
   let message = "";
-  if (save.cosmetics[item.id]) {
+  if (alreadyOwned) {
     save.selectedCosmetic = item.id;
     message = `${item.name} ativado.`;
   } else {
@@ -3223,6 +3365,11 @@ async function buyShopItemForPlayer(playerId, itemId) {
   }
 
   await writeSave(playerId, save);
+  recordAccountEvent(playerId, alreadyOwned ? "shop:activate" : "shop:buy", {
+    item: { id: item.id, name: item.name },
+    cost: alreadyOwned ? 0 : item.cost,
+    balances: accountEventBalance(save)
+  });
   return { save, item, message };
 }
 
@@ -3266,6 +3413,12 @@ async function upgradeMonsterForPlayer(playerId, monsterId) {
   save.upgrades[monsterId] = level + 1;
   progressServerMission(save, "evolve", 1);
   await writeSave(playerId, save);
+  recordAccountEvent(playerId, "tazzo:upgrade", {
+    monster: accountEventMonster(monster),
+    level: level + 1,
+    cost,
+    balances: accountEventBalance(save)
+  });
   return { save, monster, level: level + 1, cost };
 }
 
@@ -3298,6 +3451,14 @@ async function claimMissionForPlayer(playerId, missionId) {
   save.missions[mission.id].claimed = true;
   save.merreis += mission.reward;
   await writeSave(playerId, save);
+  recordAccountEvent(playerId, "mission:claim", {
+    mission: {
+      id: mission.id,
+      title: mission.title,
+      reward: mission.reward
+    },
+    balances: accountEventBalance(save)
+  });
   return { save, mission };
 }
 
@@ -3331,6 +3492,12 @@ async function tradeForPlayer(playerId, offerId, wishId) {
   save.merreis -= 60;
   progressServerMission(save, "trade", 1);
   await writeSave(playerId, save);
+  recordAccountEvent(playerId, "trade:complete", {
+    offered: accountEventMonster(offered),
+    received: accountEventMonster(received),
+    cost: 60,
+    balances: accountEventBalance(save)
+  });
   return {
     save,
     offered,
@@ -3364,6 +3531,12 @@ async function sendFriendGiftForPlayer(playerId, friendId) {
   save.merreis += 80;
   progressServerMission(save, "gift", 1);
   await writeSave(playerId, save);
+  recordAccountEvent(playerId, "friend:gift", {
+    friend: { id: friend.id, name: friend.name },
+    reward: 80,
+    date: today,
+    balances: accountEventBalance(save)
+  });
   return {
     save,
     friend,
@@ -3398,6 +3571,12 @@ async function startRankedForPlayer(playerId) {
   save.activeCompetitive = match;
   progressServerMission(save, "ranked", 1);
   await writeSave(playerId, save);
+  recordAccountEvent(playerId, "ranked:start", {
+    matchId: match.id,
+    rank: rank.name,
+    opponent: opponent.name,
+    balances: accountEventBalance(save)
+  });
   return { save, match, rank, opponent };
 }
 
@@ -3440,6 +3619,16 @@ async function startTournamentForPlayer(playerId, tournamentId) {
   save.activeCompetitive = match;
   progressServerMission(save, "tournament", 1);
   await writeSave(playerId, save);
+  recordAccountEvent(playerId, "tournament:start", {
+    matchId: match.id,
+    tournament: {
+      id: tournament.id,
+      name: tournament.name,
+      entry: tournament.entry
+    },
+    opponent: opponent.name,
+    balances: accountEventBalance(save)
+  });
   return { save, match, tournament, opponent };
 }
 
@@ -3534,8 +3723,11 @@ async function resolveCompetitiveForPlayer(playerId, payload = {}) {
 
   const reason = String(payload.reason || "").slice(0, 80);
   let result;
+  let eventOutcome = "loss";
+  let eventTournament = null;
   if (match.type === "ranked") {
     const outcome = ["win", "draw", "loss"].includes(payload.outcome) ? payload.outcome : "loss";
+    eventOutcome = outcome;
     result = rankedResolution(save, outcome, reason);
   } else if (match.type === "tournament") {
     const tournament = TOURNAMENTS.find((item) => item.id === match.tournamentId);
@@ -3545,6 +3737,8 @@ async function resolveCompetitiveForPlayer(playerId, payload = {}) {
       error.save = save;
       throw error;
     }
+    eventOutcome = payload.won ? "win" : "loss";
+    eventTournament = { id: tournament.id, name: tournament.name };
     result = tournamentResolution(save, tournament, Boolean(payload.won), reason);
   } else {
     const error = new Error("Tipo competitivo invalido.");
@@ -3555,6 +3749,19 @@ async function resolveCompetitiveForPlayer(playerId, payload = {}) {
 
   save.activeCompetitive = null;
   await writeSave(playerId, save);
+  recordAccountEvent(playerId, match.type === "ranked" ? "ranked:resolve" : "tournament:resolve", {
+    matchId: match.id,
+    type: match.type,
+    outcome: eventOutcome,
+    reason,
+    tournament: eventTournament,
+    status: result.status,
+    rewards: Array.isArray(result.rewards) ? result.rewards : [],
+    packReward: Boolean(result.packReward),
+    pack: result.pack || null,
+    pulls: accountEventPulls(result.pulls),
+    balances: accountEventBalance(save)
+  });
   return { save, match, result };
 }
 
@@ -3607,6 +3814,32 @@ async function handleApi(req, res, url) {
       playerId,
       profile: publicProfile(profile)
     }, headers);
+    return;
+  }
+
+  if (url.pathname === "/api/account/events") {
+    if (req.method !== "GET") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "GET"
+      });
+      return;
+    }
+    try {
+      const profile = await requireProfileForPlayer(playerId);
+      const limit = clamp(Math.floor(Number(url.searchParams.get("limit"))) || 40, 1, 100);
+      json(res, 200, {
+        ok: true,
+        playerId,
+        profile: publicProfile(profile),
+        events: accountEventsForPlayer(playerId, limit)
+      }, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao carregar historico."
+      }, headers);
+    }
     return;
   }
 
@@ -3886,7 +4119,8 @@ async function handleApi(req, res, url) {
         ok: true,
         playerId: result.profile.playerId,
         profile: publicProfile(result.profile),
-        save: result.save
+        save: result.save,
+        migratedGuestSave: Boolean(result.migratedGuestSave)
       }, { "Set-Cookie": playerCookie(result.profile.playerId) });
     } catch (error) {
       json(res, error.status || 500, {
@@ -3905,6 +4139,8 @@ async function handleApi(req, res, url) {
       });
       return;
     }
+    const profile = await profileForPlayer(playerId);
+    if (profile) recordAccountEvent(playerId, "account:logout", {});
     json(res, 200, { ok: true }, { "Set-Cookie": clearPlayerCookie() });
     return;
   }
@@ -4259,6 +4495,7 @@ async function handleApi(req, res, url) {
 
   if (req.method === "DELETE") {
     await requireProfileForPlayer(playerId);
+    recordAccountEvent(playerId, "save:delete", {});
     await deleteSave(playerId);
     json(res, 200, { ok: true, playerId }, headers);
     return;
