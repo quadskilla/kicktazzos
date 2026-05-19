@@ -37,6 +37,7 @@ const SERVER_TOURNAMENT_START_ENDPOINT = "/api/tournament/start";
 const SERVER_COMPETITIVE_RESOLVE_ENDPOINT = "/api/competitive/resolve";
 const SERVER_SAVE_DEBOUNCE_MS = 450;
 const ONLINE_WS_RECONNECT_MS = 2200;
+const ENTRY_GATE_SESSION_KEY = "kick-tazzos-entry-gate-v1";
 const TODAY_KEY = new Date().toISOString().slice(0, 10);
 const PACK_OPENING_DURATION_MS = 1500;
 const PACK_CLOSE_AFTER_REVEAL_MS = 900;
@@ -146,6 +147,8 @@ const state = {
     saveTimer: null,
     startupSave: cloneSave(startupLocalSave),
     localChangedWhileLoading: false,
+    entryGateDismissed: initialEntryGateDismissed(),
+    entryGatePaused: false,
     status: "local",
     message: "Local"
   },
@@ -200,6 +203,26 @@ function loadSave() {
   } catch (error) {
     return defaultSave();
   }
+}
+
+function initialEntryGateDismissed() {
+  try {
+    return sessionStorage.getItem(ENTRY_GATE_SESSION_KEY) === "guest";
+  } catch (error) {
+    return false;
+  }
+}
+
+function setEntryGateDismissed(value) {
+  state.server.entryGateDismissed = Boolean(value);
+  try {
+    if (value) {
+      sessionStorage.setItem(ENTRY_GATE_SESSION_KEY, "guest");
+    } else {
+      sessionStorage.removeItem(ENTRY_GATE_SESSION_KEY);
+    }
+  } catch (error) {}
+  renderEntryGate();
 }
 
 function cloneSave(save) {
@@ -701,6 +724,7 @@ function updateServerStatus() {
   const pill = status.closest(".server-pill");
   status.textContent = state.server.message;
   if (pill) pill.dataset.serverState = state.server.status;
+  renderEntryGate();
 }
 
 function onlineWebSocketUrl() {
@@ -791,7 +815,9 @@ function reconnectOnlineSocket() {
 
 function applyProfile(profile) {
   state.server.profile = profile || null;
+  if (profile) state.server.entryGatePaused = false;
   updateProfileStatus();
+  renderEntryGate();
   const modal = document.getElementById("profile-modal");
   if (modal && !modal.hidden) renderProfileModal();
   refreshLeaderboard();
@@ -994,6 +1020,7 @@ function setup() {
   setupTabs();
   setupFilters();
   setupActions();
+  setupEntryGateActions();
   setupProfileActions();
   setupMusicPlayer();
   setupOnlineLobbyRealtime();
@@ -1726,7 +1753,7 @@ function setupProfileActions() {
   const logoutButton = document.getElementById("profile-logout-button");
   if (!profileButton || !profileModal || !closeButton || !form || !logoutButton) return;
 
-  profileButton.addEventListener("click", openProfileModal);
+  profileButton.addEventListener("click", () => openProfileModal());
   closeButton.addEventListener("click", closeProfileModal);
   profileModal.addEventListener("click", (event) => {
     if (event.target === profileModal) closeProfileModal();
@@ -1742,8 +1769,53 @@ function setupProfileActions() {
   logoutButton.addEventListener("click", logoutProfile);
 }
 
-function openProfileModal() {
+function setupEntryGateActions() {
+  const gate = document.getElementById("entry-gate");
+  const loginButton = document.getElementById("entry-login-button");
+  const registerButton = document.getElementById("entry-register-button");
+  const guestButton = document.getElementById("entry-guest-button");
+  if (!gate || !loginButton || !registerButton || !guestButton) return;
+
+  loginButton.addEventListener("click", () => openProfileModal("login", { fromEntryGate: true }));
+  registerButton.addEventListener("click", () => openProfileModal("register", { fromEntryGate: true }));
+  guestButton.addEventListener("click", () => {
+    state.server.entryGatePaused = false;
+    setEntryGateDismissed(true);
+  });
+}
+
+function entryGateStatusText() {
+  if (!canUseServerSave()) return "Abra pelo servidor online para criar ou entrar em um perfil.";
+  if (state.server.loading || state.server.status === "connecting") return "Conectando ao servidor...";
+  if (!state.server.enabled || state.server.status === "error") return "Servidor indisponivel agora. Visitante usa save local.";
+  return "Servidor online. O perfil salva seu progresso entre dispositivos e redeploys.";
+}
+
+function renderEntryGate() {
+  const gate = document.getElementById("entry-gate");
+  if (!gate) return;
+  const status = document.getElementById("entry-status");
+  const loginButton = document.getElementById("entry-login-button");
+  const registerButton = document.getElementById("entry-register-button");
+  const shouldShow = canUseServerSave()
+    && !state.server.profile
+    && !state.server.entryGateDismissed
+    && !state.server.entryGatePaused;
+  gate.hidden = !shouldShow;
+  if (status) status.textContent = entryGateStatusText();
+
+  const accountDisabled = state.server.loading || !state.server.enabled;
+  if (loginButton) loginButton.disabled = accountDisabled;
+  if (registerButton) registerButton.disabled = accountDisabled;
+}
+
+function openProfileModal(mode = state.server.profileMode, options = {}) {
   state.server.profileMessage = "";
+  state.server.profileMode = mode === "register" ? "register" : "login";
+  if (options.fromEntryGate) {
+    state.server.entryGatePaused = true;
+    renderEntryGate();
+  }
   renderProfileModal();
   const modal = document.getElementById("profile-modal");
   modal.hidden = false;
@@ -1752,6 +1824,8 @@ function openProfileModal() {
 
 function closeProfileModal() {
   document.getElementById("profile-modal").hidden = true;
+  state.server.entryGatePaused = false;
+  renderEntryGate();
 }
 
 function renderProfileModal() {
@@ -1810,6 +1884,7 @@ async function submitProfileForm(event) {
       persistLocalSave();
     }
     applyProfile(payload.profile);
+    setEntryGateDismissed(true);
     setServerStatus("online", "Salvo");
     reconnectOnlineSocket();
     closeProfileModal();
@@ -1836,6 +1911,7 @@ async function logoutProfile() {
   state.save = defaultSave();
   persistLocalSave();
   applyProfile(null);
+  setEntryGateDismissed(false);
   closeProfileModal();
   setServerStatus("connecting", "Conectando");
   await loadServerSave();
@@ -2637,6 +2713,7 @@ function renderAll() {
   renderShop();
   renderTutorial();
   renderMissions();
+  renderEntryGate();
   renderTutorialCoach();
   renderTutorialPopover();
   renderTutorialResultPopup();
