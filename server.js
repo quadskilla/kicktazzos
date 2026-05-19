@@ -2307,7 +2307,7 @@ async function readSave(playerId) {
   if (!row) return null;
   return {
     updatedAt: row.updated_at,
-    save: jsonFromDb(row.save_json, {})
+    save: normalizeServerSave(jsonFromDb(row.save_json, {}))
   };
 }
 
@@ -2318,11 +2318,12 @@ async function writeSave(playerId, save) {
     throw error;
   }
   const updatedAt = new Date().toISOString();
+  const normalizedSave = normalizeServerSave(save);
   db().prepare(`
     INSERT OR REPLACE INTO saves (player_id, updated_at, save_json)
     VALUES (?, ?, ?)
-  `).run(playerId, updatedAt, JSON.stringify(save || {}));
-  return { updatedAt, save };
+  `).run(playerId, updatedAt, JSON.stringify(normalizedSave));
+  return { updatedAt, save: normalizedSave };
 }
 
 async function deleteSave(playerId) {
@@ -2424,12 +2425,93 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function sanitizeServerId(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
+function normalizeServerRarity(rarity, fallback = "Comum") {
+  if (rarity === "Mitico") return "Mistico";
+  return RARITIES[rarity] ? rarity : fallback;
+}
+
+function sanitizeServerCustomCatalog(items = []) {
+  if (!Array.isArray(items)) return [];
+  const seen = new Set();
+  return items.map((item) => {
+    if (!item || typeof item !== "object") return null;
+    const id = sanitizeServerId(item.id || item.name);
+    if (!id || seen.has(id) || MONSTER_BY_ID[id]) return null;
+    seen.add(id);
+
+    const rawTypes = Array.isArray(item.types) ? item.types : [item.type || item.role];
+    const validTypes = rawTypes
+      .map((type) => String(type || "").trim())
+      .filter((type) => type === "Goleiro" || GAME_DATA.TYPES?.[type])
+      .slice(0, 2);
+    const keeper = item.isGoalkeeper === true || item.role === "Goleiro" || validTypes.includes("Goleiro") || Boolean(item.keeperAbility);
+    const types = keeper ? ["Goleiro"] : validTypes.filter((type) => type !== "Goleiro");
+    const rarity = normalizeServerRarity(item.rarity);
+    const stat = (value, fallback) => clamp(Math.round(Number(value)) || fallback, 1, 999);
+
+    return {
+      ...item,
+      id,
+      number: clamp(Math.floor(Number(item.number)) || 999, 1, 9999),
+      name: safeText(item.name, "Novo Tazzo", 48),
+      types: types.length ? types : ["Atacante"],
+      rarity,
+      vitality: keeper ? 0 : stat(item.vitality, 90),
+      shot: keeper ? 0 : stat(item.shot, 70),
+      dribble: keeper ? 0 : stat(item.dribble, 70),
+      speed: keeper ? 0 : stat(item.speed, 70),
+      role: keeper ? "Goleiro" : safeText(item.role, types[0] || "Atacante", 36),
+      keeperAbility: keeper ? safeText(item.keeperAbility, "extraTurn", 32) : null,
+      cost: clamp(Math.round(Number(item.cost)) || RARITIES[rarity]?.cost || 1, 1, 99),
+      custom: true
+    };
+  }).filter(Boolean);
+}
+
+function serverCatalogForSave(save = {}) {
+  const catalog = new Map(MONSTERS.map((monster) => [monster.id, monster]));
+  sanitizeServerCustomCatalog(save.customTazzos || []).forEach((custom) => {
+    catalog.set(custom.id, custom);
+  });
+  return catalog;
+}
+
+function isServerGoalkeeperMonster(monster) {
+  return Boolean(monster?.keeperAbility || monster?.role === "Goleiro" || monster?.types?.includes("Goleiro"));
+}
+
+function normalizeServerTeam(team, collection, catalog, fallbackTeam) {
+  const picked = Array.isArray(team) ? team : [];
+  const fallback = Array.isArray(fallbackTeam) ? fallbackTeam : [];
+  return [...picked, ...fallback]
+    .filter((id, index, array) => array.indexOf(id) === index)
+    .filter((id) => collection[id] > 0 && catalog.has(id) && !isServerGoalkeeperMonster(catalog.get(id)))
+    .slice(0, 3);
+}
+
+function normalizeServerGoalkeeper(goalkeeper, collection, catalog, fallbackGoalkeeper) {
+  const candidates = [goalkeeper, fallbackGoalkeeper, ...catalog.keys()];
+  return candidates.find((id) => collection[id] > 0 && catalog.has(id) && isServerGoalkeeperMonster(catalog.get(id))) || "";
+}
+
 function normalizeServerSave(rawSave = {}) {
   const fresh = defaultServerSave();
   const save = rawSave && typeof rawSave === "object" ? rawSave : {};
+  const customTazzos = sanitizeServerCustomCatalog(save.customTazzos || []);
+  const catalog = serverCatalogForSave({ ...save, customTazzos });
+  const musicVolume = Number(save.musicVolume ?? fresh.musicVolume);
   const collection = {};
   Object.entries({ ...fresh.collection, ...(save.collection || {}) }).forEach(([id, count]) => {
-    if (MONSTER_BY_ID[id]) collection[id] = Math.max(0, Math.floor(Number(count)) || 0);
+    if (catalog.has(id)) collection[id] = Math.max(0, Math.floor(Number(count)) || 0);
   });
   const missions = Object.fromEntries(MISSIONS.map((mission) => [
     mission.id,
@@ -2457,11 +2539,17 @@ function normalizeServerSave(rawSave = {}) {
     onlineLosses: Math.max(0, Math.floor(Number(save.onlineLosses ?? fresh.onlineLosses)) || 0),
     onlineDraws: Math.max(0, Math.floor(Number(save.onlineDraws ?? fresh.onlineDraws)) || 0),
     collection,
+    customTazzos,
+    team: normalizeServerTeam(save.team || fresh.team, collection, catalog, fresh.team),
+    goalkeeper: normalizeServerGoalkeeper(save.goalkeeper || fresh.goalkeeper, collection, catalog, fresh.goalkeeper),
     missions,
     tutorial,
     upgrades: save.upgrades && typeof save.upgrades === "object" ? save.upgrades : fresh.upgrades,
     cosmetics: save.cosmetics && typeof save.cosmetics === "object" ? save.cosmetics : fresh.cosmetics,
-    packPity: sanitizePackPity(save.packPity || fresh.packPity)
+    friendGifts: save.friendGifts && typeof save.friendGifts === "object" ? save.friendGifts : fresh.friendGifts,
+    packPity: sanitizePackPity(save.packPity || fresh.packPity),
+    musicTrackIndex: Math.max(0, Math.floor(Number(save.musicTrackIndex ?? fresh.musicTrackIndex)) || 0),
+    musicVolume: Number.isFinite(musicVolume) ? clamp(musicVolume, 0, 1) : fresh.musicVolume
   };
 }
 
@@ -2589,8 +2677,9 @@ function missionStatus(save, mission) {
 }
 
 function serverTeamCost(save) {
-  const fieldCost = (save.team || []).reduce((sum, id) => sum + (MONSTER_BY_ID[id]?.cost || 0), 0);
-  const keeperCost = MONSTER_BY_ID[save.goalkeeper]?.cost || 0;
+  const catalog = serverCatalogForSave(save);
+  const fieldCost = (save.team || []).reduce((sum, id) => sum + (catalog.get(id)?.cost || 0), 0);
+  const keeperCost = catalog.get(save.goalkeeper)?.cost || 0;
   return fieldCost + keeperCost;
 }
 
@@ -2614,7 +2703,8 @@ function activeCompetitiveMatch(type, extra = {}) {
 }
 
 function ownedCollectionCount(save) {
-  return MONSTERS.filter((monster) => (save.collection?.[monster.id] || 0) > 0).length;
+  const catalog = serverCatalogForSave(save);
+  return [...catalog.keys()].filter((id) => (save.collection?.[id] || 0) > 0).length;
 }
 
 async function leaderboardRows(limit = 20) {
@@ -2638,7 +2728,7 @@ async function leaderboardRows(limit = 20) {
         onlineLosses: Number(save.onlineLosses) || 0,
         onlineDraws: Number(save.onlineDraws) || 0,
         album: ownedCollectionCount(save),
-        albumTotal: MONSTERS.length,
+        albumTotal: MONSTERS.length + sanitizeServerCustomCatalog(save.customTazzos || []).length,
         rank: currentRankForSave(save).name,
         updatedAt: row.updated_at || profile?.lastLoginAt || profile?.createdAt || null,
         guest: !profile
@@ -3652,13 +3742,14 @@ async function handleApi(req, res, url) {
       json(res, 400, { ok: false, error: "Payload de save invalido." }, headers);
       return;
     }
-    await writeSave(playerId, payload.save);
+    const record = await writeSave(playerId, payload.save);
     const profile = await profileForPlayer(playerId);
     json(res, 200, {
       ok: true,
       playerId,
       profile: publicProfile(profile),
-      updatedAt: new Date().toISOString()
+      save: record.save,
+      updatedAt: record.updatedAt
     }, headers);
     return;
   }

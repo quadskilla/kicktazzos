@@ -87,8 +87,10 @@ function initialLobbyInviteCode() {
   }
 }
 
+const startupLocalSave = loadSave();
+
 const state = {
-  save: loadSave(),
+  save: startupLocalSave,
   currentTab: "battle",
   selectedSlot: 0,
   collectionFilters: { type: "all", rarity: "all", owned: "all" },
@@ -141,6 +143,7 @@ const state = {
     profileMessage: "",
     profileMessageType: "info",
     saveTimer: null,
+    startupSave: cloneSave(startupLocalSave),
     localChangedWhileLoading: false,
     status: "local",
     message: "Local"
@@ -198,6 +201,14 @@ function loadSave() {
   }
 }
 
+function cloneSave(save) {
+  try {
+    return JSON.parse(JSON.stringify(save || defaultSave()));
+  } catch (error) {
+    return defaultSave();
+  }
+}
+
 function normalizeSave(rawSave) {
   try {
     const save = migrateLegacySave(rawSave || defaultSave());
@@ -239,6 +250,30 @@ function normalizeSave(rawSave) {
   } catch (error) {
     return defaultSave();
   }
+}
+
+function saveProgressScore(save = {}) {
+  const normalized = normalizeSave(save);
+  const owned = Object.values(normalized.collection || {}).filter((count) => Number(count) > 0).length;
+  const copies = Object.values(normalized.collection || {}).reduce((sum, count) => sum + Math.max(0, Number(count) || 0), 0);
+  const cosmetics = Object.values(normalized.cosmetics || {}).filter(Boolean).length;
+  const tutorial = Object.values(normalized.tutorial || {}).filter(Boolean).length;
+  return owned * 1000
+    + copies * 35
+    + Math.floor((Number(normalized.merreis) || 0) / 25)
+    + Math.floor((Number(normalized.fragments) || 0) / 2)
+    + (Number(normalized.trophies) || 0)
+    + (Number(normalized.onlineTrophies) || 0)
+    + (Number(normalized.rankedWins) || 0) * 120
+    + (Number(normalized.tournamentWins) || 0) * 180
+    + (Number(normalized.onlineWins) || 0) * 160
+    + cosmetics * 250
+    + tutorial * 80;
+}
+
+function shouldMigrateLocalSaveToServer(localSave, serverSave) {
+  if (!localSave || !serverSave) return false;
+  return saveProgressScore(localSave) > saveProgressScore(serverSave) + 120;
 }
 
 function resetDailyMissions(currentMissions, freshMissions) {
@@ -515,7 +550,18 @@ async function loadServerSave() {
     refreshOnlineLobbies({ force: true });
 
     if (payload.save && !state.server.localChangedWhileLoading) {
-      state.save = normalizeSave(payload.save);
+      const serverSave = normalizeSave(payload.save);
+      const localSave = normalizeSave(state.server.startupSave || state.save);
+      if (!payload.profile && shouldMigrateLocalSaveToServer(localSave, serverSave)) {
+        state.save = localSave;
+        persistLocalSave();
+        setServerStatus("syncing", "Migrando");
+        await pushServerSave();
+        renderAll();
+        return;
+      }
+
+      state.save = serverSave;
       persistLocalSave();
       setServerStatus("online", "Online");
       renderAll();
@@ -560,6 +606,10 @@ async function pushServerSave() {
     if (!response.ok) throw new Error("Falha ao salvar no servidor");
     const payload = await response.json();
     state.server.playerId = payload.playerId || state.server.playerId;
+    if (payload.save) {
+      state.save = normalizeSave(payload.save);
+      persistLocalSave();
+    }
     applyProfile(payload.profile);
     state.server.localChangedWhileLoading = false;
     setServerStatus("online", "Salvo");
@@ -1684,8 +1734,8 @@ function renderProfileModal() {
 
   currentName.textContent = profile?.name || "Visitante";
   currentMeta.textContent = profile
-    ? "Save vinculado ao seu perfil online."
-    : "Save local com sincronizacao anonima.";
+    ? "Colecao, Merreis e progresso salvos no servidor."
+    : "Save anonimo sincronizado neste navegador.";
   title.textContent = mode === "register" ? "Criar jogador" : "Entrar no perfil";
   submit.textContent = mode === "register" ? "Criar jogador" : "Entrar";
   message.textContent = state.server.profileMessage;
