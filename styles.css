@@ -4634,7 +4634,10 @@ body[data-tutorial-step="ranked"] #ranked-button {
 
 .main-tabs {
   align-items: stretch;
+  flex-wrap: nowrap;
   gap: 9px;
+  justify-content: flex-start;
+  overflow-x: auto;
   padding: 8px;
   background: linear-gradient(180deg, rgba(12, 47, 76, 0.74), rgba(4, 20, 34, 0.88));
   border: 1px solid rgba(240, 180, 41, 0.28);
@@ -4648,6 +4651,55 @@ body[data-tutorial-step="ranked"] #ranked-button {
 
 .tab-button.image-button {
   background-size: 100% 100% !important;
+}
+
+.tab-art-button,
+.tab-art-button.is-active {
+  position: relative;
+  display: grid;
+  width: clamp(148px, 8.8vw, 190px);
+  min-width: clamp(148px, 8.8vw, 190px);
+  min-height: 0;
+  place-items: center;
+  overflow: visible;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  box-shadow: none;
+  color: transparent;
+}
+
+.tab-art-button img {
+  width: 100%;
+  max-width: none;
+  aspect-ratio: 1448 / 1086;
+  object-fit: contain;
+  filter: drop-shadow(0 8px 14px rgba(2, 8, 16, 0.36));
+  transition: filter 150ms ease, transform 150ms ease;
+}
+
+.tab-art-button span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.tab-art-button:hover img {
+  filter: drop-shadow(0 10px 18px rgba(2, 8, 16, 0.42)) saturate(1.08) brightness(1.05);
+  transform: translateY(-1px);
+}
+
+.tab-art-button.is-active img {
+  filter:
+    drop-shadow(0 0 8px rgba(240, 180, 41, 0.62))
+    drop-shadow(0 10px 18px rgba(2, 8, 16, 0.42))
+    saturate(1.14)
+    brightness(1.08);
+  transform: translateY(-2px) scale(1.035);
 }
 
 .wallet {
