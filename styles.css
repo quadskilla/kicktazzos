@@ -4323,6 +4323,64 @@ body[data-tutorial-step="ranked"] #ranked-button {
   grid-column: 1 / -1;
 }
 
+.firebase-auth-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+}
+
+.firebase-auth-actions[hidden],
+.firebase-auth-button[hidden] {
+  display: none;
+}
+
+.firebase-auth-button {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 12px;
+  color: var(--ink);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(235, 245, 252, 0.94)),
+    var(--recess-button) center / cover no-repeat;
+  border: 1px solid rgba(28, 36, 48, 0.14);
+  border-radius: 6px;
+  box-shadow: 0 4px 0 rgba(28, 36, 48, 0.1), 0 10px 18px rgba(28, 36, 48, 0.08);
+  font-weight: 900;
+}
+
+.firebase-auth-button span {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  color: #ffffff;
+  background: #1f64d8;
+  border-radius: 999px;
+  font-weight: 1000;
+}
+
+.firebase-auth-button[data-firebase-provider="facebook"] span {
+  background: #1877f2;
+}
+
+.firebase-auth-button:hover {
+  filter: saturate(1.08) brightness(1.03);
+  transform: translateY(-1px);
+}
+
+.firebase-auth-button:active {
+  box-shadow: 0 2px 0 rgba(28, 36, 48, 0.14), 0 6px 12px rgba(28, 36, 48, 0.08);
+  transform: translateY(1px);
+}
+
+.profile-firebase-actions {
+  grid-template-columns: 1fr;
+}
+
 .entry-reminder {
   font-size: 0.82rem;
 }
@@ -4507,6 +4565,10 @@ body[data-tutorial-step="ranked"] #ranked-button {
 
 @media (max-width: 560px) {
   .entry-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .firebase-auth-actions {
     grid-template-columns: 1fr;
   }
 

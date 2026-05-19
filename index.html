@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Kick Tazzos: Copa da zoeira!</title>
-  <link rel="stylesheet" href="styles.css?v=20260519-entry-gate">
+  <link rel="stylesheet" href="styles.css?v=20260519-firebase-auth">
 </head>
 <body>
   <div class="app-shell">
@@ -358,6 +358,16 @@
       <h2 id="entry-title">Entre na Copa da zoeira</h2>
       <p>Crie um jogador para guardar colecao, Merreis, ranking e partidas no servidor. Entrar como visitante continua liberado, mas fica preso a este navegador.</p>
       <div class="entry-status" id="entry-status">Conectando ao servidor...</div>
+      <div class="firebase-auth-actions" data-firebase-auth hidden>
+        <button class="firebase-auth-button" type="button" data-firebase-provider="google">
+          <span>G</span>
+          Entrar com Google
+        </button>
+        <button class="firebase-auth-button" type="button" data-firebase-provider="facebook">
+          <span>f</span>
+          Entrar com Facebook
+        </button>
+      </div>
       <div class="entry-actions">
         <button class="primary-button" type="button" id="entry-login-button">Entrar</button>
         <button class="secondary-button" type="button" id="entry-register-button">Criar jogador</button>
@@ -375,6 +385,16 @@
       <div class="profile-current">
         <strong id="profile-current-name">Visitante</strong>
         <span id="profile-current-meta">Save local com sincronizacao anonima.</span>
+      </div>
+      <div class="firebase-auth-actions profile-firebase-actions" data-firebase-auth hidden>
+        <button class="firebase-auth-button" type="button" data-firebase-provider="google">
+          <span>G</span>
+          Entrar com Google
+        </button>
+        <button class="firebase-auth-button" type="button" data-firebase-provider="facebook">
+          <span>f</span>
+          Entrar com Facebook
+        </button>
       </div>
       <div class="profile-mode-tabs" role="tablist" aria-label="Modo de perfil">
         <button type="button" class="is-active" data-profile-mode="login">Entrar</button>
@@ -416,7 +436,7 @@
   </aside>
 
   <script src="data.js?v=20260518-holos-2"></script>
-  <script src="app.js?v=20260519-entry-gate"></script>
+  <script src="app.js?v=20260519-firebase-auth"></script>
   <script src="battle-render.js?v=20260518-online-invite"></script>
   <script src="battle-engine.js?v=20260518-online-invite"></script>
 </body>

@@ -22,6 +22,8 @@ const {
 
 const STORAGE_KEY = "tazzomon-save-v1";
 const SERVER_PROFILE_ENDPOINT = "/api/profile";
+const SERVER_FIREBASE_CONFIG_ENDPOINT = "/api/firebase/config";
+const SERVER_FIREBASE_PROFILE_ENDPOINT = "/api/profile/firebase";
 const SERVER_LEADERBOARD_ENDPOINT = "/api/leaderboard";
 const SERVER_LOBBIES_ENDPOINT = "/api/lobbies";
 const SERVER_SAVE_ENDPOINT = "/api/save";
@@ -151,6 +153,18 @@ const state = {
     entryGatePaused: false,
     status: "local",
     message: "Local"
+  },
+  firebase: {
+    checked: false,
+    enabled: false,
+    loading: false,
+    config: null,
+    providers: [],
+    sdkVersion: "12.13.0",
+    modules: null,
+    auth: null,
+    currentUser: null,
+    message: ""
   },
   timerInterval: null,
   matchTimerInterval: null
@@ -1022,6 +1036,7 @@ function setup() {
   setupActions();
   setupEntryGateActions();
   setupProfileActions();
+  setupFirebaseAuth();
   setupMusicPlayer();
   setupOnlineLobbyRealtime();
   setupServerSave();
@@ -1769,6 +1784,137 @@ function setupProfileActions() {
   logoutButton.addEventListener("click", logoutProfile);
 }
 
+function setupFirebaseAuth() {
+  document.querySelectorAll("[data-firebase-provider]").forEach((button) => {
+    button.addEventListener("click", () => loginWithFirebase(button.dataset.firebaseProvider));
+  });
+  loadFirebaseAuth();
+}
+
+async function loadFirebaseAuth() {
+  if (!canUseServerSave()) {
+    state.firebase.checked = true;
+    renderFirebaseAuth();
+    return;
+  }
+
+  try {
+    const response = await fetch(SERVER_FIREBASE_CONFIG_ENDPOINT, {
+      credentials: "same-origin",
+      cache: "no-store"
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Firebase indisponivel.");
+
+    state.firebase.checked = true;
+    state.firebase.enabled = Boolean(payload.enabled && payload.config);
+    state.firebase.config = payload.config || null;
+    state.firebase.providers = Array.isArray(payload.providers) ? payload.providers : [];
+    state.firebase.sdkVersion = payload.sdkVersion || state.firebase.sdkVersion;
+    renderFirebaseAuth();
+
+    if (!state.firebase.enabled) return;
+    const version = encodeURIComponent(state.firebase.sdkVersion);
+    const [appModule, authModule] = await Promise.all([
+      import(`https://www.gstatic.com/firebasejs/${version}/firebase-app.js`),
+      import(`https://www.gstatic.com/firebasejs/${version}/firebase-auth.js`)
+    ]);
+    const app = appModule.initializeApp(state.firebase.config);
+    state.firebase.modules = authModule;
+    state.firebase.auth = authModule.getAuth(app);
+    authModule.onAuthStateChanged(state.firebase.auth, (user) => {
+      state.firebase.currentUser = user || null;
+    });
+    renderFirebaseAuth();
+  } catch (error) {
+    state.firebase.checked = true;
+    state.firebase.enabled = false;
+    state.firebase.message = "Login social nao carregou. Nome/PIN continua funcionando.";
+    renderFirebaseAuth();
+  }
+}
+
+function firebaseProviderLabel(providerId) {
+  return providerId === "facebook" ? "Facebook" : "Google";
+}
+
+function firebaseErrorMessage(error, providerId) {
+  const code = String(error?.code || "");
+  if (code.includes("popup-closed")) return "Login cancelado.";
+  if (code.includes("popup-blocked")) return "O navegador bloqueou a janela de login.";
+  if (code.includes("operation-not-allowed")) return `${firebaseProviderLabel(providerId)} ainda nao esta ativo no Firebase.`;
+  if (code.includes("unauthorized-domain")) return "Dominio nao autorizado no Firebase Authentication.";
+  return error?.message || `Nao foi possivel entrar com ${firebaseProviderLabel(providerId)}.`;
+}
+
+async function loginWithFirebase(providerId = "google") {
+  if (!state.firebase.enabled || !state.firebase.auth || !state.firebase.modules) {
+    setProfileMessage("Firebase ainda nao esta configurado.", "error");
+    return;
+  }
+  const providerName = providerId === "facebook" ? "Facebook" : "Google";
+  state.firebase.loading = true;
+  state.firebase.message = `Entrando com ${providerName}...`;
+  setProfileMessage(state.firebase.message);
+  renderFirebaseAuth();
+  renderEntryGate();
+
+  try {
+    if (state.server.saveTimer) await pushServerSave();
+    const modules = state.firebase.modules;
+    const provider = providerId === "facebook"
+      ? new modules.FacebookAuthProvider()
+      : new modules.GoogleAuthProvider();
+    if (providerId === "google") provider.setCustomParameters({ prompt: "select_account" });
+    const result = await modules.signInWithPopup(state.firebase.auth, provider);
+    const idToken = await result.user.getIdToken();
+    const response = await fetch(SERVER_FIREBASE_PROFILE_ENDPOINT, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || `Nao foi possivel entrar com ${providerName}.`);
+
+    state.server.enabled = true;
+    state.server.loading = false;
+    state.server.playerId = payload.playerId || state.server.playerId;
+    if (payload.save) {
+      state.save = normalizeSave(payload.save);
+      persistLocalSave();
+    }
+    applyProfile(payload.profile);
+    setEntryGateDismissed(true);
+    setServerStatus("online", "Salvo");
+    reconnectOnlineSocket();
+    closeProfileModal();
+    state.firebase.message = "";
+    renderAll();
+  } catch (error) {
+    const message = firebaseErrorMessage(error, providerId);
+    state.firebase.message = message;
+    setProfileMessage(message, "error");
+  } finally {
+    state.firebase.loading = false;
+    renderFirebaseAuth();
+    renderEntryGate();
+  }
+}
+
+function renderFirebaseAuth() {
+  const enabled = state.firebase.checked && state.firebase.enabled;
+  document.querySelectorAll("[data-firebase-auth]").forEach((container) => {
+    container.hidden = !enabled;
+  });
+  document.querySelectorAll("[data-firebase-provider]").forEach((button) => {
+    const provider = button.dataset.firebaseProvider;
+    const providerEnabled = enabled && state.firebase.providers.includes(provider);
+    button.hidden = !providerEnabled;
+    button.disabled = state.firebase.loading || !providerEnabled;
+  });
+}
+
 function setupEntryGateActions() {
   const gate = document.getElementById("entry-gate");
   const loginButton = document.getElementById("entry-login-button");
@@ -1785,9 +1931,12 @@ function setupEntryGateActions() {
 }
 
 function entryGateStatusText() {
+  if (state.firebase.loading) return state.firebase.message || "Abrindo login social...";
+  if (state.firebase.message) return state.firebase.message;
   if (!canUseServerSave()) return "Abra pelo servidor online para criar ou entrar em um perfil.";
   if (state.server.loading || state.server.status === "connecting") return "Conectando ao servidor...";
   if (!state.server.enabled || state.server.status === "error") return "Servidor indisponivel agora. Visitante usa save local.";
+  if (state.firebase.enabled) return "Servidor online. Entre com Google, Facebook, nome/PIN ou visitante.";
   return "Servidor online. O perfil salva seu progresso entre dispositivos e redeploys.";
 }
 
@@ -1841,7 +1990,7 @@ function renderProfileModal() {
 
   currentName.textContent = profile?.name || "Visitante";
   currentMeta.textContent = profile
-    ? "Colecao, Merreis e progresso salvos no servidor."
+    ? `Colecao, Merreis e progresso salvos no servidor${profile.authProvider === "firebase" ? " pelo Firebase" : ""}.`
     : "Save anonimo sincronizado neste navegador.";
   title.textContent = mode === "register" ? "Criar jogador" : "Entrar no perfil";
   submit.textContent = mode === "register" ? "Criar jogador" : "Entrar";
@@ -1903,6 +2052,9 @@ async function logoutProfile() {
       method: "POST",
       credentials: "same-origin"
     });
+    if (state.firebase.auth && state.firebase.modules?.signOut) {
+      await state.firebase.modules.signOut(state.firebase.auth).catch(() => {});
+    }
   } catch (error) {
     setProfileMessage("Nao foi possivel sair agora.", "error");
     return;

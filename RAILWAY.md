@@ -23,6 +23,23 @@ DATA_DIR=/data
 
 Nao defina `PORT`. A Railway define `PORT` automaticamente.
 
+### Firebase Auth opcional
+
+Para liberar login social, crie um projeto no Firebase, ative Authentication e adicione estas variaveis no Railway:
+
+```text
+FIREBASE_API_KEY=<config publica do app web>
+FIREBASE_AUTH_DOMAIN=<seu-projeto.firebaseapp.com>
+FIREBASE_PROJECT_ID=<id do projeto>
+FIREBASE_APP_ID=<app id web>
+FIREBASE_MESSAGING_SENDER_ID=<sender id>
+FIREBASE_STORAGE_BUCKET=<bucket opcional>
+FIREBASE_AUTH_PROVIDERS=google,facebook
+FIREBASE_SERVICE_ACCOUNT=<json da conta de servico em uma linha ou base64>
+```
+
+No Firebase Authentication, adicione o dominio publico do jogo em Authorized domains, por exemplo `www.tazzostrike.com.br`.
+
 ## 3. Volume
 
 1. No projeto, crie um Volume.

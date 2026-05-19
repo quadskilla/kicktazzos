@@ -19,6 +19,23 @@ DATA_DIR=/data
 
 `HOST=0.0.0.0` deixa o servidor acessivel fora do container/maquina. `DATA_DIR=/data` deve apontar para um volume persistente.
 
+### Firebase Auth opcional
+
+O login por Google/Facebook usa Firebase Authentication. Sem estas variaveis, o jogo continua usando visitante e nome/PIN.
+
+```text
+FIREBASE_API_KEY=<config publica do app web>
+FIREBASE_AUTH_DOMAIN=<seu-projeto.firebaseapp.com>
+FIREBASE_PROJECT_ID=<id do projeto>
+FIREBASE_APP_ID=<app id web>
+FIREBASE_MESSAGING_SENDER_ID=<sender id>
+FIREBASE_STORAGE_BUCKET=<bucket opcional>
+FIREBASE_AUTH_PROVIDERS=google,facebook
+FIREBASE_SERVICE_ACCOUNT=<json da conta de servico em uma linha ou base64>
+```
+
+No Firebase Console, ative os provedores desejados em Authentication > Sign-in method e cadastre o dominio publico do jogo em Authorized domains.
+
 ## Deploy com Docker
 
 O repositorio ja inclui `Dockerfile`. Em producao na Railway, o volume persistente deve ser criado no dashboard; o Dockerfile nao usa a instrucao `VOLUME` porque a Railway rejeita essa instrucao no build.

@@ -27,6 +27,11 @@ const ONLINE_LOBBY_TTL_MS = 45 * 60 * 1000;
 const ONLINE_PLAYER_IDLE_MS = 8 * 60 * 1000;
 const ONLINE_PLAYER_AWAY_MS = Number(process.env.ONLINE_PLAYER_AWAY_MS) || 15000;
 const ONLINE_FORFEIT_GRACE_MS = Number(process.env.ONLINE_FORFEIT_GRACE_MS) || 60000;
+const FIREBASE_AUTH_PROVIDER_LABELS = {
+  google: "Google",
+  facebook: "Facebook"
+};
+const FIREBASE_SDK_VERSION = "12.13.0";
 const LEGENDARY_BOOST_TAZZOS = 50;
 const LEGENDARY_BOOST_MAX_TAZZOS = 100;
 const LEGENDARY_BOOST_MULTIPLIER = 2;
@@ -89,6 +94,7 @@ let onlineLobbiesWriteId = 0;
 let onlineHeartbeat = null;
 let onlineTurnHeartbeat = null;
 let shuttingDown = false;
+let firebaseAdminApp = null;
 
 function json(res, status, payload, headers = {}) {
   const body = JSON.stringify(payload);
@@ -306,13 +312,134 @@ function hashPin(pin, salt) {
   return crypto.scryptSync(String(pin), salt, 32).toString("hex");
 }
 
+function configuredFirebaseProviders() {
+  const raw = process.env.FIREBASE_AUTH_PROVIDERS || "google,facebook";
+  const providers = raw
+    .split(",")
+    .map((item) => item.trim().toLowerCase())
+    .filter((item) => FIREBASE_AUTH_PROVIDER_LABELS[item]);
+  return [...new Set(providers)];
+}
+
+function firebaseClientConfig() {
+  const config = {
+    apiKey: process.env.FIREBASE_API_KEY || "",
+    authDomain: process.env.FIREBASE_AUTH_DOMAIN || "",
+    projectId: process.env.FIREBASE_PROJECT_ID || "",
+    appId: process.env.FIREBASE_APP_ID || "",
+    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "",
+    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || ""
+  };
+  const publicConfig = Object.fromEntries(Object.entries(config).filter(([, value]) => value));
+  return {
+    enabled: Boolean(config.apiKey && config.authDomain && config.projectId && config.appId),
+    config: publicConfig,
+    providers: configuredFirebaseProviders(),
+    sdkVersion: FIREBASE_SDK_VERSION
+  };
+}
+
+function parseFirebaseServiceAccount(rawValue) {
+  const raw = String(rawValue || "").trim();
+  if (!raw) return null;
+  const jsonText = raw.startsWith("{") ? raw : Buffer.from(raw, "base64").toString("utf8");
+  const parsed = JSON.parse(jsonText);
+  return {
+    projectId: parsed.project_id || parsed.projectId || process.env.FIREBASE_PROJECT_ID,
+    clientEmail: parsed.client_email || parsed.clientEmail,
+    privateKey: String(parsed.private_key || parsed.privateKey || "").replace(/\\n/g, "\n")
+  };
+}
+
+function firebaseServiceAccountFromEnv() {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT || process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+  if (raw) return parseFirebaseServiceAccount(raw);
+  if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
+    return {
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n")
+    };
+  }
+  return null;
+}
+
+function getFirebaseAdminAuth() {
+  if (firebaseAdminApp) {
+    return require("firebase-admin/auth").getAuth(firebaseAdminApp);
+  }
+  const serviceAccount = firebaseServiceAccountFromEnv();
+  const projectId = process.env.FIREBASE_PROJECT_ID || serviceAccount?.projectId;
+  if (!projectId || (!serviceAccount && !process.env.GOOGLE_APPLICATION_CREDENTIALS)) {
+    const error = new Error("Firebase Admin nao configurado no servidor.");
+    error.status = 503;
+    throw error;
+  }
+
+  const { applicationDefault, cert, getApps, initializeApp } = require("firebase-admin/app");
+  const options = { projectId };
+  options.credential = serviceAccount ? cert(serviceAccount) : applicationDefault();
+  firebaseAdminApp = getApps()[0] || initializeApp(options);
+  return require("firebase-admin/auth").getAuth(firebaseAdminApp);
+}
+
+async function verifyFirebaseIdToken(idToken) {
+  const token = String(idToken || "").trim();
+  if (!token) {
+    const error = new Error("Token Firebase ausente.");
+    error.status = 400;
+    throw error;
+  }
+  try {
+    return await getFirebaseAdminAuth().verifyIdToken(token);
+  } catch (error) {
+    const authError = new Error(error.status === 503 ? error.message : "Login Firebase invalido ou expirado.");
+    authError.status = error.status || 401;
+    throw authError;
+  }
+}
+
+function firebaseProfileKey(uid) {
+  return `firebase-${crypto.createHash("sha256").update(String(uid)).digest("hex").slice(0, 24)}`;
+}
+
+function firebaseDisplayName(decodedToken) {
+  const emailName = String(decodedToken.email || "").split("@")[0];
+  const displayName = cleanProfileName(decodedToken.name || emailName || `Jogador ${String(decodedToken.uid || "").slice(0, 6)}`);
+  return displayName.length >= 3 ? displayName : `Jogador ${String(decodedToken.uid || "").slice(0, 6) || "Firebase"}`;
+}
+
+function firebaseAuthProfile(decodedToken, now = new Date().toISOString()) {
+  return {
+    uid: String(decodedToken.uid || ""),
+    email: String(decodedToken.email || "").slice(0, 160),
+    emailVerified: Boolean(decodedToken.email_verified),
+    provider: String(decodedToken.firebase?.sign_in_provider || "firebase").slice(0, 40),
+    picture: String(decodedToken.picture || "").slice(0, 500),
+    lastLoginAt: now
+  };
+}
+
+function firebaseProfileEntry(profiles, uid) {
+  return Object.entries(profiles.profiles || {}).find(([, profile]) => (
+    profile?.authProviders?.firebase?.uid === uid
+  )) || null;
+}
+
+function profileEntryForPlayer(profiles, playerId) {
+  return Object.entries(profiles.profiles || {}).find(([, profile]) => (
+    profile?.playerId === playerId
+  )) || null;
+}
+
 function publicProfile(profile) {
   if (!profile) return null;
   return {
     playerId: profile.playerId,
     name: profile.name,
     createdAt: profile.createdAt,
-    lastLoginAt: profile.lastLoginAt || profile.createdAt
+    lastLoginAt: profile.lastLoginAt || profile.createdAt,
+    authProvider: profile.authProviders?.firebase ? "firebase" : "pin"
   };
 }
 
@@ -2386,6 +2513,67 @@ async function loginProfile({ name, pin }) {
   return { profile, save };
 }
 
+async function loginFirebaseProfile({ currentPlayerId, decodedToken }) {
+  const uid = String(decodedToken?.uid || "");
+  if (!uid) {
+    const error = new Error("Usuario Firebase invalido.");
+    error.status = 401;
+    throw error;
+  }
+
+  const profiles = await readProfiles();
+  const now = new Date().toISOString();
+  const authData = firebaseAuthProfile(decodedToken, now);
+  const existingFirebaseEntry = firebaseProfileEntry(profiles, uid);
+  const currentProfileEntry = currentPlayerId ? profileEntryForPlayer(profiles, currentPlayerId) : null;
+  const entry = existingFirebaseEntry || currentProfileEntry;
+
+  if (entry) {
+    const [key, storedProfile] = entry;
+    const profile = {
+      ...storedProfile,
+      name: cleanProfileName(storedProfile.name) || firebaseDisplayName(decodedToken),
+      authProviders: {
+        ...(storedProfile.authProviders || {}),
+        firebase: authData
+      },
+      lastLoginAt: now
+    };
+    profiles.profiles[key] = profile;
+    await writeProfiles(profiles);
+
+    const record = await readSave(profile.playerId);
+    const save = normalizeServerSave(record?.save || defaultServerSave());
+    if (!record) await writeSave(profile.playerId, save);
+    return { profile, save };
+  }
+
+  let key = firebaseProfileKey(uid);
+  const baseKey = key;
+  let suffix = 2;
+  while (profiles.profiles[key]) {
+    key = `${baseKey}-${suffix}`;
+    suffix += 1;
+  }
+
+  const playerId = crypto.randomUUID();
+  const profile = {
+    playerId,
+    name: firebaseDisplayName(decodedToken),
+    key,
+    authProviders: { firebase: authData },
+    createdAt: now,
+    lastLoginAt: now
+  };
+  profiles.profiles[key] = profile;
+  await writeProfiles(profiles);
+
+  const currentRecord = currentPlayerId ? await readOrCreateSave(currentPlayerId) : null;
+  const save = normalizeServerSave(currentRecord?.save || defaultServerSave());
+  await writeSave(playerId, save);
+  return { profile, save };
+}
+
 function defaultServerSave() {
   const collection = {};
   ["artilheiro-brasil", "goleiro-brasil-alison", "andreas-pereira-tazzo", "alex-sandro-tazzo", "wendell-tazzo"].forEach((id) => {
@@ -3298,6 +3486,26 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (url.pathname === "/api/firebase/config") {
+    if (req.method !== "GET") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "GET"
+      });
+      return;
+    }
+    const firebase = firebaseClientConfig();
+    json(res, 200, {
+      ok: true,
+      enabled: firebase.enabled,
+      config: firebase.enabled ? firebase.config : null,
+      providers: firebase.enabled ? firebase.providers : [],
+      providerLabels: FIREBASE_AUTH_PROVIDER_LABELS,
+      sdkVersion: firebase.sdkVersion
+    }, headers);
+    return;
+  }
+
   if (url.pathname === "/api/profile") {
     if (req.method !== "GET") {
       json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
@@ -3563,6 +3771,37 @@ async function handleApi(req, res, url) {
       json(res, error.status || 500, {
         ok: false,
         error: error.message || "Erro ao entrar."
+      }, headers);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/profile/firebase") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const decodedToken = await verifyFirebaseIdToken(payload.idToken);
+      const result = await loginFirebaseProfile({
+        currentPlayerId: playerId,
+        decodedToken
+      });
+      json(res, 200, {
+        ok: true,
+        playerId: result.profile.playerId,
+        profile: publicProfile(result.profile),
+        save: result.save
+      }, { "Set-Cookie": playerCookie(result.profile.playerId) });
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao entrar com Firebase."
       }, headers);
     }
     return;
