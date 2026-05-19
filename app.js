@@ -1256,7 +1256,7 @@ function imageButtonSvg(label, variant, icon = "") {
   const lines = splitButtonLabel(label).map(escapeSvgText);
   const twoLines = lines.length > 1;
   const hasIcon = Boolean(icon);
-  const fontSize = hasIcon ? 19 : twoLines ? 21 : label.length > 22 ? 23 : 27;
+  const fontSize = hasIcon ? 22 : twoLines ? 21 : label.length > 22 ? 23 : 27;
   const textStroke = palette[3];
   const y = hasIcon ? (twoLines ? 65 : 72) : twoLines ? 32 : 43;
   const textLengthFor = (line) => Math.min(twoLines ? 230 : 248, Math.max(twoLines ? 128 : 136, line.length * fontSize * 1.12));
@@ -1315,7 +1315,7 @@ function decorateImageButtons(root = document) {
     button.dataset.imageButtonKey = key;
     button.classList.add("image-button");
     button.classList.toggle("has-button-icon", Boolean(icon));
-    button.style.setProperty("--button-min-width", `${Math.min(icon ? 104 : 220, Math.max(icon ? 86 : 72, label.length * 7 + 36))}px`);
+    button.style.setProperty("--button-min-width", `${Math.min(icon ? 156 : 220, Math.max(icon ? 118 : 72, label.length * (icon ? 9 : 7) + (icon ? 58 : 36)))}px`);
     button.style.setProperty("--button-art", imageButtonUrl(label, variant, icon));
   });
 }
