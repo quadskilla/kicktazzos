@@ -786,6 +786,7 @@ function updateServerStatus() {
   const pill = status.closest(".server-pill");
   status.textContent = state.server.message;
   if (pill) pill.dataset.serverState = state.server.status;
+  refreshWalletInfoContent();
   renderEntryGate();
 }
 
@@ -895,6 +896,7 @@ function updateProfileStatus() {
   if (provider) provider.textContent = profileProviderText(state.server.profile);
   renderProfileAvatar(avatar, state.server.profile);
   button.dataset.profileState = state.server.profile ? "logged" : "guest";
+  refreshWalletInfoContent();
 }
 
 function setProfileMessage(message, type = "info") {
@@ -1086,6 +1088,7 @@ function setup() {
   setupTabs();
   setupFilters();
   setupActions();
+  setupWalletInfo();
   setupEntryGateActions();
   setupProfileActions();
   setupFirebaseAuth();
@@ -1101,6 +1104,107 @@ function setupTabs() {
       switchTab(button.dataset.tab);
     });
   });
+}
+
+function setupWalletInfo() {
+  const wallet = document.querySelector(".wallet");
+  if (!wallet) return;
+  wallet.querySelectorAll("[data-wallet-info]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleWalletInfo(button.dataset.walletInfo, button);
+    });
+  });
+  document.addEventListener("click", (event) => {
+    if (!wallet.contains(event.target)) closeWalletInfo();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeWalletInfo();
+  });
+}
+
+function toggleWalletInfo(kind, button) {
+  const popover = document.getElementById("wallet-popover");
+  if (!popover) return;
+  const wasOpen = !popover.hidden && popover.dataset.info === kind;
+  closeWalletInfo();
+  if (wasOpen) return;
+  renderWalletInfoContent(kind);
+  popover.dataset.info = kind;
+  popover.hidden = false;
+  button.classList.add("is-open");
+  button.setAttribute("aria-expanded", "true");
+}
+
+function closeWalletInfo() {
+  const popover = document.getElementById("wallet-popover");
+  if (popover) {
+    popover.hidden = true;
+    popover.dataset.info = "";
+  }
+  document.querySelectorAll("[data-wallet-info].is-open").forEach((button) => {
+    button.classList.remove("is-open");
+    button.setAttribute("aria-expanded", "false");
+  });
+}
+
+function refreshWalletInfoContent() {
+  const popover = document.getElementById("wallet-popover");
+  if (!popover || popover.hidden || !popover.dataset.info) return;
+  renderWalletInfoContent(popover.dataset.info);
+}
+
+function renderWalletInfoContent(kind) {
+  const popover = document.getElementById("wallet-popover");
+  if (!popover) return;
+  const info = walletInfoDetails(kind);
+  popover.replaceChildren();
+  const title = document.createElement("h3");
+  const value = document.createElement("strong");
+  const body = document.createElement("p");
+  const meta = document.createElement("small");
+  title.textContent = info.title;
+  value.textContent = info.value;
+  body.textContent = info.body;
+  meta.textContent = info.meta;
+  popover.append(title, value, body, meta);
+}
+
+function walletInfoDetails(kind) {
+  const visibleMonsters = visibleCollectionMonsters();
+  const owned = visibleMonsters.filter((monster) => state.save.collection[monster.id] > 0).length;
+  const total = visibleMonsters.length || 1;
+  const missing = Math.max(0, total - owned);
+  const percent = Math.round((owned / total) * 100);
+  const profileName = state.server.profile?.name || "sem conta conectada";
+  const serverMode = state.server.enabled ? "salvando no servidor" : "salvamento local";
+  const details = {
+    merreis: {
+      title: "Merreis",
+      value: formatNumber(state.save.merreis),
+      body: "Moeda do recreio para abrir pacotinhos, entrar em torneios e comprar itens da loja.",
+      meta: "Ganhe jogando batalhas, torneios, missoes e recompensas."
+    },
+    fragments: {
+      title: "Fragmentos",
+      value: formatNumber(state.save.fragments),
+      body: "Material usado para melhorar tazzos e fortalecer o time sem depender so de sorte.",
+      meta: "Repetidos, missoes e torneios ajudam a juntar fragmentos."
+    },
+    album: {
+      title: "Album",
+      value: `${owned}/${visibleMonsters.length}`,
+      body: `${percent}% da colecao visivel completa.`,
+      meta: missing ? `Ainda faltam ${missing} tazzo(s) para completar esta lista.` : "Album completo nesta lista."
+    },
+    server: {
+      title: "Servidor",
+      value: state.server.message,
+      body: `Status atual: ${serverMode}.`,
+      meta: `Perfil: ${profileName}.`
+    }
+  };
+  return details[kind] || details.merreis;
 }
 
 function switchTab(tabName) {
@@ -3350,6 +3454,7 @@ function renderWallet() {
   document.getElementById("wallet-album").textContent = `${owned}/${visibleMonsters.length}`;
   updateServerStatus();
   updateProfileStatus();
+  refreshWalletInfoContent();
 }
 
 function renderPackPity() {

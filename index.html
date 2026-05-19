@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Kick Tazzos: Copa da zoeira!</title>
-  <link rel="stylesheet" href="styles.css?v=20260519-asset-buttons-2">
+  <link rel="stylesheet" href="styles.css?v=20260519-wallet-popovers-3">
 </head>
 <body>
   <div class="app-shell">
@@ -19,48 +19,60 @@
 
       <nav class="main-tabs" aria-label="Areas do jogo">
         <button class="tab-button tab-art-button is-active" type="button" data-tab="battle" aria-label="Batalha">
-          <img src="assets/botoes/batalha.png" alt="">
+          <img src="assets/icones/batalha.png" alt="">
           <span>Batalha</span>
         </button>
         <button class="tab-button tab-art-button" type="button" data-tab="online" aria-label="Online">
-          <img src="assets/botoes/online.png" alt="">
+          <img src="assets/icones/online.png" alt="">
           <span>Online</span>
         </button>
         <button class="tab-button tab-art-button" type="button" data-tab="competitive" aria-label="Torneios">
-          <img src="assets/botoes/torneios.png" alt="">
+          <img src="assets/icones/torneios.png" alt="">
           <span>Torneios</span>
         </button>
         <button class="tab-button tab-art-button" type="button" data-tab="packs" aria-label="Pacotinhos">
-          <img src="assets/botoes/pacotinhos.png" alt="">
+          <img src="assets/icones/pacotinhos.png" alt="">
           <span>Pacotinhos</span>
         </button>
         <button class="tab-button tab-art-button" type="button" data-tab="collection" aria-label="Colecao">
-          <img src="assets/botoes/colecao.png" alt="">
+          <img src="assets/icones/colecao.png" alt="">
           <span>Colecao</span>
         </button>
         <button class="tab-button tab-art-button" type="button" data-tab="friends" aria-label="Amigos">
-          <img src="assets/botoes/amigos.png" alt="">
+          <img src="assets/icones/amigos.png" alt="">
           <span>Amigos</span>
         </button>
         <button class="tab-button tab-art-button" type="button" data-tab="trade" aria-label="Trocas">
-          <img src="assets/botoes/trocas.png" alt="">
+          <img src="assets/icones/trocas.png" alt="">
           <span>Trocas</span>
         </button>
         <button class="tab-button tab-art-button" type="button" data-tab="shop" aria-label="Loja">
-          <img src="assets/botoes/loja.png" alt="">
+          <img src="assets/icones/loja.png" alt="">
           <span>Loja</span>
         </button>
         <button class="tab-button tab-art-button" type="button" data-tab="missions" aria-label="Missoes">
-          <img src="assets/botoes/missoes.png" alt="">
+          <img src="assets/icones/missoes.png" alt="">
           <span>Missoes</span>
         </button>
       </nav>
 
-      <div class="wallet">
-        <span><strong id="wallet-merreis">0</strong> Merreis</span>
-        <span><strong id="wallet-fragments">0</strong> Fragmentos</span>
-        <span><strong id="wallet-album">0/0</strong> Album</span>
-        <span class="server-pill"><strong id="server-status">Local</strong> Servidor</span>
+      <div class="wallet" aria-label="Resumo do jogador">
+        <button class="wallet-info-button" type="button" data-wallet-info="merreis" aria-controls="wallet-popover" aria-expanded="false" aria-label="Ver Merreis">
+          <span class="wallet-token wallet-token-merreis" aria-hidden="true"></span>
+          <strong id="wallet-merreis">0</strong>
+        </button>
+        <button class="wallet-info-button" type="button" data-wallet-info="fragments" aria-controls="wallet-popover" aria-expanded="false" aria-label="Ver fragmentos">
+          <span class="wallet-token wallet-token-fragments" aria-hidden="true"></span>
+          <strong id="wallet-fragments">0</strong>
+        </button>
+        <button class="wallet-info-button" type="button" data-wallet-info="album" aria-controls="wallet-popover" aria-expanded="false" aria-label="Ver progresso do album">
+          <span class="wallet-token wallet-token-album" aria-hidden="true"></span>
+          <strong id="wallet-album">0/0</strong>
+        </button>
+        <button class="wallet-info-button server-pill" type="button" data-wallet-info="server" aria-controls="wallet-popover" aria-expanded="false" aria-label="Ver status do servidor">
+          <span class="wallet-token wallet-token-server" aria-hidden="true"></span>
+          <strong id="server-status">Local</strong>
+        </button>
         <button class="profile-button" type="button" id="profile-button">
           <span class="profile-avatar" id="profile-avatar" aria-hidden="true">V</span>
           <span class="profile-copy">
@@ -68,6 +80,7 @@
             <span id="profile-provider-label">Perfil</span>
           </span>
         </button>
+        <div class="wallet-popover" id="wallet-popover" role="dialog" aria-live="polite" hidden></div>
       </div>
     </header>
 
@@ -467,7 +480,7 @@
   </aside>
 
   <script src="data.js?v=20260518-holos-2"></script>
-  <script src="app.js?v=20260519-hud-buttons-4"></script>
+  <script src="app.js?v=20260519-wallet-popovers-3"></script>
   <script src="battle-render.js?v=20260519-hud-buttons-2"></script>
   <script src="battle-engine.js?v=20260518-online-invite"></script>
 </body>
