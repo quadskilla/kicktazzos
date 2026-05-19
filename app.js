@@ -1838,6 +1838,13 @@ function firebaseProviderLabel(providerId) {
   return providerId === "facebook" ? "Facebook" : "Google";
 }
 
+function firebaseProviderListLabel() {
+  const labels = (state.firebase.providers || []).map(firebaseProviderLabel);
+  if (!labels.length) return "login social";
+  if (labels.length === 1) return labels[0];
+  return `${labels.slice(0, -1).join(", ")} ou ${labels[labels.length - 1]}`;
+}
+
 function firebaseErrorMessage(error, providerId) {
   const code = String(error?.code || "");
   if (code.includes("popup-closed")) return "Login cancelado.";
@@ -1936,7 +1943,7 @@ function entryGateStatusText() {
   if (!canUseServerSave()) return "Abra pelo servidor online para criar ou entrar em um perfil.";
   if (state.server.loading || state.server.status === "connecting") return "Conectando ao servidor...";
   if (!state.server.enabled || state.server.status === "error") return "Servidor indisponivel agora. Visitante usa save local.";
-  if (state.firebase.enabled) return "Servidor online. Entre com Google, Facebook, nome/PIN ou visitante.";
+  if (state.firebase.enabled) return `Servidor online. Entre com ${firebaseProviderListLabel()}, nome/PIN ou visitante.`;
   return "Servidor online. O perfil salva seu progresso entre dispositivos e redeploys.";
 }
 
