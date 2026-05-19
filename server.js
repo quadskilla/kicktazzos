@@ -32,6 +32,7 @@ const FIREBASE_AUTH_PROVIDER_LABELS = {
   facebook: "Facebook"
 };
 const FIREBASE_SDK_VERSION = "12.13.0";
+const FIREBASE_CERTS_URL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com";
 const LEGENDARY_BOOST_TAZZOS = 50;
 const LEGENDARY_BOOST_MAX_TAZZOS = 100;
 const LEGENDARY_BOOST_MULTIPLIER = 2;
@@ -94,7 +95,7 @@ let onlineLobbiesWriteId = 0;
 let onlineHeartbeat = null;
 let onlineTurnHeartbeat = null;
 let shuttingDown = false;
-let firebaseAdminApp = null;
+let firebaseCertCache = { certs: null, expiresAt: 0 };
 
 function json(res, status, payload, headers = {}) {
   const body = JSON.stringify(payload);
@@ -339,62 +340,79 @@ function firebaseClientConfig() {
   };
 }
 
-function parseFirebaseServiceAccount(rawValue) {
-  const raw = String(rawValue || "").trim();
-  if (!raw) return null;
-  const jsonText = raw.startsWith("{") ? raw : Buffer.from(raw, "base64").toString("utf8");
-  const parsed = JSON.parse(jsonText);
-  return {
-    projectId: parsed.project_id || parsed.projectId || process.env.FIREBASE_PROJECT_ID,
-    clientEmail: parsed.client_email || parsed.clientEmail,
-    privateKey: String(parsed.private_key || parsed.privateKey || "").replace(/\\n/g, "\n")
-  };
+function base64UrlDecode(value) {
+  const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  return Buffer.from(normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "="), "base64");
 }
 
-function firebaseServiceAccountFromEnv() {
-  const raw = process.env.FIREBASE_SERVICE_ACCOUNT || process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (raw) return parseFirebaseServiceAccount(raw);
-  if (process.env.FIREBASE_CLIENT_EMAIL && process.env.FIREBASE_PRIVATE_KEY) {
-    return {
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n")
-    };
-  }
-  return null;
+function parseJwtPart(value) {
+  return JSON.parse(base64UrlDecode(value).toString("utf8"));
 }
 
-function getFirebaseAdminAuth() {
-  if (firebaseAdminApp) {
-    return require("firebase-admin/auth").getAuth(firebaseAdminApp);
+async function firebasePublicCerts() {
+  if (firebaseCertCache.certs && firebaseCertCache.expiresAt > Date.now()) {
+    return firebaseCertCache.certs;
   }
-  const serviceAccount = firebaseServiceAccountFromEnv();
-  const projectId = process.env.FIREBASE_PROJECT_ID || serviceAccount?.projectId;
-  if (!projectId || (!serviceAccount && !process.env.GOOGLE_APPLICATION_CREDENTIALS)) {
-    const error = new Error("Firebase Admin nao configurado no servidor.");
+  const response = await fetch(FIREBASE_CERTS_URL, { cache: "no-store" });
+  if (!response.ok) {
+    const error = new Error("Nao foi possivel buscar certificados do Firebase.");
     error.status = 503;
     throw error;
   }
-
-  const { applicationDefault, cert, getApps, initializeApp } = require("firebase-admin/app");
-  const options = { projectId };
-  options.credential = serviceAccount ? cert(serviceAccount) : applicationDefault();
-  firebaseAdminApp = getApps()[0] || initializeApp(options);
-  return require("firebase-admin/auth").getAuth(firebaseAdminApp);
+  const certs = await response.json();
+  const cacheControl = response.headers.get("cache-control") || "";
+  const maxAge = Number(cacheControl.match(/max-age=(\d+)/)?.[1]) || 3600;
+  firebaseCertCache = {
+    certs,
+    expiresAt: Date.now() + Math.max(60, maxAge - 60) * 1000
+  };
+  return certs;
 }
 
 async function verifyFirebaseIdToken(idToken) {
   const token = String(idToken || "").trim();
+  const projectId = process.env.FIREBASE_PROJECT_ID;
   if (!token) {
     const error = new Error("Token Firebase ausente.");
     error.status = 400;
     throw error;
   }
+  if (!projectId) {
+    const error = new Error("Firebase nao configurado no servidor.");
+    error.status = 503;
+    throw error;
+  }
+
   try {
-    return await getFirebaseAdminAuth().verifyIdToken(token);
+    const parts = token.split(".");
+    if (parts.length !== 3) throw new Error("Formato JWT invalido.");
+    const [encodedHeader, encodedPayload, encodedSignature] = parts;
+    const header = parseJwtPart(encodedHeader);
+    const payload = parseJwtPart(encodedPayload);
+    if (header.alg !== "RS256" || !header.kid) throw new Error("Cabecalho JWT invalido.");
+
+    const certs = await firebasePublicCerts();
+    const cert = certs[header.kid];
+    if (!cert) throw new Error("Certificado Firebase nao encontrado.");
+
+    const verifier = crypto.createVerify("RSA-SHA256");
+    verifier.update(`${encodedHeader}.${encodedPayload}`);
+    verifier.end();
+    if (!verifier.verify(cert, base64UrlDecode(encodedSignature))) {
+      throw new Error("Assinatura Firebase invalida.");
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.aud !== projectId) throw new Error("Audiencia Firebase invalida.");
+    if (payload.iss !== `https://securetoken.google.com/${projectId}`) throw new Error("Emissor Firebase invalido.");
+    if (!payload.sub || typeof payload.sub !== "string" || payload.sub.length > 128) throw new Error("Usuario Firebase invalido.");
+    if (Number(payload.exp) <= now) throw new Error("Token Firebase expirado.");
+    if (Number(payload.iat) > now + 300) throw new Error("Token Firebase emitido no futuro.");
+
+    return { ...payload, uid: payload.sub };
   } catch (error) {
-    const authError = new Error(error.status === 503 ? error.message : "Login Firebase invalido ou expirado.");
-    authError.status = error.status || 401;
+    const authError = new Error("Login Firebase invalido ou expirado.");
+    authError.status = 401;
     throw authError;
   }
 }

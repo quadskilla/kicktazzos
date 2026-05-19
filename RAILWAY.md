@@ -35,7 +35,6 @@ FIREBASE_APP_ID=<app id web>
 FIREBASE_MESSAGING_SENDER_ID=<sender id>
 FIREBASE_STORAGE_BUCKET=<bucket opcional>
 FIREBASE_AUTH_PROVIDERS=google,facebook
-FIREBASE_SERVICE_ACCOUNT=<json da conta de servico em uma linha ou base64>
 ```
 
 No Firebase Authentication, adicione o dominio publico do jogo em Authorized domains, por exemplo `www.tazzostrike.com.br`.
