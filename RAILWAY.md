@@ -25,7 +25,7 @@ Nao defina `PORT`. A Railway define `PORT` automaticamente.
 
 ### Firebase Auth opcional
 
-Para liberar login social, crie um projeto no Firebase, ative Authentication e adicione estas variaveis no Railway:
+O login por Google usa Firebase Authentication. O deploy de Kick Tazzos ja inclui a configuracao publica do projeto `tazzostrike`; estas variaveis so sao necessarias se voce quiser trocar de projeto Firebase ou ativar outros provedores.
 
 ```text
 FIREBASE_API_KEY=<config publica do app web>
@@ -34,7 +34,7 @@ FIREBASE_PROJECT_ID=<id do projeto>
 FIREBASE_APP_ID=<app id web>
 FIREBASE_MESSAGING_SENDER_ID=<sender id>
 FIREBASE_STORAGE_BUCKET=<bucket opcional>
-FIREBASE_AUTH_PROVIDERS=google,facebook
+FIREBASE_AUTH_PROVIDERS=google
 ```
 
 No Firebase Authentication, adicione o dominio publico do jogo em Authorized domains, por exemplo `www.tazzostrike.com.br`.

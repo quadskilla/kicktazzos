@@ -21,7 +21,7 @@ DATA_DIR=/data
 
 ### Firebase Auth opcional
 
-O login por Google/Facebook usa Firebase Authentication. Sem estas variaveis, o jogo continua usando visitante e nome/PIN.
+O login por Google usa Firebase Authentication. O deploy de Kick Tazzos ja inclui a configuracao publica do projeto `tazzostrike`; estas variaveis so sao necessarias se voce quiser trocar de projeto Firebase ou ativar outros provedores.
 
 ```text
 FIREBASE_API_KEY=<config publica do app web>
@@ -30,7 +30,7 @@ FIREBASE_PROJECT_ID=<id do projeto>
 FIREBASE_APP_ID=<app id web>
 FIREBASE_MESSAGING_SENDER_ID=<sender id>
 FIREBASE_STORAGE_BUCKET=<bucket opcional>
-FIREBASE_AUTH_PROVIDERS=google,facebook
+FIREBASE_AUTH_PROVIDERS=google
 ```
 
 No Firebase Console, ative os provedores desejados em Authentication > Sign-in method e cadastre o dominio publico do jogo em Authorized domains.

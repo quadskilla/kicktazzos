@@ -33,6 +33,15 @@ const FIREBASE_AUTH_PROVIDER_LABELS = {
 };
 const FIREBASE_SDK_VERSION = "12.13.0";
 const FIREBASE_CERTS_URL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com";
+const FIREBASE_DEFAULT_AUTH_PROVIDERS = "google";
+const FIREBASE_DEFAULT_CONFIG = Object.freeze({
+  apiKey: "AIzaSyC6B8mrDr1FMEgL1ihqLV3ERwUUNVqAqDs",
+  authDomain: "tazzostrike.firebaseapp.com",
+  projectId: "tazzostrike",
+  appId: "1:877449815393:web:e29c45423b8f81d7aa1120",
+  messagingSenderId: "877449815393",
+  storageBucket: "tazzostrike.firebasestorage.app"
+});
 const LEGENDARY_BOOST_TAZZOS = 50;
 const LEGENDARY_BOOST_MAX_TAZZOS = 100;
 const LEGENDARY_BOOST_MULTIPLIER = 2;
@@ -314,7 +323,7 @@ function hashPin(pin, salt) {
 }
 
 function configuredFirebaseProviders() {
-  const raw = process.env.FIREBASE_AUTH_PROVIDERS || "google,facebook";
+  const raw = process.env.FIREBASE_AUTH_PROVIDERS || FIREBASE_DEFAULT_AUTH_PROVIDERS;
   const providers = raw
     .split(",")
     .map((item) => item.trim().toLowerCase())
@@ -322,14 +331,22 @@ function configuredFirebaseProviders() {
   return [...new Set(providers)];
 }
 
+function firebaseConfigValue(envName, configName) {
+  return process.env[envName] || FIREBASE_DEFAULT_CONFIG[configName] || "";
+}
+
+function firebaseProjectId() {
+  return firebaseConfigValue("FIREBASE_PROJECT_ID", "projectId");
+}
+
 function firebaseClientConfig() {
   const config = {
-    apiKey: process.env.FIREBASE_API_KEY || "",
-    authDomain: process.env.FIREBASE_AUTH_DOMAIN || "",
-    projectId: process.env.FIREBASE_PROJECT_ID || "",
-    appId: process.env.FIREBASE_APP_ID || "",
-    messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || "",
-    storageBucket: process.env.FIREBASE_STORAGE_BUCKET || ""
+    apiKey: firebaseConfigValue("FIREBASE_API_KEY", "apiKey"),
+    authDomain: firebaseConfigValue("FIREBASE_AUTH_DOMAIN", "authDomain"),
+    projectId: firebaseProjectId(),
+    appId: firebaseConfigValue("FIREBASE_APP_ID", "appId"),
+    messagingSenderId: firebaseConfigValue("FIREBASE_MESSAGING_SENDER_ID", "messagingSenderId"),
+    storageBucket: firebaseConfigValue("FIREBASE_STORAGE_BUCKET", "storageBucket")
   };
   const publicConfig = Object.fromEntries(Object.entries(config).filter(([, value]) => value));
   return {
@@ -371,7 +388,7 @@ async function firebasePublicCerts() {
 
 async function verifyFirebaseIdToken(idToken) {
   const token = String(idToken || "").trim();
-  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const projectId = firebaseProjectId();
   if (!token) {
     const error = new Error("Token Firebase ausente.");
     error.status = 400;
