@@ -723,6 +723,16 @@ async function profileForPlayer(playerId) {
   return Object.values(profiles.profiles).find((profile) => profile.playerId === playerId) || null;
 }
 
+async function requireProfileForPlayer(playerId) {
+  const profile = await profileForPlayer(playerId);
+  if (!profile) {
+    const error = new Error("Entre em uma conta antes de jogar.");
+    error.status = 401;
+    throw error;
+  }
+  return profile;
+}
+
 function profilesByPlayerId(profiles) {
   return Object.fromEntries(Object.values(profiles.profiles).map((profile) => [profile.playerId, profile]));
 }
@@ -1849,6 +1859,7 @@ function onlineLobbyForMatch(matchId) {
 }
 
 async function applyOnlineMatchAction(playerId, payload = {}) {
+  await requireProfileForPlayer(playerId);
   const matchId = String(payload.matchId || "");
   const action = String(payload.action || "");
   const rawTarget = normalizeOnlineActionTarget(payload.target);
@@ -2049,6 +2060,7 @@ async function onlineLobbyPayload(playerId) {
 }
 
 async function createOnlineLobby(playerId) {
+  await requireProfileForPlayer(playerId);
   cleanupOnlineLobbies();
   removePlayerFromOnlineLobbies(playerId);
   const now = Date.now();
@@ -2072,6 +2084,7 @@ async function createOnlineLobby(playerId) {
 }
 
 async function joinOnlineLobby(playerId, lobbyId) {
+  await requireProfileForPlayer(playerId);
   cleanupOnlineLobbies();
   const id = String(lobbyId || "").trim().toUpperCase();
   if (!/^[A-F0-9]{6}$/.test(id)) {
@@ -2133,6 +2146,7 @@ async function leaveOnlineLobby(playerId) {
 }
 
 async function setOnlineLobbyReady(playerId, ready) {
+  await requireProfileForPlayer(playerId);
   cleanupOnlineLobbies();
   const lobby = currentLobbyForPlayer(playerId);
   if (!lobby) {
@@ -2212,6 +2226,7 @@ function resetOnlineLobbyMatch(playerId) {
 }
 
 async function claimOnlineForfeit(playerId) {
+  await requireProfileForPlayer(playerId);
   cleanupOnlineLobbies();
   const lobby = currentLobbyForPlayer(playerId);
   if (!lobby) {
@@ -3153,6 +3168,7 @@ function drawPackPulls(save, pack) {
 }
 
 async function openPackForPlayer(playerId, packId) {
+  await requireProfileForPlayer(playerId);
   const pack = PACKS.find((item) => item.id === packId);
   if (!pack) {
     const error = new Error("Pacotinho nao encontrado.");
@@ -3177,6 +3193,7 @@ async function openPackForPlayer(playerId, packId) {
 }
 
 async function buyShopItemForPlayer(playerId, itemId) {
+  await requireProfileForPlayer(playerId);
   const item = SHOP_ITEMS.find((entry) => entry.id === itemId);
   if (!item) {
     const error = new Error("Item da loja nao encontrado.");
@@ -3210,6 +3227,7 @@ async function buyShopItemForPlayer(playerId, itemId) {
 }
 
 async function upgradeMonsterForPlayer(playerId, monsterId) {
+  await requireProfileForPlayer(playerId);
   const monster = MONSTER_BY_ID[monsterId];
   if (!monster || isGoalkeeper(monster)) {
     const error = new Error("Tazzo nao pode ser melhorado.");
@@ -3252,6 +3270,7 @@ async function upgradeMonsterForPlayer(playerId, monsterId) {
 }
 
 async function claimMissionForPlayer(playerId, missionId) {
+  await requireProfileForPlayer(playerId);
   const mission = MISSIONS.find((item) => item.id === missionId);
   if (!mission) {
     const error = new Error("Missao nao encontrada.");
@@ -3283,6 +3302,7 @@ async function claimMissionForPlayer(playerId, missionId) {
 }
 
 async function tradeForPlayer(playerId, offerId, wishId) {
+  await requireProfileForPlayer(playerId);
   const offered = MONSTER_BY_ID[offerId];
   const received = MONSTER_BY_ID[wishId];
   if (!offered || !received || offered.id === received.id) {
@@ -3320,6 +3340,7 @@ async function tradeForPlayer(playerId, offerId, wishId) {
 }
 
 async function sendFriendGiftForPlayer(playerId, friendId) {
+  await requireProfileForPlayer(playerId);
   const friend = FRIENDS.find((item) => item.id === friendId);
   if (!friend) {
     const error = new Error("Amigo nao encontrado.");
@@ -3352,6 +3373,7 @@ async function sendFriendGiftForPlayer(playerId, friendId) {
 }
 
 async function startRankedForPlayer(playerId) {
+  await requireProfileForPlayer(playerId);
   const record = await readOrCreateSave(playerId);
   const save = normalizeServerSave(record.save);
   if (save.activeCompetitive && !save.activeCompetitive.resolved) {
@@ -3380,6 +3402,7 @@ async function startRankedForPlayer(playerId) {
 }
 
 async function startTournamentForPlayer(playerId, tournamentId) {
+  await requireProfileForPlayer(playerId);
   const tournament = TOURNAMENTS.find((item) => item.id === tournamentId);
   if (!tournament) {
     const error = new Error("Torneio nao encontrado.");
@@ -3498,6 +3521,7 @@ function tournamentResolution(save, tournament, won, reason = "") {
 }
 
 async function resolveCompetitiveForPlayer(playerId, payload = {}) {
+  await requireProfileForPlayer(playerId);
   const record = await readOrCreateSave(playerId);
   const save = normalizeServerSave(record.save);
   const match = save.activeCompetitive;
@@ -3716,6 +3740,7 @@ async function handleApi(req, res, url) {
       return;
     }
     try {
+      await requireProfileForPlayer(playerId);
       resetOnlineLobbyMatch(playerId);
       const result = await onlineLobbyPayload(playerId);
       await persistOnlineLobbies();
@@ -3829,7 +3854,8 @@ async function handleApi(req, res, url) {
         ok: true,
         playerId: result.profile.playerId,
         profile: publicProfile(result.profile),
-        save: result.save
+        save: result.save,
+        migratedGuestSave: Boolean(result.migratedGuestSave)
       }, { "Set-Cookie": playerCookie(result.profile.playerId) });
     } catch (error) {
       json(res, error.status || 500, {
@@ -4214,6 +4240,7 @@ async function handleApi(req, res, url) {
       json(res, 400, { ok: false, error: "Payload de save invalido." }, headers);
       return;
     }
+    await requireProfileForPlayer(playerId);
     const record = await updateSafeSaveForPlayer(playerId, payload.save);
     const profile = await profileForPlayer(playerId);
     json(res, 200, {
@@ -4231,6 +4258,7 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === "DELETE") {
+    await requireProfileForPlayer(playerId);
     await deleteSave(playerId);
     json(res, 200, { ok: true, playerId }, headers);
     return;

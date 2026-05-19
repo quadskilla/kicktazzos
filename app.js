@@ -564,6 +564,11 @@ function nextCatalogNumber() {
 }
 
 function saveGame() {
+  if (canUseServerSave() && !state.server.profile) {
+    state.server.entryGatePaused = false;
+    renderEntryGate();
+    return;
+  }
   persistLocalSave();
   queueServerSave();
 }
@@ -578,6 +583,19 @@ function persistLocalSave() {
 
 function canUseServerSave() {
   return window.location.protocol === "http:" || window.location.protocol === "https:";
+}
+
+function hasOnlineProfile() {
+  return Boolean(canUseServerSave() && state.server.enabled && state.server.profile);
+}
+
+function requireOnlineProfile(message = "Entre em uma conta para continuar jogando.") {
+  if (hasOnlineProfile()) return true;
+  state.server.entryGatePaused = false;
+  state.firebase.message = message;
+  setProfileMessage(message, "error");
+  renderEntryGate();
+  return false;
 }
 
 function setupServerSave() {
@@ -670,7 +688,7 @@ function queueServerSave() {
     state.server.localChangedWhileLoading = true;
     return;
   }
-  if (!state.server.enabled) {
+  if (!state.server.enabled || !state.server.profile) {
     updateServerStatus();
     return;
   }
@@ -680,7 +698,7 @@ function queueServerSave() {
 }
 
 async function pushServerSave() {
-  if (!state.server.enabled) return;
+  if (!state.server.enabled || !state.server.profile) return;
   window.clearTimeout(state.server.saveTimer);
   state.server.saveTimer = null;
   setServerStatus("syncing", "Salvando");
@@ -707,7 +725,7 @@ async function pushServerSave() {
 }
 
 async function postServerMutation(endpoint, body, statusLabel) {
-  if (!state.server.enabled) return null;
+  if (!requireOnlineProfile()) throw new Error("Entre em uma conta para continuar jogando.");
   if (state.server.saveTimer) await pushServerSave();
   setServerStatus("syncing", statusLabel);
 
@@ -4384,6 +4402,7 @@ function schedulePackOpening() {
 }
 
 async function openPack(packId) {
+  if (!requireOnlineProfile()) return;
   const pack = PACKS.find((item) => item.id === packId);
   if (!pack || state.save.merreis < pack.cost || isPackBusy()) return;
 
@@ -4596,6 +4615,7 @@ function rarityAtLeast(minRarity) {
 }
 
 async function upgradeMonster(monsterId) {
+  if (!requireOnlineProfile()) return;
   if (state.server.enabled) {
     await upgradeMonsterOnServer(monsterId);
     return;
@@ -4678,6 +4698,7 @@ function rankedChance(extraDifficulty = 0) {
 }
 
 async function runRankedMatch() {
+  if (!requireOnlineProfile()) return;
   if (state.server.enabled) {
     await runRankedMatchOnServer();
     return;
@@ -4751,9 +4772,15 @@ async function runRankedMatchOnServer() {
 }
 
 async function resolveRankedBattle(outcome, reason = "") {
-  if (state.server.enabled && state.battle?.ranked?.matchId) {
+  if (hasOnlineProfile()) {
+    if (!state.battle?.ranked?.matchId) {
+      state.battle.status = "Partida ranqueada sem validacao do servidor.";
+      renderBattle();
+      return { rewards: [] };
+    }
     return resolveRankedBattleOnServer(outcome, reason);
   }
+  if (canUseServerSave()) return { rewards: [] };
   return resolveRankedBattleLocally(outcome, reason);
 }
 
@@ -4800,11 +4827,15 @@ async function resolveRankedBattleOnServer(outcome, reason = "") {
     if (result.log) state.competitiveLog.unshift(result.log);
     return { rewards: result.rewards || [] };
   } catch (error) {
-    return resolveRankedBattleLocally(outcome, reason);
+    state.battle.status = error.message || "Resultado recusado pelo servidor.";
+    setServerStatus("error", "Resultado");
+    renderAll();
+    return { rewards: [] };
   }
 }
 
 async function runTournament(tournamentId) {
+  if (!requireOnlineProfile()) return;
   if (state.server.enabled) {
     await runTournamentOnServer(tournamentId);
     return;
@@ -4884,9 +4915,15 @@ async function runTournamentOnServer(tournamentId) {
 }
 
 async function resolveTournamentBattle(won, reason = "") {
-  if (state.server.enabled && state.battle?.competitiveMatchId) {
+  if (hasOnlineProfile()) {
+    if (!state.battle?.competitiveMatchId) {
+      state.battle.status = "Torneio sem validacao do servidor.";
+      renderBattle();
+      return { rewards: [], packReward: false };
+    }
     return resolveTournamentBattleOnServer(won, reason);
   }
+  if (canUseServerSave()) return { rewards: [], packReward: false };
   return resolveTournamentBattleLocally(won, reason);
 }
 
@@ -4944,7 +4981,10 @@ async function resolveTournamentBattleOnServer(won, reason = "") {
       packReward: Boolean(result.packReward)
     };
   } catch (error) {
-    return resolveTournamentBattleLocally(won, reason);
+    state.battle.status = error.message || "Resultado recusado pelo servidor.";
+    setServerStatus("error", "Resultado");
+    renderAll();
+    return { rewards: [], packReward: false };
   }
 }
 
@@ -4971,6 +5011,7 @@ function grantTournamentPackFromServer(pulls, serverPack) {
 }
 
 async function buyShopItem(itemId) {
+  if (!requireOnlineProfile()) return;
   if (state.server.enabled) {
     await buyShopItemOnServer(itemId);
     return;
@@ -5053,6 +5094,7 @@ function setGoalkeeper(monsterId) {
 }
 
 async function doTrade() {
+  if (!requireOnlineProfile()) return;
   const duplicates = MONSTERS.filter((monster) => (state.save.collection[monster.id] || 0) > 1);
   const missing = MONSTERS.filter((monster) => !state.save.collection[monster.id]);
   if (!duplicates.length || !missing.length || state.save.merreis < 60) return;
@@ -5088,6 +5130,7 @@ async function doTrade() {
 }
 
 async function sendFriendGift(friendId) {
+  if (!requireOnlineProfile()) return;
   const friend = FRIENDS.find((item) => item.id === friendId);
   if (!friend) return;
   if (!state.save.friendGifts[TODAY_KEY]) state.save.friendGifts[TODAY_KEY] = {};
@@ -5137,6 +5180,7 @@ function challengeFriend(friendId) {
 }
 
 async function claimMission(id) {
+  if (!requireOnlineProfile()) return;
   if (state.server.enabled) {
     await claimMissionOnServer(id);
     return;
@@ -5183,6 +5227,7 @@ function progressTutorial(id) {
 }
 
 function claimTutorialReward() {
+  if (!requireOnlineProfile()) return;
   const complete = TUTORIAL_STEPS.every((step) => state.save.tutorial[step.id]);
   if (!complete || state.save.tutorialRewardClaimed) return;
   state.save.tutorialRewardClaimed = true;
