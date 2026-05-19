@@ -1105,6 +1105,221 @@ function switchTab(tabName) {
   renderAll();
 }
 
+const IMAGE_BUTTON_SELECTOR = [
+  ".tab-button",
+  ".slot-picker button",
+  ".primary-button",
+  ".secondary-button",
+  ".ghost-button",
+  ".action-grid button",
+  ".pack-card button",
+  ".monster-card button",
+  ".mission-card button",
+  ".shop-card button",
+  ".battle-resume-card button",
+  ".tournament-card button",
+  ".edit-actions button",
+  ".friend-actions button",
+  ".result-actions button",
+  ".tutorial-panel button",
+  ".tutorial-coach button",
+  ".tutorial-active-card button",
+  ".tutorial-result-dialog button",
+  ".online-code-form button",
+  ".music-controls button",
+  ".profile-mode-tabs button",
+  ".setup-start"
+].join(",");
+const imageButtonCache = new Map();
+
+function escapeSvgText(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function buttonImageLabel(button) {
+  return String(button.dataset.imageLabel || button.textContent || button.getAttribute("aria-label") || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buttonImageVariant(button) {
+  if (button.disabled || button.classList.contains("is-tutorial-locked")) return "disabled";
+  if (button.classList.contains("is-active") || button.closest(".slot-picker") && button.classList.contains("is-active")) return "dark";
+  if (button.matches(".ghost-button, .secondary-button, .online-code-form button")) return "paper";
+  if (button.matches("[data-result-action='battle-menu'], [data-result-action='online-leave']")) return "red";
+  if (button.closest(".action-grid") && button.classList.contains("is-active")) return "red";
+  if (button.closest(".action-grid")) return "dark";
+  if (button.closest(".friend-actions") && button.matches(":last-child")) return "dark";
+  return "green";
+}
+
+function splitButtonLabel(label) {
+  if (label.length <= 18 || !label.includes(" ")) return [label];
+  const words = label.split(" ");
+  const lines = [""];
+  words.forEach((word) => {
+    const next = lines[lines.length - 1] ? `${lines[lines.length - 1]} ${word}` : word;
+    if (next.length > 16 && lines.length < 2) lines.push(word);
+    else lines[lines.length - 1] = next;
+  });
+  return lines.slice(0, 2);
+}
+
+function buttonImageIcon(button, label) {
+  if (!button.matches(".tab-button")) return "";
+  return {
+    Batalha: "battle",
+    Online: "online",
+    Torneios: "trophy",
+    Pacotinhos: "pack",
+    Colecao: "book",
+    Edit: "edit",
+    Amigos: "friends",
+    Trocas: "trade",
+    Loja: "shop",
+    Missoes: "missions"
+  }[label] || "";
+}
+
+function imageButtonIconSvg(icon, palette) {
+  if (!icon) return "";
+  const stroke = "#f6d66d";
+  const fill = "#ffffff";
+  const glow = "rgba(246,214,109,.38)";
+  const icons = {
+    battle: `
+      <path d="M137 18 L181 50 M183 18 L139 50" stroke="${stroke}" stroke-width="7" stroke-linecap="round"/>
+      <path d="M130 13 L142 18 L137 29 Z M190 13 L178 18 L183 29 Z" fill="${fill}"/>
+      <circle cx="137" cy="50" r="5" fill="${stroke}"/><circle cx="183" cy="50" r="5" fill="${stroke}"/>
+    `,
+    online: `
+      <circle cx="160" cy="32" r="22" fill="none" stroke="${stroke}" stroke-width="5"/>
+      <path d="M138 32 H182 M160 10 V54 M146 15 C155 27 155 37 146 49 M174 15 C165 27 165 37 174 49" fill="none" stroke="${fill}" stroke-width="3" stroke-linecap="round"/>
+    `,
+    trophy: `
+      <path d="M143 12 H177 V29 C177 42 168 49 160 49 C152 49 143 42 143 29 Z" fill="${stroke}"/>
+      <path d="M143 18 H132 C132 33 139 37 145 38 M177 18 H188 C188 33 181 37 175 38" fill="none" stroke="${stroke}" stroke-width="5" stroke-linecap="round"/>
+      <path d="M154 49 H166 V57 H182 V63 H138 V57 H154 Z" fill="${fill}"/>
+    `,
+    pack: `
+      <path d="M138 22 L160 11 L182 22 V51 L160 63 L138 51 Z" fill="${stroke}"/>
+      <path d="M138 22 L160 34 L182 22 M160 34 V63" fill="none" stroke="#173047" stroke-width="4" stroke-linecap="round"/>
+      <path d="M150 17 L172 29" stroke="${fill}" stroke-width="4" stroke-linecap="round"/>
+    `,
+    book: `
+      <path d="M134 16 C144 12 153 14 160 21 V59 C153 53 144 52 134 56 Z M186 16 C176 12 167 14 160 21 V59 C167 53 176 52 186 56 Z" fill="${stroke}"/>
+      <path d="M145 24 H154 M145 34 H154 M166 24 H175 M166 34 H175" stroke="#173047" stroke-width="3" stroke-linecap="round"/>
+    `,
+    edit: `
+      <path d="M143 53 L148 39 L176 11 L188 23 L160 51 Z" fill="${stroke}"/>
+      <path d="M171 16 L183 28 M148 39 L160 51" stroke="#173047" stroke-width="4" stroke-linecap="round"/>
+      <path d="M140 58 H185" stroke="${fill}" stroke-width="5" stroke-linecap="round"/>
+    `,
+    friends: `
+      <circle cx="149" cy="25" r="10" fill="${stroke}"/><circle cx="173" cy="25" r="10" fill="${fill}"/>
+      <path d="M129 57 C132 44 141 38 150 38 C158 38 164 44 166 57 Z" fill="${stroke}"/>
+      <path d="M158 57 C160 44 168 38 176 38 C184 38 190 44 192 57 Z" fill="${fill}"/>
+    `,
+    trade: `
+      <path d="M134 26 H181 L172 17 M186 43 H139 L148 52" fill="none" stroke="${stroke}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="160" cy="34" r="7" fill="${fill}"/>
+    `,
+    shop: `
+      <path d="M137 19 H148 L154 45 H180 L187 27 H153" fill="none" stroke="${stroke}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="157" cy="57" r="5" fill="${fill}"/><circle cx="179" cy="57" r="5" fill="${fill}"/>
+    `,
+    missions: `
+      <path d="M160 10 L168 27 L187 29 L173 42 L177 61 L160 51 L143 61 L147 42 L133 29 L152 27 Z" fill="${stroke}"/>
+      <path d="M150 36 L157 43 L172 28" fill="none" stroke="#173047" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    `
+  };
+  return `
+    <g filter="url(#iconGlow)">
+      <circle cx="160" cy="35" r="31" fill="${glow}"/>
+      ${icons[icon] || ""}
+    </g>
+  `;
+}
+
+function imageButtonSvg(label, variant, icon = "") {
+  const palette = {
+    green: ["#178c45", "#064c2b", "#ffffff", "#10231b", "#f6d66d"],
+    red: ["#e45138", "#8d251b", "#ffffff", "#2d1210", "#f6d66d"],
+    dark: ["#153855", "#071929", "#ffffff", "#07111d", "#f6d66d"],
+    paper: ["#1e4a66", "#0a2237", "#ffffff", "#07111d", "#f6d66d"],
+    disabled: ["#6f7f94", "#293545", "#e5e7eb", "#172033", "#cbd5e1"]
+  }[variant] || ["#178c45", "#064c2b", "#ffffff", "#10231b", "#f6d66d"];
+  const lines = splitButtonLabel(label).map(escapeSvgText);
+  const twoLines = lines.length > 1;
+  const hasIcon = Boolean(icon);
+  const fontSize = hasIcon ? 19 : twoLines ? 21 : label.length > 22 ? 23 : 27;
+  const textStroke = palette[3];
+  const y = hasIcon ? (twoLines ? 65 : 72) : twoLines ? 32 : 43;
+  const textLengthFor = (line) => Math.min(twoLines ? 230 : 248, Math.max(twoLines ? 128 : 136, line.length * fontSize * 1.12));
+  const text = lines.map((line, index) => (
+    `<text x="160" y="${y + index * (hasIcon ? 18 : 23)}" text-anchor="middle" textLength="${textLengthFor(line)}" lengthAdjust="spacingAndGlyphs">${line}</text>`
+  )).join("");
+  return `
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 ${hasIcon ? 98 : 72}">
+      <defs>
+        <linearGradient id="g" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0" stop-color="${palette[0]}"/>
+          <stop offset="1" stop-color="${palette[1]}"/>
+        </linearGradient>
+        <filter id="shadow" x="-8%" y="-16%" width="116%" height="140%">
+          <feDropShadow dx="0" dy="3" stdDeviation="2" flood-color="#1c2430" flood-opacity=".22"/>
+        </filter>
+        <filter id="iconGlow" x="-25%" y="-25%" width="150%" height="150%">
+          <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="${palette[4]}" flood-opacity=".45"/>
+        </filter>
+      </defs>
+      <path d="M15 10 C49 5 86 9 123 7 C172 4 223 5 303 12 C310 24 309 ${hasIcon ? 75 : 49} 303 ${hasIcon ? 87 : 61} C230 ${hasIcon ? 94 : 67} 182 ${hasIcon ? 90 : 63} 135 ${hasIcon ? 92 : 66} C86 ${hasIcon ? 95 : 69} 47 ${hasIcon ? 91 : 65} 15 ${hasIcon ? 86 : 60} C8 ${hasIcon ? 69 : 46} 8 24 15 10 Z" fill="url(#g)" filter="url(#shadow)"/>
+      <path d="M18 13 C70 9 105 13 158 11 C207 9 258 12 299 17" fill="none" stroke="#ffffff" stroke-opacity=".34" stroke-width="3" stroke-linecap="round"/>
+      <path d="M23 ${hasIcon ? 82 : 56} C76 ${hasIcon ? 88 : 61} 117 ${hasIcon ? 84 : 58} 166 ${hasIcon ? 84 : 58} C209 ${hasIcon ? 83 : 57} 251 ${hasIcon ? 88 : 62} 292 ${hasIcon ? 82 : 56}" fill="none" stroke="${palette[4]}" stroke-opacity=".48" stroke-width="3" stroke-linecap="round"/>
+      <circle cx="32" cy="22" r="4" fill="#ffffff" fill-opacity=".62"/>
+      <circle cx="291" cy="${hasIcon ? 76 : 51}" r="3" fill="#ffffff" fill-opacity=".34"/>
+      ${imageButtonIconSvg(icon, palette)}
+      <g font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="${fontSize}" font-weight="900" fill="${palette[2]}" stroke="${textStroke}" stroke-width="${variant === "paper" ? 5 : 3}" paint-order="stroke" letter-spacing="0">
+        ${text}
+      </g>
+    </svg>
+  `.replace(/\s+/g, " ").trim();
+}
+
+function imageButtonUrl(label, variant, icon = "") {
+  const key = `${variant}:${icon}:${label}`;
+  if (!imageButtonCache.has(key)) {
+    imageButtonCache.set(key, `url("data:image/svg+xml,${encodeURIComponent(imageButtonSvg(label, variant, icon))}")`);
+  }
+  return imageButtonCache.get(key);
+}
+
+function decorateImageButtons(root = document) {
+  if (!root) return;
+  root.querySelectorAll(IMAGE_BUTTON_SELECTOR).forEach((button) => {
+    const label = buttonImageLabel(button);
+    if (!label || button.childElementCount > 0 || button.classList.contains("art-view-button")) {
+      button.classList.remove("image-button");
+      button.style.removeProperty("--button-art");
+      button.dataset.imageButtonKey = "";
+      return;
+    }
+    const variant = buttonImageVariant(button);
+    const icon = buttonImageIcon(button, label);
+    const key = `${variant}:${icon}:${label}:${button.disabled ? "off" : "on"}`;
+    if (button.dataset.imageButtonKey === key) return;
+    button.dataset.imageButtonKey = key;
+    button.classList.add("image-button");
+    button.classList.toggle("has-button-icon", Boolean(icon));
+    button.style.setProperty("--button-min-width", `${Math.min(icon ? 104 : 220, Math.max(icon ? 86 : 72, label.length * 7 + 36))}px`);
+    button.style.setProperty("--button-art", imageButtonUrl(label, variant, icon));
+  });
+}
+
 function setupOnlineLobbyRealtime() {
   window.setInterval(() => {
     if (state.server.enabled && state.online.socketStatus !== "online") connectOnlineSocket();
@@ -1996,6 +2211,7 @@ function renderEntryGate() {
   const accountDisabled = state.server.loading || !state.server.enabled;
   if (loginButton) loginButton.disabled = accountDisabled;
   if (registerButton) registerButton.disabled = accountDisabled;
+  decorateImageButtons(gate);
 }
 
 function openProfileModal(mode = state.server.profileMode, options = {}) {
@@ -2908,6 +3124,7 @@ function renderAll() {
   renderTutorialCoach();
   renderTutorialPopover();
   renderTutorialResultPopup();
+  decorateImageButtons();
 }
 
 function applySelectedCosmetic() {
@@ -3442,6 +3659,7 @@ function updatePackResultsChrome() {
   if (closeButton) closeButton.textContent = "Fechar";
   const shortcut = results.querySelector("[data-reveal-all-pulls]");
   if (shortcut) shortcut.hidden = !canRevealAllNow;
+  decorateImageButtons();
 }
 
 function renderPackOpening() {
@@ -3535,6 +3753,8 @@ function renderCollection() {
   grid.querySelectorAll("button[data-goalkeeper]").forEach((button) => {
     button.addEventListener("click", () => setGoalkeeper(button.dataset.goalkeeper));
   });
+  decorateImageButtons(grid);
+  decorateImageButtons(document.getElementById("slot-picker"));
 }
 
 function renderEdit() {

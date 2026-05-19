@@ -7,6 +7,7 @@ function renderBattle() {
   renderBattleShell();
   if (!state.battle) {
     clearBattleScene();
+    decorateImageButtons();
     return;
   }
   renderBattleSceneSummary();
@@ -16,6 +17,7 @@ function renderBattle() {
   renderBattleResult();
   renderCommands();
   renderBattleLog();
+  decorateImageButtons();
 }
 
 function renderBattleShell() {
@@ -203,6 +205,7 @@ function renderBattleSetup() {
     </div>
     <button class="setup-start" type="button" data-start-battle="true" ${startDisabled}>${startLabel}</button>
   `;
+  decorateImageButtons(menu);
 }
 
 function setupPlacementBoard(positions, placement, lockedBattle) {

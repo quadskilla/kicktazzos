@@ -40,6 +40,18 @@ body {
   letter-spacing: 0;
 }
 
+body::before {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  content: "";
+  background:
+    radial-gradient(circle at 16% 16%, rgba(240, 180, 41, 0.16), transparent 26%),
+    radial-gradient(circle at 82% 18%, rgba(16, 185, 129, 0.1), transparent 28%),
+    linear-gradient(180deg, rgba(4, 22, 38, 0.18), rgba(4, 22, 38, 0.55));
+}
+
 button,
 select,
 input {
@@ -64,6 +76,8 @@ img {
 }
 
 .app-shell {
+  position: relative;
+  z-index: 1;
   min-height: 100vh;
 }
 
@@ -132,6 +146,7 @@ img {
 
 .main-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   justify-content: center;
   min-width: 0;
@@ -555,6 +570,27 @@ h3 {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 244, 214, 0.94)),
     var(--recess-action) center / cover no-repeat;
+}
+
+button.image-button {
+  position: relative;
+  min-width: var(--button-min-width, 88px);
+  overflow: hidden;
+  color: transparent !important;
+  text-shadow: none !important;
+  background: var(--button-art) center / 100% 100% no-repeat !important;
+  border-color: transparent !important;
+  box-shadow: 0 5px 0 rgba(28, 36, 48, 0.14), 0 12px 20px rgba(28, 36, 48, 0.1);
+}
+
+button.image-button:disabled {
+  opacity: 0.78;
+  filter: grayscale(0.28);
+}
+
+button.image-button:focus-visible {
+  outline: 3px solid rgba(240, 180, 41, 0.7);
+  outline-offset: 2px;
 }
 
 .battle-state {
@@ -4307,9 +4343,12 @@ body[data-tutorial-step="ranked"] #ranked-button {
 
 .entry-card {
   display: grid;
-  width: min(520px, 94vw);
+  width: 94%;
+  max-width: 520px;
+  max-height: calc(100vh - 24px);
   gap: 12px;
   justify-items: center;
+  overflow: auto;
   padding: clamp(18px, 3vw, 26px);
   text-align: center;
   background:
@@ -4335,14 +4374,17 @@ body[data-tutorial-step="ranked"] #ranked-button {
 }
 
 .entry-card h2 {
+  max-width: 100%;
   margin: 0;
+  overflow-wrap: anywhere;
   font-size: clamp(1.7rem, 4vw, 2.6rem);
   line-height: 0.98;
 }
 
 .entry-card p {
-  max-width: 42ch;
+  max-width: min(42ch, 100%);
   margin: 0;
+  overflow-wrap: anywhere;
   color: var(--muted);
   font-weight: 700;
   line-height: 1.42;
@@ -4351,6 +4393,7 @@ body[data-tutorial-step="ranked"] #ranked-button {
 .entry-status {
   width: 100%;
   padding: 9px 12px;
+  overflow-wrap: anywhere;
   color: var(--ink);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.74), rgba(236, 245, 240, 0.9)),
@@ -4568,6 +4611,220 @@ body[data-tutorial-step="ranked"] #ranked-button {
   box-shadow: 0 4px 0 rgba(128, 22, 16, 0.22);
 }
 
+.topbar {
+  background:
+    linear-gradient(180deg, rgba(9, 31, 52, 0.94), rgba(4, 18, 31, 0.92)),
+    var(--recess-header) center / cover no-repeat;
+  border-bottom: 2px solid rgba(240, 180, 41, 0.58);
+  box-shadow: 0 14px 36px rgba(2, 8, 16, 0.34), inset 0 -1px 0 rgba(120, 231, 255, 0.18);
+}
+
+.brand {
+  padding: 6px 10px;
+  color: #ffffff;
+  background: linear-gradient(180deg, rgba(13, 52, 83, 0.9), rgba(6, 24, 40, 0.88));
+  border: 1px solid rgba(240, 180, 41, 0.38);
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px rgba(120, 231, 255, 0.12), 0 8px 18px rgba(2, 8, 16, 0.24);
+}
+
+.brand span {
+  color: #9de8ef;
+}
+
+.main-tabs {
+  align-items: stretch;
+  padding: 6px;
+  background: linear-gradient(180deg, rgba(12, 47, 76, 0.74), rgba(4, 20, 34, 0.88));
+  border: 1px solid rgba(240, 180, 41, 0.28);
+  box-shadow: inset 0 0 0 1px rgba(120, 231, 255, 0.12), 0 8px 18px rgba(2, 8, 16, 0.18);
+}
+
+.tab-button {
+  min-height: 72px;
+  padding: 0 10px;
+}
+
+.tab-button.image-button {
+  background-size: 100% 100% !important;
+}
+
+.wallet {
+  align-items: center;
+}
+
+.wallet > span,
+.profile-button {
+  color: #f8fafc;
+  background:
+    linear-gradient(180deg, rgba(22, 58, 86, 0.92), rgba(5, 23, 39, 0.94));
+  border-color: rgba(240, 180, 41, 0.32);
+  box-shadow: inset 0 0 0 1px rgba(120, 231, 255, 0.12), 0 8px 18px rgba(2, 8, 16, 0.22);
+}
+
+.wallet strong,
+.profile-button strong {
+  color: #ffffff;
+}
+
+.profile-button[data-profile-state="logged"] strong,
+.server-pill[data-server-state="online"] strong {
+  color: #86efac;
+}
+
+.content {
+  width: min(1580px, 100%);
+}
+
+.panel,
+.arena-panel,
+.pack-card,
+.mission-card,
+.tournament-card,
+.shop-card,
+.friend-card,
+.trade-board .panel,
+.tutorial-panel,
+.tutorial-active-card {
+  color: #f8fafc;
+  background:
+    linear-gradient(180deg, rgba(9, 35, 58, 0.9), rgba(3, 18, 31, 0.93)),
+    var(--recess-panel) center / cover no-repeat;
+  border: 1px solid rgba(120, 231, 255, 0.24);
+  box-shadow: inset 0 0 0 1px rgba(240, 180, 41, 0.12), 0 18px 36px rgba(2, 8, 16, 0.28);
+}
+
+.section-head {
+  min-height: 104px;
+  padding: 14px 16px;
+  background:
+    linear-gradient(90deg, rgba(8, 34, 57, 0.92), rgba(13, 67, 88, 0.72), rgba(8, 34, 57, 0.92));
+  border: 1px solid rgba(240, 180, 41, 0.42);
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px rgba(120, 231, 255, 0.14), 0 18px 40px rgba(2, 8, 16, 0.24);
+}
+
+.section-head > div:first-child,
+.battle-head > div:first-child {
+  background: linear-gradient(180deg, rgba(20, 69, 94, 0.88), rgba(8, 29, 47, 0.96));
+  border-color: rgba(240, 180, 41, 0.58);
+  box-shadow: 0 5px 0 rgba(240, 180, 41, 0.28), 0 12px 24px rgba(2, 8, 16, 0.24);
+}
+
+.section-head h1,
+.battle-head h1,
+.panel h2,
+.pack-card h2,
+.mission-card h2,
+.tournament-card h3,
+.shop-card h3 {
+  color: #ffffff;
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.44);
+}
+
+.eyebrow {
+  color: #58f0e2;
+}
+
+.panel > h2,
+.pack-card h2,
+.pack-results-head h2,
+.opening-copy h2,
+.result-card h2,
+.viewer-info h2,
+.tutorial-result-dialog h2 {
+  color: #ffffff;
+  background: linear-gradient(180deg, rgba(19, 77, 101, 0.92), rgba(6, 28, 45, 0.98));
+  border-color: rgba(240, 180, 41, 0.34);
+  box-shadow: inset 0 0 0 1px rgba(120, 231, 255, 0.12), 0 3px 0 rgba(240, 180, 41, 0.2);
+}
+
+.panel p,
+.pack-card p,
+.mission-card p,
+.tournament-card p,
+.shop-card p,
+.battle-resume-card p,
+.small-list span,
+.rank-card span,
+.setup-preview > span,
+.battle-log {
+  color: #c8d7e3;
+}
+
+.chip,
+.rarity-chip {
+  color: #ffffff;
+  background: linear-gradient(180deg, rgba(27, 78, 105, 0.88), rgba(6, 28, 45, 0.96));
+  border-color: rgba(240, 180, 41, 0.28);
+}
+
+.rank-card {
+  background:
+    radial-gradient(circle at 18% 20%, rgba(34, 197, 94, 0.22), transparent 38%),
+    linear-gradient(180deg, rgba(10, 56, 80, 0.92), rgba(4, 18, 31, 0.94));
+}
+
+.rank-value {
+  color: #fff7d6;
+  text-shadow: 0 4px 0 rgba(0, 0, 0, 0.28);
+}
+
+.small-row,
+.tournament-opponent,
+.scene-summary-grid div,
+.battle-log p,
+.setup-preview,
+.setup-placement,
+.pack-pity-card,
+.entry-status,
+.profile-current {
+  color: #f8fafc;
+  background: linear-gradient(180deg, rgba(17, 48, 72, 0.86), rgba(5, 24, 40, 0.92));
+  border-color: rgba(120, 231, 255, 0.2);
+}
+
+.small-row strong,
+.scene-summary-grid strong,
+.tournament-opponent strong,
+.setup-preview strong {
+  color: #ffffff;
+}
+
+button.image-button {
+  border-radius: 8px;
+  box-shadow: 0 5px 0 rgba(2, 8, 16, 0.42), 0 10px 18px rgba(2, 8, 16, 0.26);
+}
+
+button.image-button.has-button-icon {
+  min-height: 72px;
+}
+
+.entry-card,
+.profile-dialog,
+.pack-results-dialog,
+.pack-opening,
+.tazzo-viewer-card,
+.tutorial-result-dialog {
+  color: #f8fafc;
+  background:
+    linear-gradient(180deg, rgba(9, 35, 58, 0.92), rgba(4, 18, 31, 0.96)),
+    var(--recess-modal) center / cover no-repeat;
+  border-color: rgba(240, 180, 41, 0.36);
+}
+
+.entry-card p,
+.profile-message,
+.profile-current-copy span,
+.entry-reminder {
+  color: #d6e2ee;
+}
+
+.entry-card h2,
+.profile-dialog h2 {
+  color: #ffffff;
+}
+
 @media (max-width: 1180px) {
   .topbar {
     grid-template-columns: 1fr;
@@ -4633,6 +4890,26 @@ body[data-tutorial-step="ranked"] #ranked-button {
 }
 
 @media (max-width: 560px) {
+  .entry-gate {
+    padding: 12px;
+    place-items: center;
+  }
+
+  .entry-card {
+    width: calc(100vw - 24px);
+    max-width: calc(100vw - 24px);
+    padding: 16px;
+  }
+
+  .entry-logo {
+    width: min(220px, 74vw);
+    min-height: 92px;
+  }
+
+  .entry-card h2 {
+    font-size: clamp(1.35rem, 7.4vw, 2rem);
+  }
+
   .entry-actions {
     grid-template-columns: 1fr;
   }
