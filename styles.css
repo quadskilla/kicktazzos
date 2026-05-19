@@ -233,45 +233,31 @@ img {
 .wallet-token {
   position: relative;
   display: grid;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   place-items: center;
-  flex: 0 0 26px;
+  flex: 0 0 28px;
   color: #ffffff;
   font-weight: 900;
   line-height: 1;
 }
 
 .wallet-token-merreis {
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at 32% 24%, rgba(255, 255, 255, 0.72), transparent 26%),
-    linear-gradient(135deg, #f8c84b, #b87113);
-  border: 2px solid rgba(255, 238, 156, 0.9);
-  box-shadow: 0 3px 7px rgba(120, 74, 12, 0.28);
+  background: url("assets/icones/merreis.png") center / contain no-repeat;
+  filter: drop-shadow(0 3px 5px rgba(11, 43, 24, 0.28));
 }
 
 .wallet-token-merreis::after {
-  content: "M";
-  font-size: 0.72rem;
+  content: none;
 }
 
 .wallet-token-fragments {
-  transform: rotate(45deg);
-  border-radius: 7px;
-  background:
-    radial-gradient(circle at 25% 25%, rgba(255, 255, 255, 0.68), transparent 28%),
-    linear-gradient(135deg, #d784ff, #5f2be1 62%, #26115e);
-  border: 2px solid rgba(231, 203, 255, 0.9);
-  box-shadow: 0 3px 8px rgba(72, 35, 132, 0.3);
+  background: url("assets/icones/fragmentos.png") center / contain no-repeat;
+  filter: drop-shadow(0 3px 6px rgba(72, 35, 132, 0.32));
 }
 
 .wallet-token-fragments::after {
-  content: "";
-  width: 9px;
-  height: 9px;
-  border-right: 2px solid rgba(255, 255, 255, 0.72);
-  border-bottom: 2px solid rgba(255, 255, 255, 0.72);
+  content: none;
 }
 
 .wallet-token-album {
@@ -4979,6 +4965,51 @@ body[data-tutorial-step="ranked"] #ranked-button {
   color: #58f0e2;
 }
 
+#view-battle .battle-home > .section-head {
+  --section-banner-art: url("assets/icones/banner_batalha_de_campo.png");
+}
+
+#view-online > .section-head {
+  --section-banner-art: url("assets/icones/jogar_online.png");
+}
+
+#view-packs > .section-head {
+  --section-banner-art: url("assets/icones/abrir_salgadinhos.png");
+}
+
+#view-collection > .section-head {
+  --section-banner-art: url("assets/icones/colecao_de_tazzos.png");
+}
+
+#view-trade > .section-head {
+  --section-banner-art: url("assets/icones/banner_troca.png");
+}
+
+#view-battle .battle-home > .section-head,
+#view-online > .section-head,
+#view-packs > .section-head,
+#view-collection > .section-head,
+#view-trade > .section-head {
+  align-items: flex-end;
+  min-height: clamp(170px, 20vw, 300px);
+  padding: clamp(14px, 1.8vw, 22px);
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, rgba(2, 8, 16, 0.74) 0%, rgba(2, 8, 16, 0.22) 48%, rgba(2, 8, 16, 0.66) 100%),
+    var(--section-banner-art) center / cover no-repeat;
+  border-color: rgba(240, 180, 41, 0.58);
+  box-shadow: inset 0 0 0 1px rgba(120, 231, 255, 0.18), 0 20px 44px rgba(2, 8, 16, 0.3);
+}
+
+#view-battle .battle-home > .section-head > div:first-child,
+#view-online > .section-head > div:first-child,
+#view-packs > .section-head > div:first-child,
+#view-collection > .section-head > div:first-child,
+#view-trade > .section-head > div:first-child {
+  background: linear-gradient(180deg, rgba(8, 31, 52, 0.84), rgba(4, 14, 26, 0.94));
+  backdrop-filter: blur(5px);
+}
+
 .panel > h2,
 .pack-card h2,
 .pack-results-head h2,
@@ -5402,6 +5433,15 @@ button.image-button.has-button-icon {
   .battle-head {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  #view-battle .battle-home > .section-head,
+  #view-online > .section-head,
+  #view-packs > .section-head,
+  #view-collection > .section-head,
+  #view-trade > .section-head {
+    min-height: clamp(168px, 42vw, 240px);
+    background-position: center;
   }
 
   .battle-state {
