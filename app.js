@@ -1242,11 +1242,35 @@ const IMAGE_BUTTON_SELECTOR = [
   ".tutorial-active-card button",
   ".tutorial-result-dialog button",
   ".online-code-form button",
+  ".online-current-actions button",
+  ".online-lobby-list button",
+  ".opening-copy button",
+  ".pack-results-actions button",
+  ".viewer-close",
   ".music-controls button",
   ".profile-mode-tabs button",
   ".setup-start"
 ].join(",");
 const imageButtonCache = new Map();
+const COMBAT_BUTTON_ART = {
+  move: "assets/icones/mover.png",
+  dribble: "assets/icones/driblar.png",
+  shot: "assets/icones/chutar.png",
+  keeper: "assets/icones/goleiro.png",
+  pressure: "assets/icones/pressionar.png",
+  retreat: "assets/icones/recuar.png",
+  swap: "assets/icones/trocar.png",
+  pass: "assets/icones/passar.png",
+  start: "assets/icones/iniciar jogo.png",
+  enter: "assets/icones/entrar.png",
+  team: "assets/icones/trocar_time.png",
+  gameMenu: "assets/icones/menu_de_jogo.png",
+  rematch: "assets/icones/revanche.png",
+  createRoom: "assets/icones/criar_sala.png",
+  refresh: "assets/icones/atualizar.png",
+  claim: "assets/icones/resgatar.png",
+  claimed: "assets/icones/resgatada.png"
+};
 
 function escapeSvgText(value) {
   return String(value || "")
@@ -1285,9 +1309,90 @@ function splitButtonLabel(label) {
   return lines.slice(0, 2);
 }
 
+function normalizedButtonLabel(label) {
+  return String(label || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase();
+}
+
+function buttonImageAsset(button, label) {
+  const normalizedLabel = normalizedButtonLabel(label);
+  if (button.dataset.action && COMBAT_BUTTON_ART[button.dataset.action]) {
+    return COMBAT_BUTTON_ART[button.dataset.action];
+  }
+  if (button.id === "new-battle-button" || button.dataset.startBattle !== undefined) {
+    if (button.disabled && !/(abrir|iniciar|nova)/.test(normalizedLabel)) return "";
+    return COMBAT_BUTTON_ART.start;
+  }
+  if (button.id === "create-lobby-button") return COMBAT_BUTTON_ART.createRoom;
+  if (button.id === "refresh-lobbies-button") return COMBAT_BUTTON_ART.refresh;
+  if (button.id === "back-to-battle-menu-button") return COMBAT_BUTTON_ART.gameMenu;
+  if (button.matches(".online-code-form button")) return COMBAT_BUTTON_ART.enter;
+  if (button.dataset.joinLobby) {
+    return normalizedLabel.includes("entrar") ? COMBAT_BUTTON_ART.enter : "";
+  }
+  if (button.dataset.team || button.dataset.goalkeeper) return COMBAT_BUTTON_ART.team;
+  if (button.dataset.claim || button.dataset.tutorialReward) {
+    return normalizedLabel.includes("resgatad") ? COMBAT_BUTTON_ART.claimed : COMBAT_BUTTON_ART.claim;
+  }
+  if (button.dataset.resultAction) {
+    return {
+      "battle-menu": COMBAT_BUTTON_ART.gameMenu,
+      rematch: COMBAT_BUTTON_ART.rematch,
+      "online-rematch": COMBAT_BUTTON_ART.rematch,
+      collection: COMBAT_BUTTON_ART.team
+    }[button.dataset.resultAction] || "";
+  }
+  if (button.dataset.lobbyAction) {
+    if (button.dataset.lobbyAction === "open-battle") return COMBAT_BUTTON_ART.enter;
+    if (button.dataset.lobbyAction === "rematch") return COMBAT_BUTTON_ART.rematch;
+  }
+  if (button.dataset.tournament && normalizedLabel.includes("entrar")) return COMBAT_BUTTON_ART.enter;
+  return "";
+}
+
+function imageAssetUrl(path) {
+  return `url("${String(path).replace(/"/g, "%22").replace(/ /g, "%20")}")`;
+}
+
 function buttonImageIcon(button, label) {
-  if (!button.matches(".tab-button")) return "";
-  return {
+  const normalizedLabel = normalizedButtonLabel(label);
+  if (button.dataset.action) {
+    return {
+      move: "move",
+      dribble: "dribble",
+      shot: "shot",
+      keeper: "keeper",
+      pressure: "pressure",
+      retreat: "retreat",
+      swap: "swap",
+      pass: "pass"
+    }[button.dataset.action] || "";
+  }
+  if (button.dataset.resultAction) {
+    return {
+      "battle-menu": "menu",
+      rematch: "rematch",
+      tournaments: "trophy",
+      online: "online",
+      "online-rematch": "rematch",
+      "online-leave": "exit",
+      packs: "pack",
+      collection: "book"
+    }[button.dataset.resultAction] || "";
+  }
+  if (button.dataset.lobbyAction) {
+    return {
+      "copy-invite": "copy",
+      ready: "check",
+      leave: "exit",
+      "open-battle": "battle",
+      "claim-forfeit": "trophy",
+      rematch: "rematch"
+    }[button.dataset.lobbyAction] || "";
+  }
+  if (button.matches(".tab-button")) return {
     Batalha: "battle",
     Online: "online",
     Torneios: "trophy",
@@ -1298,6 +1403,33 @@ function buttonImageIcon(button, label) {
     Loja: "shop",
     Missoes: "missions"
   }[label] || "";
+  if (button.id === "new-battle-button" || button.dataset.startBattle !== undefined) return "battle";
+  if (button.id === "ranked-button") return "trophy";
+  if (button.id === "create-lobby-button") return "online";
+  if (button.id === "refresh-lobbies-button") return "refresh";
+  if (button.id === "reveal-all-button" || button.dataset.revealAllPulls !== undefined) return "flip";
+  if (button.id === "trade-button") return "trade";
+  if (button.id === "reset-save-button") return "reset";
+  if (button.id === "edit-new-button") return "edit";
+  if (button.id === "music-play-button") return "play";
+  if (button.id === "music-next-button") return "next";
+  if (button.matches(".viewer-close")) return "close";
+  if (button.dataset.joinLobby) return "online";
+  if (button.dataset.pack) return "pack";
+  if (button.dataset.shop) return "shop";
+  if (button.dataset.tournament) return "trophy";
+  if (button.dataset.claim || button.dataset.tutorialReward) return "check";
+  if (button.dataset.gift) return "gift";
+  if (button.dataset.challenge) return "battle";
+  if (button.dataset.team || button.dataset.goalkeeper) return "plus";
+  if (button.dataset.upgrade) return "upgrade";
+  if (button.dataset.profileMode) return normalizedLabel.includes("criar") ? "plus" : "login";
+  if (normalizedLabel.includes("entrar")) return "login";
+  if (normalizedLabel.includes("criar")) return "plus";
+  if (normalizedLabel.includes("abrir")) return "pack";
+  if (normalizedLabel.includes("salvar") || normalizedLabel.includes("adicionar")) return "check";
+  if (normalizedLabel.includes("continuar") || normalizedLabel.includes("ir")) return "next";
+  return "";
 }
 
 function imageButtonIconSvg(icon, palette) {
@@ -1350,6 +1482,91 @@ function imageButtonIconSvg(icon, palette) {
     missions: `
       <path d="M160 10 L168 27 L187 29 L173 42 L177 61 L160 51 L143 61 L147 42 L133 29 L152 27 Z" fill="${stroke}"/>
       <path d="M150 36 L157 43 L172 28" fill="none" stroke="#173047" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    `,
+    move: `
+      <path d="M160 9 V61 M160 9 L149 20 M160 9 L171 20 M160 61 L149 50 M160 61 L171 50 M134 35 H186 M134 35 L145 24 M134 35 L145 46 M186 35 L175 24 M186 35 L175 46" fill="none" stroke="${stroke}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    `,
+    dribble: `
+      <path d="M148 15 C161 18 170 28 170 41 C170 51 164 58 154 61" fill="none" stroke="${stroke}" stroke-width="7" stroke-linecap="round"/>
+      <circle cx="150" cy="25" r="7" fill="${fill}"/><circle cx="178" cy="51" r="9" fill="${stroke}"/>
+    `,
+    shot: `
+      <path d="M134 50 L171 15 M158 13 H183 V38" fill="none" stroke="${stroke}" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="144" cy="54" r="8" fill="${fill}"/>
+    `,
+    keeper: `
+      <path d="M136 19 H184 V55 H136 Z" fill="none" stroke="${stroke}" stroke-width="6"/>
+      <path d="M145 47 C154 31 165 31 175 47 M160 19 V55" fill="none" stroke="${fill}" stroke-width="4" stroke-linecap="round"/>
+    `,
+    pressure: `
+      <path d="M136 36 C146 19 174 19 184 36 C174 53 146 53 136 36 Z" fill="${stroke}"/>
+      <path d="M150 36 H170 M160 26 V46" stroke="#173047" stroke-width="6" stroke-linecap="round"/>
+    `,
+    retreat: `
+      <path d="M185 21 H143 L154 10 M143 21 L154 32 M135 49 H177 L166 38 M177 49 L166 60" fill="none" stroke="${stroke}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+    `,
+    swap: `
+      <path d="M139 24 H179 L169 14 M181 46 H141 L151 56" fill="none" stroke="${stroke}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="151" cy="46" r="5" fill="${fill}"/><circle cx="169" cy="24" r="5" fill="${fill}"/>
+    `,
+    pass: `
+      <path d="M135 43 C151 22 171 22 187 43 M178 42 L187 43 L184 33" fill="none" stroke="${stroke}" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="138" cy="46" r="7" fill="${fill}"/>
+    `,
+    menu: `
+      <path d="M138 20 H183 M138 35 H183 M138 50 H183" stroke="${stroke}" stroke-width="7" stroke-linecap="round"/>
+    `,
+    rematch: `
+      <path d="M181 25 C174 16 160 12 149 18 C137 25 135 42 146 52 C156 61 173 57 181 45" fill="none" stroke="${stroke}" stroke-width="7" stroke-linecap="round"/>
+      <path d="M181 25 L181 12 L191 21" fill="none" stroke="${fill}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    `,
+    exit: `
+      <path d="M140 16 H164 V25 M164 45 V54 H140 Z" fill="none" stroke="${stroke}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M158 35 H189 M178 24 L189 35 L178 46" fill="none" stroke="${fill}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    `,
+    copy: `
+      <path d="M145 22 H175 V56 H145 Z M155 14 H185 V48" fill="none" stroke="${stroke}" stroke-width="6" stroke-linejoin="round"/>
+    `,
+    check: `
+      <path d="M139 37 L154 52 L184 19" fill="none" stroke="${stroke}" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+    `,
+    refresh: `
+      <path d="M181 28 C176 18 163 13 151 18 C141 22 135 31 136 41 M139 55 C146 63 160 65 171 58 C180 52 184 42 181 32" fill="none" stroke="${stroke}" stroke-width="7" stroke-linecap="round"/>
+      <path d="M181 28 L188 16 M181 28 L169 25 M139 55 L132 64 M139 55 L151 58" fill="none" stroke="${fill}" stroke-width="5" stroke-linecap="round"/>
+    `,
+    flip: `
+      <path d="M140 20 H180 V55 H140 Z" fill="${stroke}"/>
+      <path d="M180 20 C168 28 160 39 156 55" fill="none" stroke="#173047" stroke-width="5" stroke-linecap="round"/>
+    `,
+    reset: `
+      <path d="M181 25 C174 16 160 12 149 18 C137 25 135 42 146 52 C155 60 169 58 178 50" fill="none" stroke="${stroke}" stroke-width="7" stroke-linecap="round"/>
+      <path d="M181 25 L181 12 L191 21" fill="none" stroke="${fill}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M152 31 L169 48 M169 31 L152 48" stroke="#173047" stroke-width="5" stroke-linecap="round"/>
+    `,
+    play: `
+      <path d="M146 15 L184 36 L146 57 Z" fill="${stroke}"/>
+    `,
+    next: `
+      <path d="M139 16 L164 36 L139 56 Z M164 16 L189 36 L164 56 Z" fill="${stroke}"/>
+    `,
+    close: `
+      <path d="M143 18 L181 56 M181 18 L143 56" stroke="${stroke}" stroke-width="9" stroke-linecap="round"/>
+    `,
+    gift: `
+      <path d="M138 29 H184 V58 H138 Z M134 22 H188 V32 H134 Z M161 22 V58" fill="${stroke}"/>
+      <path d="M161 22 C153 12 141 15 145 25 M161 22 C169 12 181 15 177 25" fill="none" stroke="${fill}" stroke-width="5" stroke-linecap="round"/>
+    `,
+    plus: `
+      <circle cx="160" cy="36" r="25" fill="${stroke}"/>
+      <path d="M160 23 V49 M147 36 H173" stroke="#173047" stroke-width="7" stroke-linecap="round"/>
+    `,
+    upgrade: `
+      <path d="M160 11 L184 35 H170 V60 H150 V35 H136 Z" fill="${stroke}"/>
+      <path d="M151 35 H169" stroke="${fill}" stroke-width="5" stroke-linecap="round"/>
+    `,
+    login: `
+      <path d="M139 17 H166 V27 M166 45 V55 H139" fill="none" stroke="${stroke}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M136 36 H183 M172 25 L183 36 L172 47" fill="none" stroke="${fill}" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
     `
   };
   return `
@@ -1371,15 +1588,15 @@ function imageButtonSvg(label, variant, icon = "") {
   const lines = splitButtonLabel(label).map(escapeSvgText);
   const twoLines = lines.length > 1;
   const hasIcon = Boolean(icon);
-  const fontSize = hasIcon ? 22 : twoLines ? 21 : label.length > 22 ? 23 : 27;
+  const fontSize = hasIcon ? 21 : twoLines ? 21 : label.length > 22 ? 23 : 27;
   const textStroke = palette[3];
-  const y = hasIcon ? (twoLines ? 65 : 72) : twoLines ? 32 : 43;
-  const textLengthFor = (line) => Math.min(twoLines ? 230 : 248, Math.max(twoLines ? 128 : 136, line.length * fontSize * 1.12));
+  const y = hasIcon ? (twoLines ? 71 : 76) : twoLines ? 32 : 43;
+  const textLengthFor = (line) => Math.min(twoLines ? 226 : 242, Math.max(twoLines ? 128 : 136, line.length * fontSize * 1.1));
   const text = lines.map((line, index) => (
-    `<text x="160" y="${y + index * (hasIcon ? 18 : 23)}" text-anchor="middle" textLength="${textLengthFor(line)}" lengthAdjust="spacingAndGlyphs">${line}</text>`
+    `<text x="160" y="${y + index * (hasIcon ? 17 : 23)}" text-anchor="middle" textLength="${textLengthFor(line)}" lengthAdjust="spacingAndGlyphs">${line}</text>`
   )).join("");
   return `
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 ${hasIcon ? 98 : 72}">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 ${hasIcon ? 100 : 72}">
       <defs>
         <linearGradient id="g" x1="0" x2="0" y1="0" y2="1">
           <stop offset="0" stop-color="${palette[0]}"/>
@@ -1391,10 +1608,16 @@ function imageButtonSvg(label, variant, icon = "") {
         <filter id="iconGlow" x="-25%" y="-25%" width="150%" height="150%">
           <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="${palette[4]}" flood-opacity=".45"/>
         </filter>
+        <linearGradient id="shine" x1="0" x2="1" y1="0" y2="0">
+          <stop offset="0" stop-color="#ffffff" stop-opacity="0"/>
+          <stop offset=".5" stop-color="#ffffff" stop-opacity=".22"/>
+          <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+        </linearGradient>
       </defs>
-      <path d="M15 10 C49 5 86 9 123 7 C172 4 223 5 303 12 C310 24 309 ${hasIcon ? 75 : 49} 303 ${hasIcon ? 87 : 61} C230 ${hasIcon ? 94 : 67} 182 ${hasIcon ? 90 : 63} 135 ${hasIcon ? 92 : 66} C86 ${hasIcon ? 95 : 69} 47 ${hasIcon ? 91 : 65} 15 ${hasIcon ? 86 : 60} C8 ${hasIcon ? 69 : 46} 8 24 15 10 Z" fill="url(#g)" filter="url(#shadow)"/>
+      <path d="M15 10 C49 5 86 9 123 7 C172 4 223 5 303 12 C310 24 309 ${hasIcon ? 77 : 49} 303 ${hasIcon ? 89 : 61} C230 ${hasIcon ? 96 : 67} 182 ${hasIcon ? 92 : 63} 135 ${hasIcon ? 94 : 66} C86 ${hasIcon ? 97 : 69} 47 ${hasIcon ? 93 : 65} 15 ${hasIcon ? 88 : 60} C8 ${hasIcon ? 71 : 46} 8 24 15 10 Z" fill="url(#g)" filter="url(#shadow)"/>
       <path d="M18 13 C70 9 105 13 158 11 C207 9 258 12 299 17" fill="none" stroke="#ffffff" stroke-opacity=".34" stroke-width="3" stroke-linecap="round"/>
-      <path d="M23 ${hasIcon ? 82 : 56} C76 ${hasIcon ? 88 : 61} 117 ${hasIcon ? 84 : 58} 166 ${hasIcon ? 84 : 58} C209 ${hasIcon ? 83 : 57} 251 ${hasIcon ? 88 : 62} 292 ${hasIcon ? 82 : 56}" fill="none" stroke="${palette[4]}" stroke-opacity=".48" stroke-width="3" stroke-linecap="round"/>
+      <path d="M45 17 C87 16 128 18 168 16 C205 15 242 16 279 20 L267 31 C205 27 149 29 82 27 Z" fill="url(#shine)" opacity=".82"/>
+      <path d="M23 ${hasIcon ? 84 : 56} C76 ${hasIcon ? 90 : 61} 117 ${hasIcon ? 86 : 58} 166 ${hasIcon ? 86 : 58} C209 ${hasIcon ? 85 : 57} 251 ${hasIcon ? 90 : 62} 292 ${hasIcon ? 84 : 56}" fill="none" stroke="${palette[4]}" stroke-opacity=".54" stroke-width="3" stroke-linecap="round"/>
       <circle cx="32" cy="22" r="4" fill="#ffffff" fill-opacity=".62"/>
       <circle cx="291" cy="${hasIcon ? 76 : 51}" r="3" fill="#ffffff" fill-opacity=".34"/>
       ${imageButtonIconSvg(icon, palette)}
@@ -1419,19 +1642,23 @@ function decorateImageButtons(root = document) {
     const label = buttonImageLabel(button);
     if (!label || button.childElementCount > 0 || button.classList.contains("art-view-button")) {
       button.classList.remove("image-button");
+      button.classList.remove("combat-art-button", "combat-start-button");
       button.style.removeProperty("--button-art");
       button.dataset.imageButtonKey = "";
       return;
     }
     const variant = buttonImageVariant(button);
-    const icon = buttonImageIcon(button, label);
-    const key = `${variant}:${icon}:${label}:${button.disabled ? "off" : "on"}`;
+    const asset = buttonImageAsset(button, label);
+    const icon = asset ? "" : buttonImageIcon(button, label);
+    const key = `${variant}:${asset || icon}:${label}:${button.disabled ? "off" : "on"}`;
     if (button.dataset.imageButtonKey === key) return;
     button.dataset.imageButtonKey = key;
     button.classList.add("image-button");
+    button.classList.toggle("combat-art-button", Boolean(asset));
+    button.classList.toggle("combat-start-button", asset === COMBAT_BUTTON_ART.start);
     button.classList.toggle("has-button-icon", Boolean(icon));
-    button.style.setProperty("--button-min-width", `${Math.min(icon ? 156 : 220, Math.max(icon ? 118 : 72, label.length * (icon ? 9 : 7) + (icon ? 58 : 36)))}px`);
-    button.style.setProperty("--button-art", imageButtonUrl(label, variant, icon));
+    button.style.setProperty("--button-min-width", `${asset ? 120 : Math.min(icon ? 156 : 220, Math.max(icon ? 118 : 72, label.length * (icon ? 9 : 7) + (icon ? 58 : 36)))}px`);
+    button.style.setProperty("--button-art", asset ? imageAssetUrl(asset) : imageButtonUrl(label, variant, icon));
   });
 }
 
