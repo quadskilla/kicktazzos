@@ -24,6 +24,10 @@
     return requireMenuModule("trocas", window.TazzoMenuTrades);
   }
 
+  function friends() {
+    return requireMenuModule("amigos", window.TazzoMenuFriends);
+  }
+
   function tournaments() {
     return requireMenuModule("torneios", window.TazzoMenuTournaments);
   }
@@ -45,6 +49,7 @@
     renderPackOpening: (ctx) => packs().renderPackOpening(ctx),
 
     renderCollection: (ctx) => collection().renderCollection(ctx),
+    renderFriends: (ctx) => friends().renderFriends(ctx),
     renderTrade: (ctx) => trades().renderTrade(ctx),
     renderCompetitive: (ctx) => tournaments().renderCompetitive(ctx),
     renderLeaderboardRows: (ctx, currentPlayerRank) => tournaments().renderLeaderboardRows(ctx, currentPlayerRank),

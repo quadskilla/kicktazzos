@@ -2,13 +2,28 @@
   "use strict";
 
   function renderShop(ctx) {
-    document.getElementById("shop-message").textContent = ctx.state.shopMessage;
+    const payments = ctx.state.shopPayments || {};
+    const paymentNotice = payments.checked && !payments.configured ? payments.message : "";
+    document.getElementById("shop-message").textContent = paymentNotice || ctx.state.shopMessage;
     document.getElementById("shop-grid").innerHTML = ctx.SHOP_ITEMS.map((item) => {
       const merreisPack = item.type === "merreis";
       const owned = !merreisPack && Boolean(ctx.state.save.cosmetics[item.id]);
       const active = !merreisPack && ctx.state.save.selectedCosmetic === item.id;
-      const disabled = !merreisPack && !owned && ctx.state.save.merreis < item.cost;
-      const label = merreisPack ? "Comprar Merreis" : active ? "Ativo" : owned ? "Ativar" : "Comprar";
+      const paymentDisabled = merreisPack && (!payments.checked || !payments.configured || payments.checkoutPending);
+      const disabled = paymentDisabled || (!merreisPack && !owned && ctx.state.save.merreis < item.cost);
+      const label = merreisPack
+        ? payments.checkoutPending
+          ? "Abrindo..."
+          : !payments.checked
+          ? "Checando..."
+          : payments.configured
+          ? "Comprar Merreis"
+          : "Indisponivel"
+        : active
+        ? "Ativo"
+        : owned
+        ? "Ativar"
+        : "Comprar";
       const price = merreisPack ? item.priceLabel : `${ctx.formatNumber(item.cost)} Merreis`;
       const tag = merreisPack ? `+${ctx.formatNumber(item.merreis)} Merreis` : owned ? "Obtido" : "Cosmetico";
       return `

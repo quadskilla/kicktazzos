@@ -44,6 +44,8 @@
     const classes = ["monster-card"];
     if (!owned) classes.push("is-missing");
     if (inTeam || activeGoalkeeper) classes.push("is-team");
+    const slotNumber = ctx.state.selectedSlot + 1;
+    const teamButtonLabel = inTeam ? "No trio" : `Por no slot ${slotNumber}`;
 
     return `
       <article class="${classes.join(" ")}">
@@ -66,7 +68,7 @@
         <div class="card-actions">
           ${keeper
             ? `<button type="button" data-goalkeeper="${monster.id}" ${owned || activeGoalkeeper ? "" : "disabled"}>${activeGoalkeeper ? "Goleiro ativo" : "Usar como goleiro"}</button>`
-            : `<button type="button" data-team="${monster.id}" ${owned ? "" : "disabled"}>${inTeam ? "No trio" : `Colocar no slot ${ctx.state.selectedSlot + 1}`}</button>
+            : `<button type="button" data-team="${monster.id}" ${owned ? "" : "disabled"}>${teamButtonLabel}</button>
                <button class="secondary-button" type="button" data-upgrade="${monster.id}" ${canUpgrade ? "" : "disabled"}>${level >= 2 ? "Maximo" : "Melhorar"}</button>`}
         </div>
       </article>

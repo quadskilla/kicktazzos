@@ -29,6 +29,24 @@ const ONLINE_PLAYER_AWAY_MS = Number(process.env.ONLINE_PLAYER_AWAY_MS) || 15000
 const ONLINE_FORFEIT_GRACE_MS = Number(process.env.ONLINE_FORFEIT_GRACE_MS) || 60000;
 const ACCOUNT_EVENT_RETENTION = Math.max(50, Math.floor(Number(process.env.ACCOUNT_EVENT_RETENTION) || 500));
 const ACCOUNT_EVENT_DATA_BYTES = 4096;
+const MERCADO_PAGO_ACCESS_TOKEN = String(process.env.MERCADO_PAGO_ACCESS_TOKEN || "").trim();
+const MERCADO_PAGO_WEBHOOK_SECRET = String(process.env.MERCADO_PAGO_WEBHOOK_SECRET || "").trim();
+const MERCADO_PAGO_API_BASE = "https://api.mercadopago.com";
+const COMPETITIVE_MATCHMAKING_TIMEOUT_MS = 40000;
+const COMPETITIVE_MATCHMAKING_RANK_WINDOWS = Object.freeze([
+  { waitMs: 0, trophies: 120 },
+  { waitMs: 12000, trophies: 260 },
+  { waitMs: 25000, trophies: 520 },
+  { waitMs: 35000, trophies: Infinity }
+]);
+const COMPETITIVE_WIN_POINTS = 10;
+const COMPETITIVE_LOSS_POINTS = 5;
+const COMPETITIVE_STREAK_BONUSES = Object.freeze({
+  2: 2,
+  3: 4,
+  4: 6,
+  5: 8
+});
 const FIREBASE_AUTH_PROVIDER_LABELS = {
   google: "Google",
   facebook: "Facebook"
@@ -48,6 +66,11 @@ const LEGENDARY_BOOST_TAZZOS = 50;
 const LEGENDARY_BOOST_MAX_TAZZOS = 100;
 const LEGENDARY_BOOST_MULTIPLIER = 2;
 const LEGENDARY_BOOST_MAX_MULTIPLIER = 4;
+const STARTER_FIELD_SLOTS = [
+  { label: "Atacante", test: (monster) => monster.types.includes("Atacante") },
+  { label: "Meia", test: (monster) => monster.types.includes("Meia") },
+  { label: "Zagueiro", test: (monster) => monster.role === "Zagueiro" || monster.types.includes("Defensor") }
+];
 const MISSION_PERIODS = ["daily", "weekly", "monthly"];
 const ONLINE_TARGET_ACTIONS = new Set(["move", "retreat", "swap", "dribble", "shot", "pressure"]);
 const ONLINE_ACTION_LABELS = {
@@ -87,11 +110,13 @@ const {
   MONSTERS,
   MONSTER_BY_ID,
   RARITIES,
+  TAZZO_TRADE_VALUES,
   RANKS,
   TOURNAMENTS,
   PACKS,
   SHOP_ITEMS,
   MISSIONS,
+  ECONOMY_REWARD_RULES,
   FRIENDS,
   BATTLE_MODES,
   BATTLE_FORMATIONS,
@@ -100,6 +125,7 @@ const {
   TUTORIAL_STEPS
 } = GAME_DATA;
 const onlineLobbies = new Map();
+const competitiveMatchmakingQueues = new Map();
 const wsClients = new Set();
 let storageDb = null;
 let onlineLobbiesPersistQueue = Promise.resolve();
@@ -269,14 +295,73 @@ async function initializeStorage() {
       created_at TEXT NOT NULL,
       data_json TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS payment_orders (
+      id TEXT PRIMARY KEY,
+      player_id TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      item_name TEXT NOT NULL,
+      merreis INTEGER NOT NULL,
+      amount_cents INTEGER NOT NULL,
+      currency TEXT NOT NULL,
+      status TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL UNIQUE,
+      preference_id TEXT,
+      init_point TEXT,
+      sandbox_init_point TEXT,
+      payment_id TEXT UNIQUE,
+      mp_status TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      credited_at TEXT,
+      data_json TEXT NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS lobbies (
       id TEXT PRIMARY KEY,
       updated_at INTEGER NOT NULL,
       data_json TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS friend_requests (
+      id TEXT PRIMARY KEY,
+      from_player_id TEXT NOT NULL,
+      to_player_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS friends (
+      player_a TEXT NOT NULL,
+      player_b TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (player_a, player_b)
+    );
+    CREATE TABLE IF NOT EXISTS friend_messages (
+      id TEXT PRIMARY KEY,
+      from_player_id TEXT NOT NULL,
+      to_player_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      message TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS social_trade_offers (
+      id TEXT PRIMARY KEY,
+      from_player_id TEXT NOT NULL,
+      to_player_id TEXT NOT NULL,
+      offered_json TEXT NOT NULL,
+      requested_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      resolved_at TEXT
+    );
     CREATE INDEX IF NOT EXISTS idx_account_events_player_created ON account_events(player_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_account_events_type_created ON account_events(type, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_payment_orders_player_created ON payment_orders(player_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_payment_orders_preference ON payment_orders(preference_id);
     CREATE INDEX IF NOT EXISTS idx_lobbies_updated_at ON lobbies(updated_at);
+    CREATE INDEX IF NOT EXISTS idx_friend_requests_to_status ON friend_requests(to_player_id, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_friend_requests_from_status ON friend_requests(from_player_id, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_friend_messages_pair_created ON friend_messages(from_player_id, to_player_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_social_trade_inbox ON social_trade_offers(to_player_id, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_social_trade_outbox ON social_trade_offers(from_player_id, status, created_at DESC);
   `);
   await migrateJsonStorageToDatabase();
 }
@@ -592,6 +677,421 @@ function safeText(value, fallback = "", limit = 180) {
   return String(value || fallback).replace(/[<>"&]/g, "").slice(0, limit);
 }
 
+function configuredPublicBaseUrl() {
+  const raw = String(
+    process.env.PUBLIC_BASE_URL
+    || process.env.SITE_URL
+    || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "")
+    || ""
+  ).trim();
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:") return "";
+    url.pathname = url.pathname.replace(/\/+$/, "");
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch (error) {
+    return "";
+  }
+}
+
+function mercadoPagoCheckoutConfig() {
+  const publicBaseUrl = configuredPublicBaseUrl();
+  const missing = [];
+  if (!MERCADO_PAGO_ACCESS_TOKEN) missing.push("MERCADO_PAGO_ACCESS_TOKEN");
+  if (!publicBaseUrl) missing.push("PUBLIC_BASE_URL HTTPS");
+  return {
+    configured: missing.length === 0,
+    publicBaseUrl,
+    missing
+  };
+}
+
+function publicMercadoPagoConfig() {
+  const config = mercadoPagoCheckoutConfig();
+  return {
+    configured: config.configured,
+    message: config.configured
+      ? "Checkout Mercado Pago pronto."
+      : `Compra de Merreis indisponivel: configure ${config.missing.join(" e ")}.`
+  };
+}
+
+function merreisShopPlan(itemId) {
+  const item = SHOP_ITEMS.find((entry) => entry.id === itemId && entry.type === "merreis");
+  if (!item) return null;
+  const merreis = Math.max(0, Math.floor(Number(item.merreis)) || 0);
+  const amountCents = Math.max(0, Math.floor(Number(item.priceCents)) || 0);
+  const currency = String(item.currency || "BRL").toUpperCase();
+  if (!merreis || !amountCents || currency !== "BRL") return null;
+  return { item, merreis, amountCents, currency };
+}
+
+function paymentOrderData(row) {
+  return jsonFromDb(row?.data_json, {});
+}
+
+function publicPaymentOrder(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    itemId: row.item_id,
+    itemName: row.item_name,
+    merreis: row.merreis,
+    amountCents: row.amount_cents,
+    currency: row.currency,
+    status: row.status,
+    preferenceId: row.preference_id || "",
+    paymentId: row.payment_id || "",
+    mpStatus: row.mp_status || "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    creditedAt: row.credited_at || ""
+  };
+}
+
+function normalizePaymentId(value) {
+  return String(value || "").trim().replace(/[^0-9]/g, "").slice(0, 32);
+}
+
+function normalizeCheckoutIdempotencyKey(playerId, itemId, value) {
+  const raw = String(value || "").trim();
+  if (/^[a-f0-9-]{16,80}$/i.test(raw)) return `${playerId}:${itemId}:${raw}`.slice(0, 180);
+  return `${playerId}:${itemId}:${crypto.randomUUID()}`;
+}
+
+function paymentOrderById(orderId) {
+  return db().prepare("SELECT * FROM payment_orders WHERE id = ?").get(String(orderId || ""));
+}
+
+function paymentOrderByIdempotencyKey(idempotencyKey) {
+  return db().prepare("SELECT * FROM payment_orders WHERE idempotency_key = ?").get(String(idempotencyKey || ""));
+}
+
+function insertPendingPaymentOrder(playerId, plan, idempotencyKey) {
+  const now = new Date().toISOString();
+  const order = {
+    id: crypto.randomUUID(),
+    playerId,
+    itemId: plan.item.id,
+    itemName: plan.item.name,
+    merreis: plan.merreis,
+    amountCents: plan.amountCents,
+    currency: plan.currency,
+    status: "pending",
+    idempotencyKey,
+    createdAt: now,
+    updatedAt: now
+  };
+  db().prepare(`
+    INSERT INTO payment_orders (
+      id, player_id, item_id, item_name, merreis, amount_cents, currency, status,
+      idempotency_key, created_at, updated_at, data_json
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    order.id,
+    order.playerId,
+    order.itemId,
+    order.itemName,
+    order.merreis,
+    order.amountCents,
+    order.currency,
+    order.status,
+    order.idempotencyKey,
+    order.createdAt,
+    order.updatedAt,
+    JSON.stringify({})
+  );
+  return paymentOrderById(order.id);
+}
+
+function updatePaymentOrderPreference(orderId, preference) {
+  const data = {
+    preference: {
+      id: preference.id || "",
+      dateCreated: preference.date_created || "",
+      collectorId: preference.collector_id || null
+    }
+  };
+  db().prepare(`
+    UPDATE payment_orders
+    SET preference_id = ?, init_point = ?, sandbox_init_point = ?, updated_at = ?, data_json = ?
+    WHERE id = ?
+  `).run(
+    String(preference.id || ""),
+    String(preference.init_point || ""),
+    String(preference.sandbox_init_point || ""),
+    new Date().toISOString(),
+    JSON.stringify(data),
+    orderId
+  );
+  return paymentOrderById(orderId);
+}
+
+function markPaymentOrderStatus(orderId, status, details = {}) {
+  const row = paymentOrderById(orderId);
+  const data = { ...paymentOrderData(row), ...details };
+  db().prepare(`
+    UPDATE payment_orders
+    SET status = ?, mp_status = COALESCE(?, mp_status), updated_at = ?, data_json = ?
+    WHERE id = ?
+  `).run(
+    status,
+    details.mpStatus || null,
+    new Date().toISOString(),
+    JSON.stringify(data),
+    orderId
+  );
+  return paymentOrderById(orderId);
+}
+
+async function mercadoPagoRequest(pathname, options = {}) {
+  const response = await fetch(`${MERCADO_PAGO_API_BASE}${pathname}`, {
+    ...options,
+    headers: {
+      "Authorization": `Bearer ${MERCADO_PAGO_ACCESS_TOKEN}`,
+      "Content-Type": "application/json",
+      ...(options.headers || {})
+    }
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = payload.message || payload.error || `Mercado Pago respondeu ${response.status}.`;
+    const error = new Error(message);
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
+  }
+  return payload;
+}
+
+async function createMercadoPagoPreference(order) {
+  const config = mercadoPagoCheckoutConfig();
+  if (!config.configured) {
+    const error = new Error(publicMercadoPagoConfig().message);
+    error.status = 503;
+    throw error;
+  }
+  const unitPrice = Number((order.amount_cents / 100).toFixed(2));
+  return mercadoPagoRequest("/checkout/preferences", {
+    method: "POST",
+    headers: {
+      "X-Idempotency-Key": order.idempotency_key
+    },
+    body: JSON.stringify({
+      items: [{
+        id: order.item_id,
+        title: `${order.merreis.toLocaleString("pt-BR")} Merreis - Kick Tazzos`,
+        quantity: 1,
+        currency_id: order.currency,
+        unit_price: unitPrice
+      }],
+      external_reference: order.id,
+      notification_url: `${config.publicBaseUrl}/api/mercadopago/webhook`,
+      back_urls: {
+        success: `${config.publicBaseUrl}/api/mercadopago/return?order_id=${encodeURIComponent(order.id)}&result=success`,
+        pending: `${config.publicBaseUrl}/api/mercadopago/return?order_id=${encodeURIComponent(order.id)}&result=pending`,
+        failure: `${config.publicBaseUrl}/api/mercadopago/return?order_id=${encodeURIComponent(order.id)}&result=failure`
+      },
+      auto_return: "approved",
+      metadata: {
+        player_id: order.player_id,
+        item_id: order.item_id,
+        merreis: order.merreis
+      }
+    })
+  });
+}
+
+function mercadoPagoPaymentIdFromNotification(url, payload = {}) {
+  return normalizePaymentId(
+    url.searchParams.get("data.id")
+    || url.searchParams.get("id")
+    || payload?.data?.id
+    || payload?.id
+    || payload?.resource
+  );
+}
+
+function timingSafeEqualHex(left, right) {
+  try {
+    const leftBuffer = Buffer.from(String(left || ""), "hex");
+    const rightBuffer = Buffer.from(String(right || ""), "hex");
+    return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+  } catch (error) {
+    return false;
+  }
+}
+
+function verifyMercadoPagoWebhookSignature(req, url, paymentId) {
+  if (!MERCADO_PAGO_WEBHOOK_SECRET) return true;
+  const xSignature = String(req.headers["x-signature"] || "");
+  const xRequestId = String(req.headers["x-request-id"] || "");
+  const parts = Object.fromEntries(xSignature.split(",").map((part) => {
+    const [key, ...value] = part.trim().split("=");
+    return [key, value.join("=")];
+  }).filter(([key, value]) => key && value));
+  const ts = parts.ts || "";
+  const hash = parts.v1 || "";
+  const dataId = normalizePaymentId(url.searchParams.get("data.id") || paymentId);
+  if (!xRequestId || !ts || !hash || !dataId) return false;
+  const manifest = `id:${dataId};request-id:${xRequestId};ts:${ts};`;
+  const expected = crypto.createHmac("sha256", MERCADO_PAGO_WEBHOOK_SECRET).update(manifest).digest("hex");
+  return timingSafeEqualHex(expected, hash);
+}
+
+async function getMercadoPagoPayment(paymentId) {
+  return mercadoPagoRequest(`/v1/payments/${encodeURIComponent(paymentId)}`, {
+    method: "GET"
+  });
+}
+
+function paymentAmountMatchesOrder(payment, order) {
+  const paidCents = Math.round(Number(payment.transaction_amount) * 100);
+  return paidCents === Number(order.amount_cents) && String(payment.currency_id || "BRL").toUpperCase() === order.currency;
+}
+
+async function creditApprovedMercadoPagoPayment(payment) {
+  const orderId = String(payment.external_reference || "").trim();
+  const paymentId = normalizePaymentId(payment.id);
+  if (!orderId || !paymentId) {
+    const error = new Error("Pagamento sem referencia externa valida.");
+    error.status = 400;
+    throw error;
+  }
+
+  let eventPayload = null;
+  const result = runInTransaction((database) => {
+    const order = database.prepare("SELECT * FROM payment_orders WHERE id = ?").get(orderId);
+    if (!order) {
+      const error = new Error("Ordem de pagamento nao encontrada.");
+      error.status = 404;
+      throw error;
+    }
+    if (order.payment_id && order.payment_id !== paymentId) {
+      const error = new Error("Pagamento nao pertence a esta ordem.");
+      error.status = 409;
+      throw error;
+    }
+    if (payment.status !== "approved") {
+      const now = new Date().toISOString();
+      database.prepare(`
+        UPDATE payment_orders
+        SET status = ?, payment_id = COALESCE(payment_id, ?), mp_status = ?, updated_at = ?, data_json = ?
+        WHERE id = ?
+      `).run(
+        payment.status === "pending" || payment.status === "in_process" ? "pending" : "rejected",
+        paymentId,
+        String(payment.status || ""),
+        now,
+        JSON.stringify({ ...paymentOrderData(order), lastPayment: { id: paymentId, status: payment.status, statusDetail: payment.status_detail || "" } }),
+        order.id
+      );
+      return { credited: false, order: paymentOrderById(order.id), save: null };
+    }
+    if (!paymentAmountMatchesOrder(payment, order)) {
+      const error = new Error("Valor do pagamento nao confere com a ordem.");
+      error.status = 409;
+      throw error;
+    }
+    if (order.status === "credited" && order.credited_at) {
+      return { credited: false, alreadyCredited: true, order, save: null };
+    }
+
+    const saveRow = database.prepare("SELECT save_json FROM saves WHERE player_id = ?").get(order.player_id);
+    const save = normalizeServerSave(saveRow ? jsonFromDb(saveRow.save_json, {}) : defaultServerSave());
+    save.merreis += Number(order.merreis) || 0;
+    const updatedAt = new Date().toISOString();
+    const normalizedSave = normalizeServerSave(save);
+    database.prepare(`
+      INSERT OR REPLACE INTO saves (player_id, updated_at, save_json)
+      VALUES (?, ?, ?)
+    `).run(order.player_id, updatedAt, JSON.stringify(normalizedSave));
+    database.prepare(`
+      UPDATE payment_orders
+      SET status = 'credited', payment_id = ?, mp_status = ?, updated_at = ?, credited_at = ?, data_json = ?
+      WHERE id = ?
+    `).run(
+      paymentId,
+      String(payment.status || ""),
+      updatedAt,
+      updatedAt,
+      JSON.stringify({ ...paymentOrderData(order), lastPayment: { id: paymentId, status: payment.status, statusDetail: payment.status_detail || "" } }),
+      order.id
+    );
+    const updatedOrder = database.prepare("SELECT * FROM payment_orders WHERE id = ?").get(order.id);
+    eventPayload = {
+      item: { id: order.item_id, name: order.item_name },
+      orderId: order.id,
+      paymentId,
+      merreis: order.merreis,
+      amountCents: order.amount_cents,
+      balances: accountEventBalance(normalizedSave)
+    };
+    return { credited: true, order: updatedOrder, save: normalizedSave };
+  });
+
+  if (result.credited && eventPayload) {
+    recordAccountEvent(result.order.player_id, "shop:merreis:paid", eventPayload);
+  }
+  return result;
+}
+
+async function validateMercadoPagoPayment(paymentId) {
+  const payment = await getMercadoPagoPayment(paymentId);
+  return creditApprovedMercadoPagoPayment(payment);
+}
+
+async function createMerreisCheckoutForPlayer(playerId, itemId, clientRequestId) {
+  await requireProfileForPlayer(playerId);
+  const plan = merreisShopPlan(itemId);
+  if (!plan) {
+    const error = new Error("Pacote de Merreis invalido.");
+    error.status = 400;
+    throw error;
+  }
+  const config = mercadoPagoCheckoutConfig();
+  if (!config.configured) {
+    const error = new Error(publicMercadoPagoConfig().message);
+    error.status = 503;
+    throw error;
+  }
+
+  const idempotencyKey = normalizeCheckoutIdempotencyKey(playerId, plan.item.id, clientRequestId);
+  let order = paymentOrderByIdempotencyKey(idempotencyKey);
+  if (order?.init_point || order?.sandbox_init_point) {
+    return { order, item: plan.item, checkoutUrl: order.init_point || order.sandbox_init_point };
+  }
+  if (!order) order = insertPendingPaymentOrder(playerId, plan, idempotencyKey);
+
+  try {
+    const preference = await createMercadoPagoPreference(order);
+    order = updatePaymentOrderPreference(order.id, preference);
+    return { order, item: plan.item, checkoutUrl: order.init_point || order.sandbox_init_point };
+  } catch (error) {
+    markPaymentOrderStatus(order.id, "preference_failed", {
+      error: safeText(error.message, "Falha Mercado Pago.", 400),
+      payload: error.payload || null
+    });
+    throw error;
+  }
+}
+
+function redirectToPaymentReturn(res, status, params = {}) {
+  const url = new URL("/", "http://localhost");
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
+  });
+  res.writeHead(status, {
+    Location: `${url.pathname}${url.search}`,
+    "Cache-Control": "no-store"
+  });
+  res.end();
+}
+
 function serializeOnlineLobbies() {
   return {
     version: 1,
@@ -894,6 +1394,398 @@ function accountEventsForPlayer(playerId, limit = 40) {
 
 function profilesByPlayerId(profiles) {
   return Object.fromEntries(Object.values(profiles.profiles).map((profile) => [profile.playerId, profile]));
+}
+
+function publicSocialProfile(profile) {
+  if (!profile) return null;
+  return {
+    playerId: profile.playerId,
+    name: safeText(profile.name, "Jogador", 24),
+    key: safeText(profile.key || profileKey(profile.name), "", 32)
+  };
+}
+
+function orderedFriendPair(playerId, friendPlayerId) {
+  return String(playerId) < String(friendPlayerId)
+    ? [playerId, friendPlayerId]
+    : [friendPlayerId, playerId];
+}
+
+function areFriends(playerId, friendPlayerId) {
+  if (!isValidPlayerId(playerId) || !isValidPlayerId(friendPlayerId) || playerId === friendPlayerId) return false;
+  const [playerA, playerB] = orderedFriendPair(playerId, friendPlayerId);
+  return Boolean(db().prepare("SELECT 1 FROM friends WHERE player_a = ? AND player_b = ?").get(playerA, playerB));
+}
+
+function socialTradeValue(ids = []) {
+  return ids.reduce((sum, id) => {
+    const monster = MONSTER_BY_ID[id];
+    return sum + (TAZZO_TRADE_VALUES?.[monster?.rarity] || 0);
+  }, 0);
+}
+
+function normalizeTradeMonsterIds(ids = []) {
+  if (!Array.isArray(ids)) return [];
+  const cleanIds = ids.map((id) => String(id || "")).filter((id) => MONSTER_BY_ID[id]);
+  return cleanIds.filter((id, index) => cleanIds.indexOf(id) === index);
+}
+
+function validateSocialTradePayload(offeredIds = [], requestedIds = []) {
+  const offered = normalizeTradeMonsterIds(offeredIds);
+  const requested = normalizeTradeMonsterIds(requestedIds);
+  if (!offered.length || !requested.length) {
+    const error = new Error("Escolha pelo menos um tazzo de cada lado.");
+    error.status = 400;
+    throw error;
+  }
+  if (offered.length > 3 || requested.length > 3) {
+    const error = new Error("Cada lado da troca pode ter no maximo 3 tazzos.");
+    error.status = 400;
+    throw error;
+  }
+  const offerValue = socialTradeValue(offered);
+  const requestValue = socialTradeValue(requested);
+  if (!offerValue || offerValue !== requestValue) {
+    const error = new Error("Os valores da troca precisam ser iguais.");
+    error.status = 400;
+    throw error;
+  }
+  return { offered, requested, offerValue };
+}
+
+function hasTradeCopies(save, ids = []) {
+  const needed = ids.reduce((map, id) => {
+    map[id] = (map[id] || 0) + 1;
+    return map;
+  }, {});
+  return Object.entries(needed).every(([id, count]) => (save.collection[id] || 0) >= count);
+}
+
+function applyTradeTransfer(save, loseIds = [], gainIds = []) {
+  loseIds.forEach((id) => {
+    save.collection[id] = Math.max(0, (save.collection[id] || 0) - 1);
+  });
+  gainIds.forEach((id) => {
+    save.collection[id] = (save.collection[id] || 0) + 1;
+  });
+  return normalizeServerSave(save);
+}
+
+function saveFromTransaction(database, playerId) {
+  const row = database.prepare("SELECT save_json FROM saves WHERE player_id = ?").get(playerId);
+  return normalizeServerSave(jsonFromDb(row?.save_json, defaultServerSave()));
+}
+
+function writeSaveInTransaction(database, playerId, save) {
+  const updatedAt = new Date().toISOString();
+  const normalizedSave = normalizeServerSave(save);
+  database.prepare(`
+    INSERT OR REPLACE INTO saves (player_id, updated_at, save_json)
+    VALUES (?, ?, ?)
+  `).run(playerId, updatedAt, JSON.stringify(normalizedSave));
+  return normalizedSave;
+}
+
+function publicSocialTrade(row, profilesById) {
+  if (!row) return null;
+  const offered = normalizeTradeMonsterIds(jsonFromDb(row.offered_json, []));
+  const requested = normalizeTradeMonsterIds(jsonFromDb(row.requested_json, []));
+  return {
+    id: row.id,
+    fromPlayerId: row.from_player_id,
+    toPlayerId: row.to_player_id,
+    from: publicSocialProfile(profilesById[row.from_player_id]),
+    to: publicSocialProfile(profilesById[row.to_player_id]),
+    offeredIds: offered,
+    requestedIds: requested,
+    value: socialTradeValue(offered),
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    resolvedAt: row.resolved_at || null
+  };
+}
+
+async function socialPayloadForPlayer(playerId) {
+  const profile = await requireProfileForPlayer(playerId);
+  const record = await readOrCreateSave(playerId);
+  const profiles = profilesByPlayerId(await readProfiles());
+  const friendRows = db().prepare(`
+    SELECT player_a, player_b, created_at
+    FROM friends
+    WHERE player_a = ? OR player_b = ?
+    ORDER BY created_at DESC
+  `).all(playerId, playerId);
+  const friendIds = friendRows.map((row) => row.player_a === playerId ? row.player_b : row.player_a);
+  const friends = friendRows.map((row) => {
+    const friendPlayerId = row.player_a === playerId ? row.player_b : row.player_a;
+    return {
+      ...publicSocialProfile(profiles[friendPlayerId]),
+      createdAt: row.created_at
+    };
+  }).filter((friend) => friend?.playerId);
+
+  const incomingInvites = db().prepare(`
+    SELECT id, from_player_id, to_player_id, status, created_at, updated_at
+    FROM friend_requests
+    WHERE to_player_id = ? AND status = 'pending'
+    ORDER BY created_at DESC
+  `).all(playerId).map((row) => ({
+    id: row.id,
+    from: publicSocialProfile(profiles[row.from_player_id]),
+    createdAt: row.created_at
+  })).filter((invite) => invite.from);
+
+  const outgoingInvites = db().prepare(`
+    SELECT id, from_player_id, to_player_id, status, created_at, updated_at
+    FROM friend_requests
+    WHERE from_player_id = ? AND status = 'pending'
+    ORDER BY created_at DESC
+  `).all(playerId).map((row) => ({
+    id: row.id,
+    to: publicSocialProfile(profiles[row.to_player_id]),
+    createdAt: row.created_at
+  })).filter((invite) => invite.to);
+
+  const messages = friendIds.length ? db().prepare(`
+    SELECT id, from_player_id, to_player_id, created_at, message
+    FROM friend_messages
+    WHERE from_player_id = ? OR to_player_id = ?
+    ORDER BY created_at DESC
+    LIMIT 120
+  `).all(playerId, playerId)
+    .filter((row) => friendIds.includes(row.from_player_id === playerId ? row.to_player_id : row.from_player_id))
+    .map((row) => ({
+      id: row.id,
+      friendPlayerId: row.from_player_id === playerId ? row.to_player_id : row.from_player_id,
+      fromPlayerId: row.from_player_id,
+      toPlayerId: row.to_player_id,
+      fromYou: row.from_player_id === playerId,
+      message: safeText(row.message, "", 500),
+      createdAt: row.created_at
+    }))
+    .reverse() : [];
+
+  const trades = db().prepare(`
+    SELECT id, from_player_id, to_player_id, offered_json, requested_json, status, created_at, updated_at, resolved_at
+    FROM social_trade_offers
+    WHERE from_player_id = ? OR to_player_id = ?
+    ORDER BY updated_at DESC
+    LIMIT 50
+  `).all(playerId, playerId).map((row) => publicSocialTrade(row, profiles)).filter(Boolean);
+
+  return {
+    ok: true,
+    playerId,
+    profile: publicProfile(profile),
+    socialProfile: publicSocialProfile(profile),
+    save: record.save,
+    friends,
+    incomingInvites,
+    outgoingInvites,
+    messages,
+    trades
+  };
+}
+
+async function sendFriendInvite(playerId, targetName) {
+  const profile = await requireProfileForPlayer(playerId);
+  const targetKey = profileKey(targetName);
+  if (!targetKey) {
+    const error = new Error("Digite o nome do jogador.");
+    error.status = 400;
+    throw error;
+  }
+  const profiles = await readProfiles();
+  const target = profiles.profiles[targetKey];
+  if (!target) {
+    const error = new Error("Jogador nao encontrado.");
+    error.status = 404;
+    throw error;
+  }
+  if (target.playerId === playerId) {
+    const error = new Error("Voce ja esta na sua propria lista.");
+    error.status = 400;
+    throw error;
+  }
+  if (areFriends(playerId, target.playerId)) {
+    const error = new Error("Esse jogador ja e seu amigo.");
+    error.status = 409;
+    throw error;
+  }
+  const reverse = db().prepare(`
+    SELECT id FROM friend_requests
+    WHERE from_player_id = ? AND to_player_id = ? AND status = 'pending'
+  `).get(target.playerId, playerId);
+  if (reverse) {
+    return respondFriendInvite(playerId, reverse.id, true);
+  }
+  const existing = db().prepare(`
+    SELECT id FROM friend_requests
+    WHERE from_player_id = ? AND to_player_id = ? AND status = 'pending'
+  `).get(playerId, target.playerId);
+  if (existing) return socialPayloadForPlayer(playerId);
+
+  const now = new Date().toISOString();
+  db().prepare(`
+    INSERT INTO friend_requests (id, from_player_id, to_player_id, status, created_at, updated_at)
+    VALUES (?, ?, ?, 'pending', ?, ?)
+  `).run(crypto.randomUUID(), playerId, target.playerId, now, now);
+  recordAccountEvent(playerId, "friend:invite", {
+    to: publicSocialProfile(target)
+  });
+  recordAccountEvent(target.playerId, "friend:invite:received", {
+    from: publicSocialProfile(profile)
+  });
+  return socialPayloadForPlayer(playerId);
+}
+
+async function respondFriendInvite(playerId, requestId, accept) {
+  await requireProfileForPlayer(playerId);
+  const row = db().prepare(`
+    SELECT id, from_player_id, to_player_id, status
+    FROM friend_requests
+    WHERE id = ? AND to_player_id = ? AND status = 'pending'
+  `).get(String(requestId || ""), playerId);
+  if (!row) {
+    const error = new Error("Convite nao encontrado.");
+    error.status = 404;
+    throw error;
+  }
+  const now = new Date().toISOString();
+  runInTransaction((database) => {
+    database.prepare("UPDATE friend_requests SET status = ?, updated_at = ? WHERE id = ?")
+      .run(accept ? "accepted" : "declined", now, row.id);
+    if (accept) {
+      const [playerA, playerB] = orderedFriendPair(row.from_player_id, row.to_player_id);
+      database.prepare("INSERT OR IGNORE INTO friends (player_a, player_b, created_at) VALUES (?, ?, ?)")
+        .run(playerA, playerB, now);
+    }
+  });
+  recordAccountEvent(playerId, accept ? "friend:accept" : "friend:decline", {
+    friendPlayerId: row.from_player_id
+  });
+  return socialPayloadForPlayer(playerId);
+}
+
+async function sendFriendMessage(playerId, friendPlayerId, message) {
+  const profile = await requireProfileForPlayer(playerId);
+  const friendProfile = await profileForPlayer(friendPlayerId);
+  if (!friendProfile || !areFriends(playerId, friendPlayerId)) {
+    const error = new Error("Conversa disponivel apenas entre amigos.");
+    error.status = 403;
+    throw error;
+  }
+  const cleanMessage = safeText(String(message || "").replace(/\s+/g, " ").trim(), "", 500);
+  if (!cleanMessage) {
+    const error = new Error("Mensagem vazia.");
+    error.status = 400;
+    throw error;
+  }
+  db().prepare(`
+    INSERT INTO friend_messages (id, from_player_id, to_player_id, created_at, message)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(crypto.randomUUID(), playerId, friendPlayerId, new Date().toISOString(), cleanMessage);
+  recordAccountEvent(playerId, "friend:message", {
+    to: publicSocialProfile(friendProfile)
+  });
+  recordAccountEvent(friendPlayerId, "friend:message:received", {
+    from: publicSocialProfile(profile)
+  });
+  return socialPayloadForPlayer(playerId);
+}
+
+async function createSocialTrade(playerId, friendPlayerId, offeredIds, requestedIds) {
+  const profile = await requireProfileForPlayer(playerId);
+  const friendProfile = await profileForPlayer(friendPlayerId);
+  if (!friendProfile || !areFriends(playerId, friendPlayerId)) {
+    const error = new Error("Trocas so podem ser feitas entre amigos.");
+    error.status = 403;
+    throw error;
+  }
+  const trade = validateSocialTradePayload(offeredIds, requestedIds);
+  const playerSave = normalizeServerSave((await readOrCreateSave(playerId)).save);
+  const friendSave = normalizeServerSave((await readOrCreateSave(friendPlayerId)).save);
+  if (!hasTradeCopies(playerSave, trade.offered)) {
+    const error = new Error("Voce nao tem todos os tazzos ofertados.");
+    error.status = 400;
+    error.save = playerSave;
+    throw error;
+  }
+  if (!hasTradeCopies(friendSave, trade.requested)) {
+    const error = new Error("Seu amigo nao tem todos os tazzos pedidos.");
+    error.status = 400;
+    error.save = playerSave;
+    throw error;
+  }
+  const now = new Date().toISOString();
+  db().prepare(`
+    INSERT INTO social_trade_offers (id, from_player_id, to_player_id, offered_json, requested_json, status, created_at, updated_at, resolved_at)
+    VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, NULL)
+  `).run(crypto.randomUUID(), playerId, friendPlayerId, JSON.stringify(trade.offered), JSON.stringify(trade.requested), now, now);
+  recordAccountEvent(playerId, "trade:offer:create", {
+    to: publicSocialProfile(friendProfile),
+    value: trade.offerValue
+  });
+  recordAccountEvent(friendPlayerId, "trade:offer:received", {
+    from: publicSocialProfile(profile),
+    value: trade.offerValue
+  });
+  return socialPayloadForPlayer(playerId);
+}
+
+async function respondSocialTrade(playerId, tradeId, accept) {
+  await requireProfileForPlayer(playerId);
+  let resultSave = null;
+  const now = new Date().toISOString();
+  const trade = runInTransaction((database) => {
+    const row = database.prepare(`
+      SELECT id, from_player_id, to_player_id, offered_json, requested_json, status
+      FROM social_trade_offers
+      WHERE id = ? AND status = 'pending'
+    `).get(String(tradeId || ""));
+    if (!row || row.to_player_id !== playerId) {
+      const error = new Error("Proposta de troca nao encontrada.");
+      error.status = 404;
+      throw error;
+    }
+    if (!accept) {
+      database.prepare("UPDATE social_trade_offers SET status = 'declined', updated_at = ?, resolved_at = ? WHERE id = ?")
+        .run(now, now, row.id);
+      resultSave = saveFromTransaction(database, playerId);
+      return row;
+    }
+    const { offered, requested } = validateSocialTradePayload(jsonFromDb(row.offered_json, []), jsonFromDb(row.requested_json, []));
+    const fromSave = saveFromTransaction(database, row.from_player_id);
+    const toSave = saveFromTransaction(database, row.to_player_id);
+    if (!hasTradeCopies(fromSave, offered) || !hasTradeCopies(toSave, requested)) {
+      const error = new Error("Algum tazzo da proposta nao esta mais disponivel.");
+      error.status = 409;
+      error.save = toSave;
+      throw error;
+    }
+    const nextFromSave = applyTradeTransfer(fromSave, offered, requested);
+    const nextToSave = applyTradeTransfer(toSave, requested, offered);
+    progressServerMission(nextFromSave, "trade", 1);
+    progressServerMission(nextToSave, "trade", 1);
+    writeSaveInTransaction(database, row.from_player_id, nextFromSave);
+    resultSave = writeSaveInTransaction(database, row.to_player_id, nextToSave);
+    database.prepare("UPDATE social_trade_offers SET status = 'accepted', updated_at = ?, resolved_at = ? WHERE id = ?")
+      .run(now, now, row.id);
+    return row;
+  });
+  recordAccountEvent(playerId, accept ? "trade:offer:accept" : "trade:offer:decline", {
+    tradeId: trade.id,
+    friendPlayerId: trade.from_player_id
+  });
+  if (accept) {
+    recordAccountEvent(trade.from_player_id, "trade:offer:accepted", {
+      tradeId: trade.id,
+      friendPlayerId: playerId
+    });
+  }
+  const payload = await socialPayloadForPlayer(playerId);
+  return { ...payload, save: resultSave || payload.save };
 }
 
 function lobbyCode() {
@@ -2830,22 +3722,22 @@ async function loginFirebaseProfile({ currentPlayerId, decodedToken }) {
 }
 
 function defaultServerSave() {
-  const collection = {};
-  ["artilheiro-brasil", "goleiro-brasil-alison", "andreas-pereira-tazzo", "alex-sandro-tazzo", "wendell-tazzo"].forEach((id) => {
-    collection[id] = 1;
-  });
-
   return {
     createdAt: Date.now(),
     merreis: 1250,
     fragments: 0,
-    collection,
-    team: ["andreas-pereira-tazzo", "alex-sandro-tazzo", "wendell-tazzo"],
-    goalkeeper: "goleiro-brasil-alison",
+    collection: {},
+    team: [],
+    goalkeeper: "",
+    starterOnboardingComplete: false,
+    starterPackOpenedAt: null,
+    starterPackCards: [],
     customTazzos: [],
     upgrades: {},
     packPity: { sinceLegendaryPlus: 0 },
     trophies: 0,
+    rankFloor: 0,
+    competitiveWinStreak: 0,
     rankedWins: 0,
     rankedLosses: 0,
     tournamentWins: 0,
@@ -2857,6 +3749,7 @@ function defaultServerSave() {
     cosmetics: {},
     selectedCosmetic: null,
     friendGifts: {},
+    wishlist: {},
     musicTrackIndex: 0,
     musicVolume: 0.55,
     migratedFromLocalAt: null,
@@ -2864,6 +3757,7 @@ function defaultServerSave() {
     tutorialRewardClaimed: false,
     missionDate: new Date().toISOString().slice(0, 10),
     missionCycles: currentMissionCycles(),
+    dailyEconomy: defaultDailyEconomyRewards(),
     missions: defaultMissionStatuses()
   };
 }
@@ -2950,6 +3844,25 @@ function normalizeServerGoalkeeper(goalkeeper, collection, catalog, fallbackGoal
   return candidates.find((id) => collection[id] > 0 && catalog.has(id) && isServerGoalkeeperMonster(catalog.get(id))) || "";
 }
 
+function sanitizeServerWishlist(wishlist = {}, catalog = serverCatalogForSave()) {
+  if (!wishlist || typeof wishlist !== "object" || Array.isArray(wishlist)) return {};
+  return Object.fromEntries(
+    Object.entries(wishlist)
+      .filter(([id, wanted]) => catalog.has(id) && Boolean(wanted))
+      .map(([id]) => [id, true])
+  );
+}
+
+function hasLegacyStarterProgress(save = {}) {
+  const collection = save.collection && typeof save.collection === "object" ? save.collection : {};
+  return Object.values(collection).some((count) => Number(count) > 0)
+    || Math.max(0, Number(save.fragments) || 0) > 0
+    || Math.max(0, Number(save.trophies) || 0) > 0
+    || Math.max(0, Number(save.rankedWins) || 0) > 0
+    || Math.max(0, Number(save.tournamentWins) || 0) > 0
+    || Math.max(0, Number(save.onlineWins) || 0) > 0;
+}
+
 function normalizeServerSave(rawSave = {}) {
   const fresh = defaultServerSave();
   const save = rawSave && typeof rawSave === "object" ? rawSave : {};
@@ -2958,9 +3871,11 @@ function normalizeServerSave(rawSave = {}) {
   const musicVolume = Number(save.musicVolume ?? fresh.musicVolume);
   const migratedFromLocalAt = safeText(save.migratedFromLocalAt, "", 64) || null;
   const collection = {};
-  Object.entries({ ...fresh.collection, ...(save.collection || {}) }).forEach(([id, count]) => {
+  Object.entries(save.collection || {}).forEach(([id, count]) => {
     if (catalog.has(id)) collection[id] = Math.max(0, Math.floor(Number(count)) || 0);
   });
+  const starterOnboardingComplete = Boolean(save.starterOnboardingComplete)
+    || (!Object.prototype.hasOwnProperty.call(save, "starterOnboardingComplete") && hasLegacyStarterProgress(save));
   const savedMissionCycles = normalizeMissionCycles(save.missionCycles || {}, save.missionDate);
   const missions = Object.fromEntries(MISSIONS.map((mission) => [
     mission.id,
@@ -2980,6 +3895,8 @@ function normalizeServerSave(rawSave = {}) {
     merreis: Math.max(0, Math.floor(Number(save.merreis ?? fresh.merreis)) || 0),
     fragments: Math.max(0, Math.floor(Number(save.fragments ?? fresh.fragments)) || 0),
     trophies: Math.max(0, Math.floor(Number(save.trophies ?? fresh.trophies)) || 0),
+    rankFloor: Math.max(0, Math.floor(Number(save.rankFloor ?? fresh.rankFloor)) || 0),
+    competitiveWinStreak: Math.max(0, Math.floor(Number(save.competitiveWinStreak ?? fresh.competitiveWinStreak)) || 0),
     rankedWins: Math.max(0, Math.floor(Number(save.rankedWins ?? fresh.rankedWins)) || 0),
     rankedLosses: Math.max(0, Math.floor(Number(save.rankedLosses ?? fresh.rankedLosses)) || 0),
     tournamentWins: Math.max(0, Math.floor(Number(save.tournamentWins ?? fresh.tournamentWins)) || 0),
@@ -2988,22 +3905,33 @@ function normalizeServerSave(rawSave = {}) {
     onlineLosses: Math.max(0, Math.floor(Number(save.onlineLosses ?? fresh.onlineLosses)) || 0),
     onlineDraws: Math.max(0, Math.floor(Number(save.onlineDraws ?? fresh.onlineDraws)) || 0),
     collection,
+    starterOnboardingComplete,
+    starterPackOpenedAt: safeText(save.starterPackOpenedAt, "", 64) || fresh.starterPackOpenedAt,
+    starterPackCards: Array.isArray(save.starterPackCards)
+      ? save.starterPackCards.filter((id, index, list) => catalog.has(id) && list.indexOf(id) === index)
+      : fresh.starterPackCards,
     customTazzos,
     team: normalizeServerTeam(save.team || fresh.team, collection, catalog, fresh.team),
     goalkeeper: normalizeServerGoalkeeper(save.goalkeeper || fresh.goalkeeper, collection, catalog, fresh.goalkeeper),
     missions,
     missionCycles: savedMissionCycles,
+    dailyEconomy: normalizeDailyEconomyRewards(save.dailyEconomy || save.dailyRewards || {}, savedMissionCycles.daily),
     tutorial,
     upgrades: save.upgrades && typeof save.upgrades === "object" ? save.upgrades : fresh.upgrades,
     cosmetics: save.cosmetics && typeof save.cosmetics === "object" ? save.cosmetics : fresh.cosmetics,
     friendGifts: save.friendGifts && typeof save.friendGifts === "object" ? save.friendGifts : fresh.friendGifts,
+    wishlist: sanitizeServerWishlist(save.wishlist || fresh.wishlist, catalog),
     packPity: sanitizePackPity(save.packPity || fresh.packPity),
     musicTrackIndex: Math.max(0, Math.floor(Number(save.musicTrackIndex ?? fresh.musicTrackIndex)) || 0),
     musicVolume: Number.isFinite(musicVolume) ? clamp(musicVolume, 0, 1) : fresh.musicVolume,
     migratedFromLocalAt
   };
+  const currentFloor = currentRankForPoints(normalized.trophies).min;
+  normalized.rankFloor = Math.max(normalized.rankFloor, currentFloor);
+  normalized.trophies = Math.max(normalized.rankFloor, normalized.trophies);
   normalized.missions = resetExpiredMissions(normalized.missions, fresh.missions, savedMissionCycles);
   normalized.missionCycles = currentMissionCycles();
+  normalized.dailyEconomy = normalizeDailyEconomyRewards(normalized.dailyEconomy, normalized.missionCycles.daily);
   normalized.missionDate = new Date().toISOString().slice(0, 10);
   return normalized;
 }
@@ -3014,10 +3942,15 @@ function economicSaveFingerprint(save) {
     merreis: normalized.merreis,
     fragments: normalized.fragments,
     collection: normalized.collection,
+    starterOnboardingComplete: normalized.starterOnboardingComplete,
+    starterPackOpenedAt: normalized.starterPackOpenedAt,
+    starterPackCards: normalized.starterPackCards,
     customTazzos: normalized.customTazzos,
     upgrades: normalized.upgrades,
     packPity: normalized.packPity,
     trophies: normalized.trophies,
+    rankFloor: normalized.rankFloor,
+    competitiveWinStreak: normalized.competitiveWinStreak,
     rankedWins: normalized.rankedWins,
     rankedLosses: normalized.rankedLosses,
     tournamentWins: normalized.tournamentWins,
@@ -3028,6 +3961,7 @@ function economicSaveFingerprint(save) {
     activeCompetitive: normalized.activeCompetitive,
     cosmetics: normalized.cosmetics,
     friendGifts: normalized.friendGifts,
+    dailyEconomy: normalized.dailyEconomy,
     missions: normalized.missions,
     tutorialRewardClaimed: normalized.tutorialRewardClaimed
   });
@@ -3042,10 +3976,15 @@ const PROTECTED_SAVE_FIELDS = [
   "merreis",
   "fragments",
   "collection",
+  "starterOnboardingComplete",
+  "starterPackOpenedAt",
+  "starterPackCards",
   "customTazzos",
   "upgrades",
   "packPity",
   "trophies",
+  "rankFloor",
+  "competitiveWinStreak",
   "rankedWins",
   "rankedLosses",
   "tournamentWins",
@@ -3056,6 +3995,7 @@ const PROTECTED_SAVE_FIELDS = [
   "activeCompetitive",
   "cosmetics",
   "friendGifts",
+  "dailyEconomy",
   "missions",
   "tutorialRewardClaimed",
   "migratedFromLocalAt"
@@ -3094,6 +4034,9 @@ function mergeClientSafeSave(currentSave, incomingSave = {}) {
   if (Object.prototype.hasOwnProperty.call(incoming, "musicVolume")) {
     const volume = Number(incoming.musicVolume);
     next.musicVolume = Number.isFinite(volume) ? clamp(volume, 0, 1) : next.musicVolume;
+  }
+  if (incoming.wishlist && typeof incoming.wishlist === "object" && !Array.isArray(incoming.wishlist)) {
+    next.wishlist = sanitizeServerWishlist(incoming.wishlist, catalog);
   }
   if (incoming.tutorial && typeof incoming.tutorial === "object" && !Array.isArray(incoming.tutorial)) {
     next.tutorial = Object.fromEntries(TUTORIAL_STEPS.map((step) => [
@@ -3223,6 +4166,36 @@ function sanitizeMissionStatus(status, mission) {
   };
 }
 
+function defaultDailyEconomyRewards(dateKey = missionCycleKey("daily")) {
+  return {
+    dateKey,
+    trainingAiMatches: 0,
+    rankedWinMerreis: 0
+  };
+}
+
+function normalizeDailyEconomyRewards(rewards = {}, currentDateKey = missionCycleKey("daily")) {
+  const savedDateKey = String(rewards?.dateKey || rewards?.dailyKey || rewards?.date || "");
+  if (savedDateKey && savedDateKey !== currentDateKey) return defaultDailyEconomyRewards(currentDateKey);
+  return {
+    ...defaultDailyEconomyRewards(currentDateKey),
+    dateKey: currentDateKey,
+    trainingAiMatches: clamp(Math.floor(Number(rewards?.trainingAiMatches)) || 0, 0, ECONOMY_REWARD_RULES.trainingAi.dailyMatches),
+    rankedWinMerreis: clamp(Math.floor(Number(rewards?.rankedWinMerreis)) || 0, 0, ECONOMY_REWARD_RULES.rankedWin.dailyMerreisCap)
+  };
+}
+
+function awardRankedWinMerreis(save) {
+  save.dailyEconomy = normalizeDailyEconomyRewards(save.dailyEconomy || {});
+  const rule = ECONOMY_REWARD_RULES.rankedWin;
+  const remaining = Math.max(0, rule.dailyMerreisCap - save.dailyEconomy.rankedWinMerreis);
+  const amount = Math.min(rule.merreis, remaining);
+  if (!amount) return { amount: 0, capped: true, earnedToday: save.dailyEconomy.rankedWinMerreis, cap: rule.dailyMerreisCap };
+  save.dailyEconomy.rankedWinMerreis += amount;
+  save.merreis += amount;
+  return { amount, capped: save.dailyEconomy.rankedWinMerreis >= rule.dailyMerreisCap, earnedToday: save.dailyEconomy.rankedWinMerreis, cap: rule.dailyMerreisCap };
+}
+
 function resetExpiredMissions(currentMissions, freshMissions, savedMissionCycles) {
   const currentCycles = currentMissionCycles();
   return Object.fromEntries(MISSIONS.map((mission) => {
@@ -3300,13 +4273,74 @@ function serverTeamCost(save) {
   return fieldCost + keeperCost;
 }
 
+function currentRankForPoints(points) {
+  return [...RANKS].reverse().find((rank) => (Number(points) || 0) >= rank.min) || RANKS[0];
+}
+
 function currentRankForSave(save) {
-  return [...RANKS].reverse().find((rank) => (Number(save.trophies) || 0) >= rank.min) || RANKS[0];
+  const protectedPoints = Math.max(Number(save.trophies) || 0, Number(save.rankFloor) || 0);
+  return currentRankForPoints(protectedPoints);
 }
 
 function rankedOpponentForSave(save) {
   const rank = currentRankForSave(save);
   return RANKED_OPPONENTS.find((opponent) => opponent.rank === rank.name) || RANKED_OPPONENTS[0];
+}
+
+function ensureCompetitiveRankFloor(save) {
+  const currentFloor = currentRankForSave(save).min;
+  save.rankFloor = Math.max(0, Number(save.rankFloor) || 0, currentFloor);
+  save.trophies = Math.max(save.rankFloor, Number(save.trophies) || 0);
+  return save.rankFloor;
+}
+
+function competitiveWinBonus(streak) {
+  const safeStreak = Math.max(0, Math.floor(Number(streak)) || 0);
+  if (safeStreak >= 5) return COMPETITIVE_STREAK_BONUSES[5];
+  return COMPETITIVE_STREAK_BONUSES[safeStreak] || 0;
+}
+
+function applyCompetitivePoints(save, outcome) {
+  const floorBefore = ensureCompetitiveRankFloor(save);
+  if (outcome === "win") {
+    save.competitiveWinStreak = Math.max(0, Math.floor(Number(save.competitiveWinStreak)) || 0) + 1;
+    const bonus = competitiveWinBonus(save.competitiveWinStreak);
+    const points = COMPETITIVE_WIN_POINTS + bonus;
+    save.trophies += points;
+    const previousFloor = save.rankFloor;
+    ensureCompetitiveRankFloor(save);
+    return {
+      outcome,
+      points,
+      base: COMPETITIVE_WIN_POINTS,
+      bonus,
+      streak: save.competitiveWinStreak,
+      rankFloorReached: save.rankFloor > previousFloor ? currentRankForSave(save).name : ""
+    };
+  }
+
+  save.competitiveWinStreak = 0;
+  if (outcome === "draw") {
+    return {
+      outcome,
+      points: 0,
+      base: 0,
+      bonus: 0,
+      streak: 0,
+      floorProtected: false
+    };
+  }
+
+  const before = Number(save.trophies) || 0;
+  save.trophies = Math.max(floorBefore, before - COMPETITIVE_LOSS_POINTS);
+  return {
+    outcome: "loss",
+    points: save.trophies - before,
+    base: -COMPETITIVE_LOSS_POINTS,
+    bonus: 0,
+    streak: 0,
+    floorProtected: before - COMPETITIVE_LOSS_POINTS < floorBefore
+  };
 }
 
 function activeCompetitiveMatch(type, extra = {}) {
@@ -3317,6 +4351,268 @@ function activeCompetitiveMatch(type, extra = {}) {
     resolved: false,
     ...extra
   };
+}
+
+function competitiveQueueKey(type, tournamentId = "") {
+  return type === "tournament" ? `tournament:${String(tournamentId || "")}` : "ranked";
+}
+
+function competitiveQueueForTicket(ticket) {
+  const key = competitiveQueueKey(ticket.type, ticket.tournamentId);
+  if (!competitiveMatchmakingQueues.has(key)) competitiveMatchmakingQueues.set(key, []);
+  return competitiveMatchmakingQueues.get(key);
+}
+
+function removeCompetitiveTicket(ticket) {
+  if (!ticket) return;
+  const queue = competitiveMatchmakingQueues.get(competitiveQueueKey(ticket.type, ticket.tournamentId));
+  if (!queue) return;
+  const index = queue.indexOf(ticket);
+  if (index >= 0) queue.splice(index, 1);
+  if (!queue.length) competitiveMatchmakingQueues.delete(competitiveQueueKey(ticket.type, ticket.tournamentId));
+}
+
+function removeCompetitiveTicketsForPlayer(playerId) {
+  for (const queue of competitiveMatchmakingQueues.values()) {
+    for (const ticket of [...queue]) {
+      if (ticket.playerId === playerId) {
+        removeCompetitiveTicket(ticket);
+        if (ticket.timeout) clearTimeout(ticket.timeout);
+        const error = new Error("Busca competitiva substituida por uma nova tentativa.");
+        error.status = 409;
+        ticket.reject(error);
+      }
+    }
+  }
+}
+
+function competitiveRankWindow(waitMs) {
+  const safeWait = Math.max(0, Number(waitMs) || 0);
+  return [...COMPETITIVE_MATCHMAKING_RANK_WINDOWS]
+    .reverse()
+    .find((entry) => safeWait >= entry.waitMs)?.trophies || COMPETITIVE_MATCHMAKING_RANK_WINDOWS[0].trophies;
+}
+
+function competitiveTicketsCompatible(a, b, now = Date.now()) {
+  if (!a || !b || a.playerId === b.playerId) return false;
+  if (a.type !== b.type || String(a.tournamentId || "") !== String(b.tournamentId || "")) return false;
+  const trophyDistance = Math.abs((Number(a.trophies) || 0) - (Number(b.trophies) || 0));
+  const windowA = competitiveRankWindow(now - a.createdAt);
+  const windowB = competitiveRankWindow(now - b.createdAt);
+  return trophyDistance <= Math.max(windowA, windowB);
+}
+
+function bestCompetitiveCandidate(ticket) {
+  const now = Date.now();
+  return competitiveQueueForTicket(ticket)
+    .filter((candidate) => competitiveTicketsCompatible(ticket, candidate, now))
+    .sort((a, b) => {
+      const trophyA = Math.abs((Number(ticket.trophies) || 0) - (Number(a.trophies) || 0));
+      const trophyB = Math.abs((Number(ticket.trophies) || 0) - (Number(b.trophies) || 0));
+      return trophyA - trophyB || a.createdAt - b.createdAt;
+    })[0] || null;
+}
+
+function competitiveOpponentFromSave(save, name, fallbackOpponent, playerId = "") {
+  const loadout = sanitizeOnlineLoadout(save);
+  return {
+    name: safeText(name, fallbackOpponent?.name || "Rival online", 24),
+    team: loadout.team?.length === 3 ? loadout.team : fallbackOpponent.team,
+    goalkeeper: loadout.goalkeeper || fallbackOpponent.goalkeeper,
+    rank: currentRankForSave(save).name,
+    playerId
+  };
+}
+
+function fallbackCompetitiveOpponent(type, save, tournamentId = "") {
+  if (type === "tournament") return TOURNAMENT_OPPONENTS[tournamentId] || Object.values(TOURNAMENT_OPPONENTS)[0];
+  return rankedOpponentForSave(save);
+}
+
+async function validateCompetitiveTicket(playerId, type, options = {}) {
+  const profile = await requireProfileForPlayer(playerId);
+  const tournament = type === "tournament"
+    ? TOURNAMENTS.find((item) => item.id === options.tournamentId)
+    : null;
+  if (type === "tournament" && !tournament) {
+    const error = new Error("Torneio nao encontrado.");
+    error.status = 404;
+    throw error;
+  }
+
+  const record = await readOrCreateSave(playerId);
+  const save = normalizeServerSave(record.save);
+  if (save.activeCompetitive && !save.activeCompetitive.resolved) {
+    const error = new Error("Ja existe uma partida competitiva ativa.");
+    error.status = 409;
+    error.save = save;
+    throw error;
+  }
+  if (serverTeamCost(save) > 10) {
+    const error = new Error("Time acima do custo competitivo.");
+    error.status = 400;
+    error.save = save;
+    throw error;
+  }
+  if (tournament && save.merreis < tournament.entry) {
+    const error = new Error("Merreis insuficientes para entrar no torneio.");
+    error.status = 400;
+    error.save = save;
+    throw error;
+  }
+
+  const rank = currentRankForSave(save);
+  return {
+    id: crypto.randomUUID(),
+    playerId,
+    profileName: profile.name,
+    type,
+    tournamentId: tournament?.id || "",
+    tournament,
+    rankName: rank.name,
+    rankMin: rank.min,
+    trophies: Number(save.trophies) || 0,
+    createdAt: Date.now()
+  };
+}
+
+async function createCompetitiveMatchForTicket(ticket, opponent, matchmaking) {
+  const record = await readOrCreateSave(ticket.playerId);
+  const save = normalizeServerSave(record.save);
+  if (save.activeCompetitive && !save.activeCompetitive.resolved) {
+    const error = new Error("Ja existe uma partida competitiva ativa.");
+    error.status = 409;
+    error.save = save;
+    throw error;
+  }
+  if (serverTeamCost(save) > 10) {
+    const error = new Error("Time acima do custo competitivo.");
+    error.status = 400;
+    error.save = save;
+    throw error;
+  }
+  if (ticket.tournament && save.merreis < ticket.tournament.entry) {
+    const error = new Error("Merreis insuficientes para entrar no torneio.");
+    error.status = 400;
+    error.save = save;
+    throw error;
+  }
+
+  const rank = currentRankForSave(save);
+  if (ticket.tournament) save.merreis -= ticket.tournament.entry;
+  const match = activeCompetitiveMatch(ticket.type, {
+    id: matchmaking.matchId,
+    rank: rank.name,
+    tournamentId: ticket.tournament?.id || undefined,
+    tournamentName: ticket.tournament?.name || undefined,
+    opponent: opponent.name,
+    opponentPlayerId: opponent.playerId || null,
+    matchmaking
+  });
+  save.activeCompetitive = match;
+  progressServerMission(save, ticket.type === "ranked" ? "ranked" : "tournament", 1);
+  await writeSave(ticket.playerId, save);
+  recordAccountEvent(ticket.playerId, ticket.type === "ranked" ? "ranked:start" : "tournament:start", {
+    matchId: match.id,
+    rank: rank.name,
+    tournament: ticket.tournament ? {
+      id: ticket.tournament.id,
+      name: ticket.tournament.name,
+      entry: ticket.tournament.entry
+    } : null,
+    opponent: opponent.name,
+    matchmaking,
+    balances: accountEventBalance(save)
+  });
+  return {
+    save,
+    match,
+    rank,
+    tournament: ticket.tournament,
+    opponent,
+    matchmaking
+  };
+}
+
+async function createCompetitiveBotMatch(ticket) {
+  const record = await readOrCreateSave(ticket.playerId);
+  const save = normalizeServerSave(record.save);
+  const opponent = fallbackCompetitiveOpponent(ticket.type, save, ticket.tournamentId);
+  const matchmaking = {
+    source: "bot",
+    matchId: crypto.randomUUID(),
+    queuedAt: new Date(ticket.createdAt).toISOString(),
+    matchedAt: new Date().toISOString(),
+    waitMs: Date.now() - ticket.createdAt,
+    timeoutMs: COMPETITIVE_MATCHMAKING_TIMEOUT_MS
+  };
+  return createCompetitiveMatchForTicket(ticket, opponent, matchmaking);
+}
+
+async function createCompetitivePlayerMatch(ticketA, ticketB) {
+  const [recordA, recordB] = await Promise.all([
+    readOrCreateSave(ticketA.playerId),
+    readOrCreateSave(ticketB.playerId)
+  ]);
+  const saveA = normalizeServerSave(recordA.save);
+  const saveB = normalizeServerSave(recordB.save);
+  const fallbackA = fallbackCompetitiveOpponent(ticketA.type, saveA, ticketA.tournamentId);
+  const fallbackB = fallbackCompetitiveOpponent(ticketB.type, saveB, ticketB.tournamentId);
+  const opponentForA = competitiveOpponentFromSave(saveB, ticketB.profileName, fallbackA, ticketB.playerId);
+  const opponentForB = competitiveOpponentFromSave(saveA, ticketA.profileName, fallbackB, ticketA.playerId);
+  const matchId = crypto.randomUUID();
+  const matchedAt = Date.now();
+  const matchmakingA = {
+    source: "player",
+    matchId,
+    queuedAt: new Date(ticketA.createdAt).toISOString(),
+    matchedAt: new Date(matchedAt).toISOString(),
+    waitMs: matchedAt - ticketA.createdAt,
+    timeoutMs: COMPETITIVE_MATCHMAKING_TIMEOUT_MS,
+    opponentPlayerId: ticketB.playerId
+  };
+  const matchmakingB = {
+    source: "player",
+    matchId,
+    queuedAt: new Date(ticketB.createdAt).toISOString(),
+    matchedAt: new Date(matchedAt).toISOString(),
+    waitMs: matchedAt - ticketB.createdAt,
+    timeoutMs: COMPETITIVE_MATCHMAKING_TIMEOUT_MS,
+    opponentPlayerId: ticketA.playerId
+  };
+  const [resultA, resultB] = await Promise.all([
+    createCompetitiveMatchForTicket(ticketA, opponentForA, matchmakingA),
+    createCompetitiveMatchForTicket(ticketB, opponentForB, matchmakingB)
+  ]);
+  return [resultA, resultB];
+}
+
+async function startCompetitiveMatchmakingForPlayer(playerId, type, options = {}) {
+  removeCompetitiveTicketsForPlayer(playerId);
+  const ticket = await validateCompetitiveTicket(playerId, type, options);
+  const candidate = bestCompetitiveCandidate(ticket);
+  if (candidate) {
+    removeCompetitiveTicket(candidate);
+    if (candidate.timeout) clearTimeout(candidate.timeout);
+    try {
+      const [candidateResult, ticketResult] = await createCompetitivePlayerMatch(candidate, ticket);
+      candidate.resolve(candidateResult);
+      return ticketResult;
+    } catch (error) {
+      candidate.reject(error);
+      throw error;
+    }
+  }
+
+  return new Promise((resolve, reject) => {
+    ticket.resolve = resolve;
+    ticket.reject = reject;
+    ticket.timeout = setTimeout(() => {
+      removeCompetitiveTicket(ticket);
+      createCompetitiveBotMatch(ticket).then(resolve).catch(reject);
+    }, COMPETITIVE_MATCHMAKING_TIMEOUT_MS);
+    competitiveQueueForTicket(ticket).push(ticket);
+  });
 }
 
 function ownedCollectionCount(save) {
@@ -3357,6 +4653,76 @@ async function leaderboardRows(limit = 20) {
   return rows
     .sort((a, b) => b.onlineTrophies - a.onlineTrophies || b.trophies - a.trophies || b.onlineWins - a.onlineWins || b.album - a.album)
     .slice(0, limit);
+}
+
+function drawStarterPackPulls(collection = {}) {
+  const owned = new Set(Object.entries(collection).filter(([, count]) => Number(count) > 0).map(([id]) => id));
+  const packUsed = new Set();
+  const epicOrLower = (monster) => rarityIndex(monster.rarity) <= rarityIndex("Epico");
+  const pick = (label, test) => {
+    const pool = MONSTERS.filter((monster) => test(monster) && !packUsed.has(monster.id));
+    const freshPool = pool.filter((monster) => !owned.has(monster.id));
+    const safePool = freshPool.length ? freshPool : pool;
+    const monster = randomItem(safePool);
+    packUsed.add(monster.id);
+    return {
+      monster,
+      pull: {
+        monsterId: monster.id,
+        roleLabel: label,
+        isNew: !collection[monster.id],
+        fragments: 0,
+        revealed: true
+      }
+    };
+  };
+
+  const attacker = pick("Atacante", (monster) => !isGoalkeeper(monster) && epicOrLower(monster) && STARTER_FIELD_SLOTS[0].test(monster));
+  const midfielder = pick("Meia", (monster) => !isGoalkeeper(monster) && epicOrLower(monster) && STARTER_FIELD_SLOTS[1].test(monster));
+  const defender = pick("Zagueiro", (monster) => !isGoalkeeper(monster) && epicOrLower(monster) && STARTER_FIELD_SLOTS[2].test(monster));
+  const goalkeeper = pick("Goleiro", (monster) => isGoalkeeper(monster) && epicOrLower(monster));
+  const legendary = pick("Lendario", (monster) => monster.rarity === "Lendario");
+  return {
+    pulls: [attacker.pull, midfielder.pull, defender.pull, goalkeeper.pull, legendary.pull],
+    team: [attacker.monster.id, midfielder.monster.id, defender.monster.id],
+    goalkeeper: goalkeeper.monster.id
+  };
+}
+
+async function openStarterPackForPlayer(playerId) {
+  await requireProfileForPlayer(playerId);
+  const record = await readOrCreateSave(playerId);
+  const save = normalizeServerSave(record.save);
+  if (save.starterOnboardingComplete) {
+    const labels = ["Atacante", "Meia", "Zagueiro", "Goleiro", "Lendario"];
+    const pulls = (save.starterPackCards || [])
+      .filter((id) => MONSTER_BY_ID[id])
+      .map((monsterId, index) => ({
+        monsterId,
+        roleLabel: labels[index] || "Starter",
+        isNew: true,
+        fragments: 0,
+        revealed: true
+      }));
+    return { save, pulls, alreadyComplete: true };
+  }
+
+  const starter = drawStarterPackPulls(save.collection || {});
+  starter.pulls.forEach((pull) => {
+    save.collection[pull.monsterId] = (save.collection[pull.monsterId] || 0) + 1;
+  });
+  save.team = starter.team;
+  save.goalkeeper = starter.goalkeeper;
+  save.starterOnboardingComplete = true;
+  save.starterPackOpenedAt = new Date().toISOString();
+  save.starterPackCards = starter.pulls.map((pull) => pull.monsterId);
+  const saved = await writeSave(playerId, save);
+  recordAccountEvent(playerId, "starter:open", {
+    pack: { id: "recheado", name: "Recheado", cards: starter.pulls.length },
+    pulls: accountEventPulls(starter.pulls),
+    balances: accountEventBalance(saved.save)
+  });
+  return { save: saved.save, pulls: starter.pulls, alreadyComplete: false };
 }
 
 function drawPackPulls(save, pack) {
@@ -3413,7 +4779,7 @@ async function openPackForPlayer(playerId, packId) {
   return { save, pulls, pack };
 }
 
-async function buyShopItemForPlayer(playerId, itemId) {
+async function buyShopItemForPlayer(playerId, itemId, clientRequestId = "") {
   await requireProfileForPlayer(playerId);
   const item = SHOP_ITEMS.find((entry) => entry.id === itemId);
   if (!item) {
@@ -3427,23 +4793,15 @@ async function buyShopItemForPlayer(playerId, itemId) {
   save.cosmetics = save.cosmetics || {};
 
   if (item.type === "merreis") {
-    const amount = Math.max(0, Math.floor(Number(item.merreis)) || 0);
-    if (!amount) {
-      const error = new Error("Pacote de Merreis invalido.");
-      error.status = 400;
-      error.save = save;
-      throw error;
-    }
-    save.merreis += amount;
-    const message = `${item.name} comprado: +${amount.toLocaleString("pt-BR")} Merreis.`;
-    await writeSave(playerId, save);
-    recordAccountEvent(playerId, "shop:merreis", {
-      item: { id: item.id, name: item.name },
-      merreis: amount,
-      priceLabel: item.priceLabel || "",
-      balances: accountEventBalance(save)
-    });
-    return { save, item, message };
+    const checkout = await createMerreisCheckoutForPlayer(playerId, item.id, clientRequestId);
+    return {
+      save,
+      item,
+      checkout: true,
+      checkoutUrl: checkout.checkoutUrl,
+      order: publicPaymentOrder(checkout.order),
+      message: "Pedido criado. Abrindo checkout seguro do Mercado Pago."
+    };
   }
 
   const alreadyOwned = Boolean(save.cosmetics[item.id]);
@@ -3564,6 +4922,47 @@ async function claimMissionForPlayer(playerId, missionId) {
   return { save, mission };
 }
 
+async function resolveTrainingAiForPlayer(playerId, payload = {}) {
+  await requireProfileForPlayer(playerId);
+  const outcome = ["win", "draw", "loss"].includes(payload.outcome) ? payload.outcome : "loss";
+  const record = await readOrCreateSave(playerId);
+  const save = normalizeServerSave(record.save);
+  progressServerMission(save, "battle", 1);
+  if (outcome === "win") progressServerMission(save, "win", 1);
+
+  save.dailyEconomy = normalizeDailyEconomyRewards(save.dailyEconomy || {});
+  const rule = ECONOMY_REWARD_RULES.trainingAi;
+  const capped = save.dailyEconomy.trainingAiMatches >= rule.dailyMatches;
+  const rewards = [];
+  let merreis = 0;
+  if (!capped) {
+    save.dailyEconomy.trainingAiMatches += 1;
+    save.merreis += rule.merreis;
+    merreis = rule.merreis;
+    rewards.push(`+${rule.merreis.toLocaleString("pt-BR")} Merreis`);
+  } else {
+    rewards.push("Limite diario de treino atingido");
+  }
+
+  await writeSave(playerId, save);
+  recordAccountEvent(playerId, "training-ai:resolve", {
+    outcome,
+    merreis,
+    trainingAiMatches: save.dailyEconomy.trainingAiMatches,
+    balances: accountEventBalance(save)
+  });
+  return {
+    save,
+    result: {
+      outcome,
+      status: merreis
+        ? `Treino contra IA concluido. +${merreis.toLocaleString("pt-BR")} Merreis (${save.dailyEconomy.trainingAiMatches}/${rule.dailyMatches} hoje)`
+        : "Treino contra IA concluido. Limite diario de Merreis atingido.",
+      rewards
+    }
+  };
+}
+
 async function tradeForPlayer(playerId, offerId, wishId) {
   await requireProfileForPlayer(playerId);
   const offered = MONSTER_BY_ID[offerId];
@@ -3648,138 +5047,62 @@ async function sendFriendGiftForPlayer(playerId, friendId) {
 }
 
 async function startRankedForPlayer(playerId) {
-  await requireProfileForPlayer(playerId);
-  const record = await readOrCreateSave(playerId);
-  const save = normalizeServerSave(record.save);
-  if (save.activeCompetitive && !save.activeCompetitive.resolved) {
-    const error = new Error("Ja existe uma partida competitiva ativa.");
-    error.status = 409;
-    error.save = save;
-    throw error;
-  }
-  if (serverTeamCost(save) > 10) {
-    const error = new Error("Time acima do custo competitivo.");
-    error.status = 400;
-    error.save = save;
-    throw error;
-  }
-
-  const rank = currentRankForSave(save);
-  const opponent = rankedOpponentForSave(save);
-  const match = activeCompetitiveMatch("ranked", {
-    rank: rank.name,
-    opponent: opponent.name
-  });
-  save.activeCompetitive = match;
-  progressServerMission(save, "ranked", 1);
-  await writeSave(playerId, save);
-  recordAccountEvent(playerId, "ranked:start", {
-    matchId: match.id,
-    rank: rank.name,
-    opponent: opponent.name,
-    balances: accountEventBalance(save)
-  });
-  return { save, match, rank, opponent };
+  return startCompetitiveMatchmakingForPlayer(playerId, "ranked");
 }
 
 async function startTournamentForPlayer(playerId, tournamentId) {
-  await requireProfileForPlayer(playerId);
-  const tournament = TOURNAMENTS.find((item) => item.id === tournamentId);
-  if (!tournament) {
-    const error = new Error("Torneio nao encontrado.");
-    error.status = 404;
-    throw error;
-  }
-  const record = await readOrCreateSave(playerId);
-  const save = normalizeServerSave(record.save);
-  if (save.activeCompetitive && !save.activeCompetitive.resolved) {
-    const error = new Error("Ja existe uma partida competitiva ativa.");
-    error.status = 409;
-    error.save = save;
-    throw error;
-  }
-  if (serverTeamCost(save) > 10) {
-    const error = new Error("Time acima do custo competitivo.");
-    error.status = 400;
-    error.save = save;
-    throw error;
-  }
-  if (save.merreis < tournament.entry) {
-    const error = new Error("Merreis insuficientes para entrar no torneio.");
-    error.status = 400;
-    error.save = save;
-    throw error;
-  }
-
-  save.merreis -= tournament.entry;
-  const opponent = TOURNAMENT_OPPONENTS[tournament.id];
-  const match = activeCompetitiveMatch("tournament", {
-    tournamentId: tournament.id,
-    tournamentName: tournament.name,
-    opponent: opponent.name
-  });
-  save.activeCompetitive = match;
-  progressServerMission(save, "tournament", 1);
-  await writeSave(playerId, save);
-  recordAccountEvent(playerId, "tournament:start", {
-    matchId: match.id,
-    tournament: {
-      id: tournament.id,
-      name: tournament.name,
-      entry: tournament.entry
-    },
-    opponent: opponent.name,
-    balances: accountEventBalance(save)
-  });
-  return { save, match, tournament, opponent };
+  return startCompetitiveMatchmakingForPlayer(playerId, "tournament", { tournamentId });
 }
 
 function rankedResolution(save, outcome, reason = "") {
   if (outcome === "win") {
-    const trophies = 90 + crypto.randomInt(0, 61);
-    save.trophies += trophies;
+    const points = applyCompetitivePoints(save, "win");
+    const merreisReward = awardRankedWinMerreis(save);
     save.rankedWins += 1;
-    save.merreis += 180;
+    const bonusText = points.bonus ? ` (+${points.bonus} bonus de sequencia ${points.streak})` : "";
     return {
-      status: `Vitoria ranqueada! +${trophies} trofeus`,
-      log: `Vitoria ranqueada${reason ? ` por ${reason}` : ""}: +${trophies} trofeus.`,
-      rewards: [`+${trophies} trofeus`, "+180 Merreis"]
+      status: `Vitoria ranqueada! +${points.points} pontos${bonusText}`,
+      log: `Vitoria ranqueada${reason ? ` por ${reason}` : ""}: +${points.points} pontos${bonusText}.`,
+      rewards: [
+        `+${points.points} pontos`,
+        merreisReward.amount ? `+${merreisReward.amount.toLocaleString("pt-BR")} Merreis` : "Limite diario de Merreis ranqueados atingido"
+      ]
     };
   }
 
   if (outcome === "draw") {
-    save.merreis += 80;
+    applyCompetitivePoints(save, "draw");
     return {
-      status: "Empate ranqueado. +80 Merreis",
+      status: "Empate ranqueado. Sem Merreis",
       log: `Empate ranqueado${reason ? ` por ${reason}` : ""}.`,
-      rewards: ["Sem perda de trofeus", "+80 Merreis"]
+      rewards: ["Sem perda de trofeus"]
     };
   }
 
-  const loss = 28 + crypto.randomInt(0, 31);
-  save.trophies = Math.max(0, save.trophies - loss);
+  const points = applyCompetitivePoints(save, "loss");
   save.rankedLosses += 1;
-  save.merreis += 45;
+  const floorText = points.floorProtected ? " Piso de divisao segurou seus pontos." : "";
   return {
-    status: `Derrota ranqueada. -${loss} trofeus`,
-    log: `Derrota ranqueada${reason ? ` por ${reason}` : ""}: -${loss} trofeus.`,
-    rewards: [`-${loss} trofeus`, "+45 Merreis"]
+    status: `Derrota ranqueada. ${points.points} pontos.${floorText}`,
+    log: `Derrota ranqueada${reason ? ` por ${reason}` : ""}: ${points.points} pontos.${floorText}`,
+    rewards: [`${points.points} pontos`]
   };
 }
 
 function tournamentResolution(save, tournament, won, reason = "") {
   if (won) {
-    const rewards = ["+70 trofeus"];
+    const points = applyCompetitivePoints(save, "win");
+    const bonusText = points.bonus ? ` (+${points.bonus} bonus de sequencia ${points.streak})` : "";
+    const rewards = [`+${points.points} pontos`];
     save.tournamentWins += 1;
-    save.trophies += 70;
     if (tournament.id === "event") {
       save.merreis += 100;
       const pack = PACKS.find((item) => item.id === "recheado");
       const pulls = drawPackPulls(save, pack);
       rewards.push("+100 Merreis", "Pacotinho Recheado");
       return {
-        status: "Campeao do Evento! Pacotinho Recheado enviado.",
-        log: `Campeao do torneio ${tournament.name}${reason ? ` por ${reason}` : ""}.`,
+        status: `Campeao do Evento! +${points.points} pontos${bonusText}. Pacotinho Recheado enviado.`,
+        log: `Campeao do torneio ${tournament.name}${reason ? ` por ${reason}` : ""}: +${points.points} pontos${bonusText}.`,
         rewards,
         packReward: true,
         pack: { id: pack.id, name: pack.name },
@@ -3794,19 +5117,21 @@ function tournamentResolution(save, tournament, won, reason = "") {
       rewards.push("+24 fragmentos");
     }
     return {
-      status: `Campeao do torneio ${tournament.name}! +${tournament.reward.toLocaleString("pt-BR")} Merreis`,
-      log: `Campeao do torneio ${tournament.name}${reason ? ` por ${reason}` : ""}.`,
+      status: `Campeao do torneio ${tournament.name}! +${points.points} pontos${bonusText} e +${tournament.reward.toLocaleString("pt-BR")} Merreis`,
+      log: `Campeao do torneio ${tournament.name}${reason ? ` por ${reason}` : ""}: +${points.points} pontos${bonusText}.`,
       rewards,
       packReward: false
     };
   }
 
+  const points = applyCompetitivePoints(save, "loss");
   const refund = Math.floor(tournament.entry * 0.25);
   save.merreis += refund;
+  const floorText = points.floorProtected ? " Piso de divisao segurou seus pontos." : "";
   return {
-    status: `Eliminado no torneio ${tournament.name}. Reembolso ${refund.toLocaleString("pt-BR")} Merreis.`,
-    log: `Eliminado no torneio ${tournament.name}${reason ? ` por ${reason}` : ""}.`,
-    rewards: [`+${refund.toLocaleString("pt-BR")} Merreis reembolso`],
+    status: `Eliminado no torneio ${tournament.name}. ${points.points} pontos. Reembolso ${refund.toLocaleString("pt-BR")} Merreis.${floorText}`,
+    log: `Eliminado no torneio ${tournament.name}${reason ? ` por ${reason}` : ""}: ${points.points} pontos.${floorText}`,
+    rewards: [`${points.points} pontos`, `+${refund.toLocaleString("pt-BR")} Merreis reembolso`],
     packReward: false
   };
 }
@@ -3961,6 +5286,116 @@ async function handleApi(req, res, url) {
       profile: publicProfile(profile),
       rows: await leaderboardRows(limit)
     }, headers);
+    return;
+  }
+
+  if (url.pathname === "/api/shop/config") {
+    if (req.method !== "GET") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "GET"
+      });
+      return;
+    }
+    json(res, 200, {
+      ok: true,
+      mercadoPago: publicMercadoPagoConfig()
+    }, headers);
+    return;
+  }
+
+  if (url.pathname === "/api/mercadopago/webhook") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+    let payload = {};
+    try {
+      const body = await readBody(req);
+      payload = body ? JSON.parse(body) : {};
+    } catch (error) {
+      json(res, 400, { ok: false, error: "Webhook invalido." }, headers);
+      return;
+    }
+
+    const eventType = String(payload.type || url.searchParams.get("type") || "").toLowerCase();
+    const action = String(payload.action || "").toLowerCase();
+    const paymentId = mercadoPagoPaymentIdFromNotification(url, payload);
+    if (eventType && eventType !== "payment") {
+      json(res, 200, { ok: true, ignored: true }, headers);
+      return;
+    }
+    if (action && !action.startsWith("payment.")) {
+      json(res, 200, { ok: true, ignored: true }, headers);
+      return;
+    }
+    if (!paymentId) {
+      json(res, 400, { ok: false, error: "Pagamento ausente no webhook." }, headers);
+      return;
+    }
+    if (!verifyMercadoPagoWebhookSignature(req, url, paymentId)) {
+      json(res, 401, { ok: false, error: "Assinatura Mercado Pago invalida." }, headers);
+      return;
+    }
+
+    try {
+      const result = await validateMercadoPagoPayment(paymentId);
+      json(res, 200, {
+        ok: true,
+        credited: Boolean(result.credited),
+        alreadyCredited: Boolean(result.alreadyCredited),
+        order: publicPaymentOrder(result.order)
+      }, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao validar pagamento."
+      }, headers);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/mercadopago/return") {
+    if (req.method !== "GET") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "GET"
+      });
+      return;
+    }
+    const paymentId = normalizePaymentId(
+      url.searchParams.get("payment_id")
+      || url.searchParams.get("collection_id")
+      || url.searchParams.get("id")
+    );
+    const orderId = String(url.searchParams.get("external_reference") || url.searchParams.get("order_id") || "").trim();
+    if (!paymentId) {
+      redirectToPaymentReturn(res, 303, {
+        mp_result: url.searchParams.get("result") || "pending",
+        mp_order: orderId,
+        mp_message: "payment_missing"
+      });
+      return;
+    }
+    try {
+      const result = await validateMercadoPagoPayment(paymentId);
+      const order = result.order || paymentOrderById(orderId);
+      redirectToPaymentReturn(res, 303, {
+        mp_result: result.credited || result.alreadyCredited ? "approved" : (order?.status || "pending"),
+        mp_order: order?.id || orderId,
+        mp_merreis: order?.merreis || "",
+        mp_payment: paymentId
+      });
+    } catch (error) {
+      redirectToPaymentReturn(res, 303, {
+        mp_result: "error",
+        mp_order: orderId,
+        mp_message: safeText(error.message, "validation_failed", 120)
+      });
+    }
     return;
   }
 
@@ -4247,6 +5682,137 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (url.pathname === "/api/social") {
+    if (req.method !== "GET") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "GET"
+      });
+      return;
+    }
+    try {
+      json(res, 200, await socialPayloadForPlayer(playerId), headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao carregar amigos."
+      }, headers);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/friends/invite") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const result = await sendFriendInvite(playerId, payload.name);
+      json(res, 200, result, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao enviar convite."
+      }, headers);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/friends/respond") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const result = await respondFriendInvite(playerId, payload.requestId, Boolean(payload.accept));
+      json(res, 200, result, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao responder convite."
+      }, headers);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/friends/message") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const result = await sendFriendMessage(playerId, payload.friendPlayerId, payload.message);
+      json(res, 200, result, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao enviar mensagem."
+      }, headers);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/social/trades/create") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const result = await createSocialTrade(playerId, payload.friendPlayerId, payload.offeredIds, payload.requestedIds);
+      json(res, 200, result, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao criar proposta.",
+        save: error.save
+      }, headers);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/social/trades/respond") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const result = await respondSocialTrade(playerId, payload.tradeId, Boolean(payload.accept));
+      json(res, 200, result, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao responder proposta.",
+        save: error.save
+      }, headers);
+    }
+    return;
+  }
+
   if (url.pathname === "/api/trade") {
     if (req.method !== "POST") {
       json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
@@ -4339,6 +5905,35 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (url.pathname === "/api/starter-pack") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+
+    try {
+      const result = await openStarterPackForPlayer(playerId);
+      json(res, 200, {
+        ok: true,
+        playerId,
+        pack: { id: "recheado", name: "Recheado" },
+        pulls: result.pulls,
+        alreadyComplete: Boolean(result.alreadyComplete),
+        save: result.save
+      }, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao abrir starter.",
+        save: error.save || null
+      }, headers);
+    }
+    return;
+  }
+
   if (url.pathname === "/api/shop") {
     if (req.method !== "POST") {
       json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
@@ -4351,12 +5946,15 @@ async function handleApi(req, res, url) {
     try {
       const body = await readBody(req);
       const payload = body ? JSON.parse(body) : {};
-      const result = await buyShopItemForPlayer(playerId, payload.itemId);
+      const result = await buyShopItemForPlayer(playerId, payload.itemId, payload.clientRequestId);
       json(res, 200, {
         ok: true,
         playerId,
         item: { id: result.item.id, name: result.item.name },
         message: result.message,
+        checkout: Boolean(result.checkout),
+        checkoutUrl: result.checkoutUrl || "",
+        order: result.order || null,
         save: result.save
       }, headers);
     } catch (error) {
@@ -4429,6 +6027,35 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (url.pathname === "/api/training-ai/resolve") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const result = await resolveTrainingAiForPlayer(playerId, payload);
+      json(res, 200, {
+        ok: true,
+        playerId,
+        save: result.save,
+        result: result.result
+      }, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao resolver treino contra IA.",
+        save: error.save || null
+      }, headers);
+    }
+    return;
+  }
+
   if (url.pathname === "/api/ranked/start") {
     if (req.method !== "POST") {
       json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
@@ -4448,7 +6075,8 @@ async function handleApi(req, res, url) {
         save: result.save,
         match: result.match,
         rank: result.rank,
-        opponent: result.opponent
+        opponent: result.opponent,
+        matchmaking: result.matchmaking
       }, headers);
     } catch (error) {
       json(res, error.status || 500, {
@@ -4479,7 +6107,8 @@ async function handleApi(req, res, url) {
         save: result.save,
         match: result.match,
         tournament: result.tournament,
-        opponent: result.opponent
+        opponent: result.opponent,
+        matchmaking: result.matchmaking
       }, headers);
     } catch (error) {
       json(res, error.status || 500, {

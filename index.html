@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Kick Tazzos: Copa da zoeira!</title>
-  <link rel="stylesheet" href="styles.css?v=20260519-ui-assets-final-5">
+  <link rel="stylesheet" href="styles.css?v=20260520-trades-live-1">
 </head>
 <body>
   <div class="app-shell">
@@ -335,12 +335,16 @@
             <h2>Troca direta</h2>
             <div class="trade-form">
               <label>
-                Seu repetido
-                <select id="trade-offer"></select>
+                Amigo
+                <select id="trade-friend"></select>
               </label>
               <label>
-                Desejo
-                <select id="trade-wish"></select>
+                Sua oferta
+                <select id="trade-offer" multiple size="7"></select>
+              </label>
+              <label>
+                Seu pedido
+                <select id="trade-wish" multiple size="7"></select>
               </label>
             </div>
             <p class="evolution-note" id="trade-message">Taxa de 60 Merreis por troca.</p>
@@ -472,20 +476,21 @@
         <input id="music-volume-control" type="range" min="0" max="1" step="0.01" value="0.55">
       </label>
     </div>
-    <audio id="music-audio" preload="metadata"></audio>
+    <audio id="music-audio" preload="auto"></audio>
   </aside>
 
-  <script src="data.js?v=20260518-holos-2"></script>
-  <script src="scripts/menu-shared.js?v=20260520-menu-domains-1"></script>
-  <script src="scripts/menu-packs.js?v=20260520-menu-domains-1"></script>
-  <script src="scripts/menu-collection.js?v=20260520-menu-domains-1"></script>
-  <script src="scripts/menu-tournaments.js?v=20260520-menu-domains-1"></script>
-  <script src="scripts/menu-trades.js?v=20260520-menu-domains-1"></script>
-  <script src="scripts/menu-shop.js?v=20260520-menu-domains-1"></script>
-  <script src="scripts/menu-missions.js?v=20260520-menu-domains-1"></script>
-  <script src="scripts/menu-views.js?v=20260520-menu-domains-1"></script>
-  <script src="app.js?v=20260520-menu-domains-1"></script>
-  <script src="battle-render.js?v=20260519-hud-buttons-2"></script>
-  <script src="battle-engine.js?v=20260518-online-invite"></script>
+  <script src="data.js?v=20260520-agent-features-1"></script>
+  <script src="scripts/menu-shared.js?v=20260520-agent-features-1"></script>
+  <script src="scripts/menu-packs.js?v=20260520-real-flip-1"></script>
+  <script src="scripts/menu-collection.js?v=20260520-ui-polish-2"></script>
+  <script src="scripts/menu-friends.js?v=20260520-agent-features-1"></script>
+  <script src="scripts/menu-tournaments.js?v=20260520-agent-features-1"></script>
+  <script src="scripts/menu-trades.js?v=20260520-trades-live-1"></script>
+  <script src="scripts/menu-shop.js?v=20260520-agent-features-1"></script>
+  <script src="scripts/menu-missions.js?v=20260520-agent-features-1"></script>
+  <script src="scripts/menu-views.js?v=20260520-agent-features-1"></script>
+  <script src="app.js?v=20260520-trades-live-1"></script>
+  <script src="battle-render.js?v=20260520-agent-features-1"></script>
+  <script src="battle-engine.js?v=20260520-agent-features-1"></script>
 </body>
 </html>

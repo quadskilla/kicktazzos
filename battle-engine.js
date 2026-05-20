@@ -852,13 +852,14 @@ async function checkVictory() {
         ranked: true
       });
     } else {
-      state.battle.status = "Vitoria! +250 Merreis";
-      state.save.merreis += 250;
+      const rewards = state.battle.mode === "training" ? await trainingAiRewardSummary("win") : ["+250 Merreis"];
+      state.battle.status = state.battle.mode === "training" ? rewards.status : "Vitoria! +250 Merreis";
+      if (state.battle.mode !== "training") state.save.merreis += 250;
       setBattleResult({
         winner: "player",
         title: "Vitoria!",
         reason: `Voce derrotou ${state.battle.enemyName}.`,
-        rewards: ["+250 Merreis"]
+        rewards: rewards.items || rewards
       });
     }
     progressMission("win", 1);
@@ -884,13 +885,14 @@ async function checkVictory() {
         ranked: true
       });
     } else {
-      state.battle.status = `Derrota. ${state.battle.enemyName} venceu.`;
-      state.save.merreis += 60;
+      const rewards = state.battle.mode === "training" ? await trainingAiRewardSummary("loss") : ["+60 Merreis"];
+      state.battle.status = state.battle.mode === "training" ? rewards.status : `Derrota. ${state.battle.enemyName} venceu.`;
+      if (state.battle.mode !== "training") state.save.merreis += 60;
       setBattleResult({
         winner: "cpu",
         title: "Derrota",
         reason: `${state.battle.enemyName} venceu a partida.`,
-        rewards: ["+60 Merreis"]
+        rewards: rewards.items || rewards
       });
     }
     logBattle(`${state.battle.enemyName} venceu a partida.`);
@@ -938,6 +940,20 @@ async function resolveTimeoutBattle() {
       ranked: true
     });
     logBattle(winner === "player" ? "Voce venceu a ranqueada no desempate." : winner === "draw" ? "A ranqueada terminou empatada." : "Voce perdeu a ranqueada no desempate.");
+  } else if (state.battle.mode === "training") {
+    const rewards = await trainingAiRewardSummary(winner === "player" ? "win" : winner === "draw" ? "draw" : "loss");
+    state.battle.status = rewards.status;
+    if (winner === "player") {
+      progressMission("win", 1);
+      progressTutorial("win");
+    }
+    setBattleResult({
+      winner: winner === "player" ? "player" : winner === "draw" ? "draw" : "cpu",
+      title: winner === "player" ? "Vitoria por desempate" : winner === "draw" ? "Empate tecnico" : "Derrota por desempate",
+      reason: winner === "draw" ? "Vivos, vida e dano terminaram empatados." : "O tempo acabou e o placar decidiu.",
+      rewards: rewards.items
+    });
+    logBattle(winner === "player" ? "O treino terminou com vitoria no desempate." : winner === "draw" ? "O treino terminou empatado." : "O treino terminou com derrota no desempate.");
   } else if (winner === "player") {
     state.battle.status = "Tempo esgotado: vitoria por desempate! +220 Merreis";
     state.save.merreis += 220;
@@ -996,6 +1012,14 @@ function setBattleResult(result) {
     tournamentId: result.tournamentId || null,
     ranked: Boolean(result.ranked),
     packReward: Boolean(result.packReward)
+  };
+}
+
+async function trainingAiRewardSummary(outcome) {
+  const result = await resolveTrainingAiBattleRewards(outcome);
+  return {
+    status: result.status || "Treino contra IA concluido.",
+    items: result.rewards || []
   };
 }
 

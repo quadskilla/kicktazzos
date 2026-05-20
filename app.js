@@ -4,6 +4,7 @@ const {
   DEFAULT_BACK_IMAGE,
   TYPES,
   RARITIES,
+  TAZZO_TRADE_VALUES,
   MONSTERS,
   MONSTER_BY_ID,
   RANKS,
@@ -11,6 +12,7 @@ const {
   SHOP_ITEMS,
   PACKS,
   MISSIONS,
+  ECONOMY_REWARD_RULES,
   FRIENDS,
   BATTLE_MODES,
   BATTLE_FORMATIONS,
@@ -29,11 +31,20 @@ const SERVER_LOBBIES_ENDPOINT = "/api/lobbies";
 const SERVER_SAVE_ENDPOINT = "/api/save";
 const SERVER_MIGRATE_SAVE_ENDPOINT = "/api/save/migrate";
 const SERVER_OPEN_PACK_ENDPOINT = "/api/open-pack";
+const SERVER_STARTER_PACK_ENDPOINT = "/api/starter-pack";
 const SERVER_SHOP_ENDPOINT = "/api/shop";
+const SERVER_SHOP_CONFIG_ENDPOINT = "/api/shop/config";
 const SERVER_UPGRADE_ENDPOINT = "/api/upgrade";
 const SERVER_CLAIM_MISSION_ENDPOINT = "/api/claim-mission";
+const SERVER_TRAINING_AI_RESOLVE_ENDPOINT = "/api/training-ai/resolve";
 const SERVER_TRADE_ENDPOINT = "/api/trade";
 const SERVER_FRIEND_GIFT_ENDPOINT = "/api/friend-gift";
+const SERVER_SOCIAL_ENDPOINT = "/api/social";
+const SERVER_FRIEND_INVITE_ENDPOINT = "/api/friends/invite";
+const SERVER_FRIEND_RESPOND_ENDPOINT = "/api/friends/respond";
+const SERVER_FRIEND_MESSAGE_ENDPOINT = "/api/friends/message";
+const SERVER_SOCIAL_TRADE_CREATE_ENDPOINT = "/api/social/trades/create";
+const SERVER_SOCIAL_TRADE_RESPOND_ENDPOINT = "/api/social/trades/respond";
 const SERVER_RANKED_START_ENDPOINT = "/api/ranked/start";
 const SERVER_TOURNAMENT_START_ENDPOINT = "/api/tournament/start";
 const SERVER_COMPETITIVE_RESOLVE_ENDPOINT = "/api/competitive/resolve";
@@ -54,6 +65,21 @@ const LEGENDARY_BOOST_TAZZOS = 50;
 const LEGENDARY_BOOST_MAX_TAZZOS = 100;
 const LEGENDARY_BOOST_MULTIPLIER = 2;
 const LEGENDARY_BOOST_MAX_MULTIPLIER = 4;
+const COMPETITIVE_MATCHMAKING_TIMEOUT_MS = 40000;
+const COMPETITIVE_WIN_POINTS = 10;
+const COMPETITIVE_LOSS_POINTS = 5;
+const COMPETITIVE_STREAK_BONUSES = Object.freeze({
+  2: 2,
+  3: 4,
+  4: 6,
+  5: 8
+});
+const STARTER_PACK_ID = "recheado";
+const STARTER_FIELD_SLOTS = [
+  { label: "Atacante", test: (monster) => monster.types.includes("Atacante") },
+  { label: "Meia", test: (monster) => monster.types.includes("Meia") },
+  { label: "Zagueiro", test: (monster) => monster.role === "Zagueiro" || monster.types.includes("Defensor") }
+];
 const AI_ACTION_WINDUP_MS = 760;
 const AI_ACTION_RESULT_MS = 820;
 const ONLINE_TARGET_ACTIONS = ["move", "retreat", "swap", "dribble", "shot", "pressure"];
@@ -172,14 +198,37 @@ const state = {
   },
   pendingTournament: null,
   pendingRanked: null,
+  matchmaking: { active: false, type: "", label: "", startedAt: 0 },
   packOpening: null,
   packPurchasePending: false,
   packOpeningTimers: [],
   packReveal: [],
+  starter: {
+    loading: false,
+    opening: false,
+    reveal: [],
+    message: ""
+  },
   tutorialResult: null,
   tradeLog: [],
   competitiveLog: [],
   leaderboard: { rows: [], loading: false, loadedAt: 0, error: "" },
+  social: {
+    friends: [],
+    incomingInvites: [],
+    outgoingInvites: [],
+    messages: [],
+    trades: [],
+    loading: false,
+    loadedAt: 0,
+    error: "",
+    message: "",
+    inviteName: "",
+    selectedFriendId: "",
+    draftMessage: "",
+    tradeFriendId: "",
+    tradeDraft: { offerIds: [], requestIds: [] }
+  },
   online: {
     lobbies: [],
     currentLobby: null,
@@ -199,9 +248,15 @@ const state = {
   editSelectedId: "",
   editMessage: "",
   shopMessage: "Itens sem vantagem direta",
+  shopPayments: {
+    checked: false,
+    configured: false,
+    message: "Checando Mercado Pago...",
+    checkoutPending: false
+  },
   battle: null,
   battleSceneOpen: false,
-  music: { audio: null, isPlaying: false },
+  music: { audio: null, isPlaying: false, autoplayArmed: false },
   server: {
     enabled: false,
     loading: false,
@@ -234,22 +289,22 @@ const state = {
 };
 
 function defaultSave() {
-  const collection = {};
-  ["artilheiro-brasil", "goleiro-brasil-alison", "andreas-pereira-tazzo", "alex-sandro-tazzo", "wendell-tazzo"].forEach((id) => {
-    collection[id] = 1;
-  });
-
   return {
     createdAt: Date.now(),
     merreis: 1250,
     fragments: 0,
-    collection,
-    team: ["andreas-pereira-tazzo", "alex-sandro-tazzo", "wendell-tazzo"],
-    goalkeeper: "goleiro-brasil-alison",
+    collection: {},
+    team: [],
+    goalkeeper: "",
+    starterOnboardingComplete: false,
+    starterPackOpenedAt: null,
+    starterPackCards: [],
     customTazzos: [],
     upgrades: {},
     packPity: { sinceLegendaryPlus: 0 },
     trophies: 0,
+    rankFloor: 0,
+    competitiveWinStreak: 0,
     rankedWins: 0,
     rankedLosses: 0,
     tournamentWins: 0,
@@ -261,12 +316,14 @@ function defaultSave() {
     cosmetics: {},
     selectedCosmetic: null,
     friendGifts: {},
+    wishlist: {},
     musicTrackIndex: 0,
     musicVolume: 0.55,
     tutorial: Object.fromEntries(TUTORIAL_STEPS.map((step) => [step.id, false])),
     tutorialRewardClaimed: false,
     missionDate: TODAY_KEY,
     missionCycles: currentMissionCycles(),
+    dailyEconomy: defaultDailyEconomyRewards(),
     missions: defaultMissionStatuses()
   };
 }
@@ -288,12 +345,25 @@ function cloneSave(save) {
   }
 }
 
+function hasLegacyStarterProgress(save = {}) {
+  const collection = save.collection && typeof save.collection === "object" ? save.collection : {};
+  return Object.values(collection).some((count) => Number(count) > 0)
+    || Math.max(0, Number(save.fragments) || 0) > 0
+    || Math.max(0, Number(save.trophies) || 0) > 0
+    || Math.max(0, Number(save.rankedWins) || 0) > 0
+    || Math.max(0, Number(save.tournamentWins) || 0) > 0
+    || Math.max(0, Number(save.onlineWins) || 0) > 0;
+}
+
 function normalizeSave(rawSave) {
   try {
     const save = migrateLegacySave(rawSave || defaultSave());
     const customTazzos = sanitizeCustomCatalog(save.customTazzos || []);
     applyCustomCatalog(customTazzos);
     const fresh = defaultSave();
+    const collection = sanitizeCollection(save.collection || {});
+    const starterOnboardingComplete = Boolean(save.starterOnboardingComplete)
+      || (!Object.prototype.hasOwnProperty.call(save, "starterOnboardingComplete") && hasLegacyStarterProgress(save));
     const savedMissionCycles = normalizeMissionCycles(save.missionCycles || {}, save.missionDate);
     const missions = Object.fromEntries(MISSIONS.map((mission) => [
       mission.id,
@@ -309,24 +379,34 @@ function normalizeSave(rawSave) {
     const merged = {
       ...fresh,
       ...save,
-      collection: sanitizeCollection({ ...fresh.collection, ...(save.collection || {}) }),
+      collection,
+      starterOnboardingComplete,
+      starterPackCards: Array.isArray(save.starterPackCards) ? save.starterPackCards.filter((id) => MONSTER_BY_ID[id]).filter(unique) : fresh.starterPackCards,
+      starterPackOpenedAt: save.starterPackOpenedAt || fresh.starterPackOpenedAt,
       upgrades: { ...fresh.upgrades, ...(save.upgrades || {}) },
       packPity: sanitizePackPity(save.packPity || fresh.packPity),
       cosmetics: { ...fresh.cosmetics, ...(save.cosmetics || {}) },
       friendGifts: { ...fresh.friendGifts, ...(save.friendGifts || {}) },
+      wishlist: sanitizeWishlist({ ...fresh.wishlist, ...(save.wishlist || {}) }),
       customTazzos,
       tutorial,
       missions,
       missionCycles: savedMissionCycles,
-      team: normalizeTeam(save.team || fresh.team),
-      goalkeeper: normalizeGoalkeeper(save.goalkeeper || (save.team || []).find((id) => isGoalkeeper(id)) || fresh.goalkeeper)
+      dailyEconomy: normalizeDailyEconomyRewards(save.dailyEconomy || save.dailyRewards || {}, savedMissionCycles.daily),
+      team: normalizeTeam(save.team || fresh.team, collection),
+      goalkeeper: normalizeGoalkeeper(save.goalkeeper || (save.team || []).find((id) => isGoalkeeper(id)) || fresh.goalkeeper, collection)
     };
     merged.musicTrackIndex = clamp(Math.floor(Number(merged.musicTrackIndex)) || 0, 0, Math.max(0, MUSIC_TRACKS.length - 1));
     merged.musicVolume = clamp(Number(merged.musicVolume), 0, 1);
     if (!Number.isFinite(merged.musicVolume)) merged.musicVolume = fresh.musicVolume;
+    merged.trophies = Math.max(0, Math.floor(Number(merged.trophies)) || 0);
+    merged.rankFloor = Math.max(0, Math.floor(Number(merged.rankFloor)) || 0, currentRankForPoints(merged.trophies).min);
+    merged.trophies = Math.max(merged.rankFloor, merged.trophies);
+    merged.competitiveWinStreak = Math.max(0, Math.floor(Number(merged.competitiveWinStreak)) || 0);
 
     merged.missions = resetExpiredMissions(merged.missions, fresh.missions, savedMissionCycles);
     merged.missionCycles = currentMissionCycles();
+    merged.dailyEconomy = normalizeDailyEconomyRewards(merged.dailyEconomy, merged.missionCycles.daily);
     merged.missionDate = TODAY_KEY;
 
     return merged;
@@ -346,6 +426,8 @@ function saveProgressScore(save = {}) {
     + Math.floor((Number(normalized.merreis) || 0) / 25)
     + Math.floor((Number(normalized.fragments) || 0) / 2)
     + (Number(normalized.trophies) || 0)
+    + (Number(normalized.rankFloor) || 0)
+    + (Number(normalized.competitiveWinStreak) || 0) * 20
     + (Number(normalized.onlineTrophies) || 0)
     + (Number(normalized.rankedWins) || 0) * 120
     + (Number(normalized.tournamentWins) || 0) * 180
@@ -364,6 +446,81 @@ function sanitizeMissionStatus(status, mission) {
     progress: clamp(Math.floor(Number(status?.progress)) || 0, 0, mission.target),
     claimed: Boolean(status?.claimed)
   };
+}
+
+function defaultDailyEconomyRewards(dateKey = missionCycleKey("daily")) {
+  return {
+    dateKey,
+    trainingAiMatches: 0,
+    rankedWinMerreis: 0
+  };
+}
+
+function normalizeDailyEconomyRewards(rewards = {}, currentDateKey = missionCycleKey("daily")) {
+  const savedDateKey = String(rewards?.dateKey || rewards?.dailyKey || rewards?.date || "");
+  if (savedDateKey && savedDateKey !== currentDateKey) return defaultDailyEconomyRewards(currentDateKey);
+  return {
+    ...defaultDailyEconomyRewards(currentDateKey),
+    dateKey: currentDateKey,
+    trainingAiMatches: clamp(Math.floor(Number(rewards?.trainingAiMatches)) || 0, 0, ECONOMY_REWARD_RULES.trainingAi.dailyMatches),
+    rankedWinMerreis: clamp(Math.floor(Number(rewards?.rankedWinMerreis)) || 0, 0, ECONOMY_REWARD_RULES.rankedWin.dailyMerreisCap)
+  };
+}
+
+function ensureDailyEconomyRewards() {
+  state.save.dailyEconomy = normalizeDailyEconomyRewards(state.save.dailyEconomy || {});
+  return state.save.dailyEconomy;
+}
+
+function awardTrainingAiMerreis() {
+  const economy = ensureDailyEconomyRewards();
+  const rule = ECONOMY_REWARD_RULES.trainingAi;
+  if (economy.trainingAiMatches >= rule.dailyMatches) {
+    return { amount: 0, capped: true, used: economy.trainingAiMatches, limit: rule.dailyMatches };
+  }
+  economy.trainingAiMatches += 1;
+  state.save.merreis += rule.merreis;
+  return { amount: rule.merreis, capped: false, used: economy.trainingAiMatches, limit: rule.dailyMatches };
+}
+
+async function resolveTrainingAiBattleRewards(outcome) {
+  if (hasOnlineProfile()) {
+    try {
+      const payload = await postServerMutation(SERVER_TRAINING_AI_RESOLVE_ENDPOINT, { outcome }, "Treino");
+      return payload.result || {
+        status: "Treino contra IA concluido.",
+        rewards: []
+      };
+    } catch (error) {
+      return {
+        status: error.message || "Treino contra IA sem recompensa do servidor.",
+        rewards: []
+      };
+    }
+  }
+
+  const reward = awardTrainingAiMerreis();
+  if (reward.amount) {
+    return {
+      status: `Treino contra IA concluido. +${reward.amount} Merreis (${reward.used}/${reward.limit} hoje)`,
+      rewards: [`+${reward.amount} Merreis`]
+    };
+  }
+  return {
+    status: "Treino contra IA concluido. Limite diario de Merreis atingido.",
+    rewards: ["Limite diario de treino atingido"]
+  };
+}
+
+function awardRankedWinMerreis() {
+  const economy = ensureDailyEconomyRewards();
+  const rule = ECONOMY_REWARD_RULES.rankedWin;
+  const remaining = Math.max(0, rule.dailyMerreisCap - economy.rankedWinMerreis);
+  const amount = Math.min(rule.merreis, remaining);
+  if (!amount) return { amount: 0, capped: true, earnedToday: economy.rankedWinMerreis, cap: rule.dailyMerreisCap };
+  economy.rankedWinMerreis += amount;
+  state.save.merreis += amount;
+  return { amount, capped: economy.rankedWinMerreis >= rule.dailyMerreisCap, earnedToday: economy.rankedWinMerreis, cap: rule.dailyMerreisCap };
 }
 
 function resetExpiredMissions(currentMissions, freshMissions, savedMissionCycles) {
@@ -402,16 +559,19 @@ function migrateLegacySave(save = {}) {
   return next;
 }
 
-function normalizeTeam(team) {
-  const available = Array.isArray(team) ? team.filter((id) => MONSTER_BY_ID[id] && !isGoalkeeper(id)) : [];
-  const fallback = ["andreas-pereira-tazzo", "alex-sandro-tazzo", "wendell-tazzo"].filter((id) => MONSTER_BY_ID[id] && !isGoalkeeper(id));
+function normalizeTeam(team, collection = state?.save?.collection || {}) {
+  const available = Array.isArray(team)
+    ? team.filter((id) => collection[id] > 0 && MONSTER_BY_ID[id] && !isGoalkeeper(id))
+    : [];
+  const fallback = ["andreas-pereira-tazzo", "alex-sandro-tazzo", "wendell-tazzo"]
+    .filter((id) => collection[id] > 0 && MONSTER_BY_ID[id] && !isGoalkeeper(id));
   return [...available, ...fallback].filter(unique).slice(0, 3);
 }
 
-function normalizeGoalkeeper(id) {
+function normalizeGoalkeeper(id, collection = state?.save?.collection || {}) {
   const goalkeepers = goalkeeperMonsters();
-  if (id && MONSTER_BY_ID[id] && isGoalkeeper(id)) return id;
-  return goalkeepers[0]?.id || "";
+  if (id && collection[id] > 0 && MONSTER_BY_ID[id] && isGoalkeeper(id)) return id;
+  return goalkeepers.find((monster) => collection[monster.id] > 0)?.id || "";
 }
 
 function sanitizeCollection(collection = {}) {
@@ -419,6 +579,15 @@ function sanitizeCollection(collection = {}) {
     Object.entries(collection)
       .filter(([id]) => MONSTER_BY_ID[id])
       .map(([id, count]) => [id, Math.max(0, Number(count) || 0)])
+  );
+}
+
+function sanitizeWishlist(wishlist = {}) {
+  if (!wishlist || typeof wishlist !== "object" || Array.isArray(wishlist)) return {};
+  return Object.fromEntries(
+    Object.entries(wishlist)
+      .filter(([id, wanted]) => MONSTER_BY_ID[id] && Boolean(wanted))
+      .map(([id]) => [id, true])
   );
 }
 
@@ -664,6 +833,66 @@ function canUseServerSave() {
   return window.location.protocol === "http:" || window.location.protocol === "https:";
 }
 
+function handlePaymentReturnNotice() {
+  const params = new URLSearchParams(window.location.search);
+  const result = params.get("mp_result");
+  if (!result) return;
+  const merreis = Math.max(0, Math.floor(Number(params.get("mp_merreis"))) || 0);
+  if (result === "approved") {
+    state.shopMessage = merreis
+      ? `Pagamento aprovado: +${formatNumber(merreis)} Merreis.`
+      : "Pagamento aprovado. Seus Merreis foram creditados.";
+  } else if (result === "pending") {
+    state.shopMessage = "Pagamento pendente. Os Merreis caem quando o Mercado Pago aprovar.";
+  } else if (result === "error") {
+    state.shopMessage = "Nao foi possivel validar o pagamento agora. O webhook ainda pode creditar automaticamente.";
+  } else {
+    state.shopMessage = "Pagamento nao aprovado. Nenhum Merreis foi creditado.";
+  }
+  params.delete("mp_result");
+  params.delete("mp_order");
+  params.delete("mp_merreis");
+  params.delete("mp_payment");
+  params.delete("mp_message");
+  const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}${window.location.hash}`;
+  window.history.replaceState({}, "", next);
+}
+
+async function loadShopPaymentConfig() {
+  if (!canUseServerSave()) {
+    state.shopPayments = {
+      checked: true,
+      configured: false,
+      message: "Abra pelo servidor para comprar Merreis com Mercado Pago.",
+      checkoutPending: false
+    };
+    renderShop();
+    return;
+  }
+  try {
+    const response = await fetch(SERVER_SHOP_CONFIG_ENDPOINT, {
+      credentials: "same-origin",
+      cache: "no-store"
+    });
+    const payload = await response.json().catch(() => ({}));
+    const mercadoPago = payload.mercadoPago || {};
+    state.shopPayments = {
+      checked: true,
+      configured: Boolean(response.ok && mercadoPago.configured),
+      message: mercadoPago.message || "Compra de Merreis indisponivel.",
+      checkoutPending: false
+    };
+  } catch (error) {
+    state.shopPayments = {
+      checked: true,
+      configured: false,
+      message: "Nao foi possivel checar Mercado Pago.",
+      checkoutPending: false
+    };
+  }
+  renderShop();
+}
+
 function hasOnlineProfile() {
   return Boolean(canUseServerSave() && state.server.enabled && state.server.profile);
 }
@@ -829,6 +1058,9 @@ async function postServerMutation(endpoint, body, statusLabel) {
     state.save = normalizeSave(payload.save);
     persistLocalSave();
   }
+  if (payload.friends || payload.incomingInvites || payload.outgoingInvites || payload.trades) {
+    applySocialPayload(payload);
+  }
   if (!response.ok) {
     setServerStatus("online", "Salvo");
     throw new Error(payload.error || "Operacao recusada pelo servidor.");
@@ -839,6 +1071,52 @@ async function postServerMutation(endpoint, body, statusLabel) {
   state.server.localChangedWhileLoading = false;
   setServerStatus("online", "Salvo");
   return payload;
+}
+
+function applySocialPayload(payload = {}) {
+  state.social.friends = Array.isArray(payload.friends) ? payload.friends : state.social.friends;
+  state.social.incomingInvites = Array.isArray(payload.incomingInvites) ? payload.incomingInvites : state.social.incomingInvites;
+  state.social.outgoingInvites = Array.isArray(payload.outgoingInvites) ? payload.outgoingInvites : state.social.outgoingInvites;
+  state.social.messages = Array.isArray(payload.messages) ? payload.messages : state.social.messages;
+  state.social.trades = Array.isArray(payload.trades) ? payload.trades : state.social.trades;
+  state.social.loadedAt = Date.now();
+  state.social.loading = false;
+  state.social.error = "";
+  if (!state.social.selectedFriendId && state.social.friends[0]) state.social.selectedFriendId = state.social.friends[0].playerId;
+  if (!state.social.tradeFriendId && state.social.friends[0]) state.social.tradeFriendId = state.social.friends[0].playerId;
+}
+
+async function refreshSocial(options = {}) {
+  if (!hasOnlineProfile()) return;
+  if (state.social.loading) return;
+  const freshEnough = Date.now() - state.social.loadedAt < 5000;
+  if (!options.force && freshEnough) return;
+  state.social.loading = true;
+  state.social.error = "";
+  if (state.currentTab === "friends" || state.currentTab === "trade") {
+    renderFriends();
+    renderTrade();
+  }
+  try {
+    const response = await fetch(SERVER_SOCIAL_ENDPOINT, {
+      method: "GET",
+      credentials: "same-origin"
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.error || "Social indisponivel.");
+    if (payload.save) {
+      state.save = normalizeSave(payload.save);
+      persistLocalSave();
+    }
+    applySocialPayload(payload);
+  } catch (error) {
+    state.social.error = error.message || "Social indisponivel.";
+    state.social.loading = false;
+  }
+  if (state.currentTab === "friends" || state.currentTab === "trade") {
+    renderFriends();
+    renderTrade();
+  }
 }
 
 function setServerStatus(status, message) {
@@ -855,6 +1133,29 @@ function updateServerStatus() {
   if (pill) pill.dataset.serverState = state.server.status;
   refreshWalletInfoContent();
   renderEntryGate();
+}
+
+function startMatchmakingSearch(type, label) {
+  state.matchmaking = {
+    active: true,
+    type,
+    label,
+    startedAt: Date.now()
+  };
+  setServerStatus("syncing", "Procurando");
+  renderCompetitive();
+}
+
+function finishMatchmakingSearch() {
+  state.matchmaking = { active: false, type: "", label: "", startedAt: 0 };
+  renderCompetitive();
+}
+
+function matchmakingLogText(matchmaking, fallback = "bot") {
+  const waitSeconds = Math.round((Number(matchmaking?.waitMs) || 0) / 1000);
+  if (matchmaking?.source === "player") return `Pareado com jogador real em ${waitSeconds}s.`;
+  if (matchmaking?.source === "bot") return `Fila sem jogador em ${waitSeconds}s; bot chamado.`;
+  return fallback;
 }
 
 function onlineWebSocketUrl() {
@@ -1152,15 +1453,19 @@ function upgradeCost(monsterId) {
 }
 
 function setup() {
+  handlePaymentReturnNotice();
   setupTabs();
   setupFilters();
   setupActions();
   setupWalletInfo();
+  setupStarterOnboardingActions();
   setupEntryGateActions();
   setupProfileActions();
   setupFirebaseAuth();
   setupMusicPlayer();
   setupOnlineLobbyRealtime();
+  setupSocialRealtime();
+  loadShopPaymentConfig();
   setupServerSave();
   renderAll();
 }
@@ -1275,10 +1580,12 @@ function walletInfoDetails(kind) {
 }
 
 function switchTab(tabName) {
+  const previousTab = state.currentTab;
   state.currentTab = PLAYER_TABS.has(tabName) ? tabName : "battle";
   if (tabName === "collection") progressTutorial("collection");
   if (state.currentTab === "competitive") refreshLeaderboard({ force: true });
   if (state.currentTab === "online") refreshOnlineLobbies({ force: true });
+  if (state.currentTab === "friends" || state.currentTab === "trade") refreshSocial({ force: true });
   document.querySelectorAll(".tab-button").forEach((tab) => {
     tab.classList.toggle("is-active", tab.dataset.tab === state.currentTab);
   });
@@ -1286,6 +1593,7 @@ function switchTab(tabName) {
     view.classList.toggle("is-active", view.id === `view-${state.currentTab}`);
   });
   renderAll();
+  if (state.currentTab !== previousTab) window.scrollTo({ top: 0, left: 0, behavior: "auto" });
 }
 
 const IMAGE_BUTTON_SELECTOR = [
@@ -1314,7 +1622,6 @@ const IMAGE_BUTTON_SELECTOR = [
   ".online-lobby-list button",
   ".opening-copy button",
   ".pack-results-actions button",
-  ".viewer-close",
   ".music-controls button",
   ".profile-mode-tabs button",
   ".setup-start"
@@ -1409,6 +1716,68 @@ const BUTTON_LABEL_ART = {
   "voltar para sala": "assets/icones/botao_voltar_sala.png"
 };
 
+const GENERATED_BUTTON_FRAMES = {
+  green: "assets/generated-ui/button-frame-green.png",
+  red: "assets/generated-ui/button-frame-red.png",
+  dark: "assets/generated-ui/button-frame-dark.png",
+  paper: "assets/generated-ui/button-frame-paper.png",
+  disabled: "assets/generated-ui/button-frame-disabled.png"
+};
+
+const GENERATED_BUTTON_ICONS = {
+  accept: "assets/generated-ui/icon-accept.png",
+  battle: "assets/generated-ui/icon-battle.png",
+  book: "assets/generated-ui/icon-book.png",
+  cards: "assets/generated-ui/icon-cards.png",
+  check: "assets/generated-ui/icon-check.png",
+  close: "assets/generated-ui/icon-close.png",
+  copy: "assets/generated-ui/icon-copy.png",
+  decline: "assets/generated-ui/icon-decline.png",
+  dribble: "assets/generated-ui/icon-battle.png",
+  edit: "assets/generated-ui/icon-edit.png",
+  exit: "assets/generated-ui/icon-exit.png",
+  field: "assets/generated-ui/icon-field.png",
+  flip: "assets/generated-ui/icon-flip.png",
+  friends: "assets/generated-ui/icon-friends.png",
+  gift: "assets/generated-ui/icon-gift.png",
+  hand: "assets/generated-ui/icon-hand.png",
+  keeper: "assets/generated-ui/icon-field.png",
+  login: "assets/generated-ui/icon-login.png",
+  menu: "assets/generated-ui/icon-menu.png",
+  missions: "assets/generated-ui/icon-missions.png",
+  move: "assets/generated-ui/icon-field.png",
+  next: "assets/generated-ui/icon-next.png",
+  online: "assets/generated-ui/icon-online.png",
+  pack: "assets/generated-ui/icon-pack.png",
+  pass: "assets/generated-ui/icon-send.png",
+  play: "assets/generated-ui/icon-play.png",
+  plus: "assets/generated-ui/icon-plus.png",
+  pressure: "assets/generated-ui/icon-battle.png",
+  ready: "assets/generated-ui/icon-ready.png",
+  refresh: "assets/generated-ui/icon-refresh.png",
+  rematch: "assets/generated-ui/icon-rematch.png",
+  reset: "assets/generated-ui/icon-reset.png",
+  retreat: "assets/generated-ui/icon-exit.png",
+  send: "assets/generated-ui/icon-send.png",
+  shop: "assets/generated-ui/icon-shop.png",
+  shot: "assets/generated-ui/icon-send.png",
+  star: "assets/generated-ui/icon-star.png",
+  swap: "assets/generated-ui/icon-trade.png",
+  trade: "assets/generated-ui/icon-trade.png",
+  trophy: "assets/generated-ui/icon-trophy.png",
+  upgrade: "assets/generated-ui/icon-upgrade.png",
+  versus: "assets/generated-ui/icon-versus.png",
+  wallet: "assets/generated-ui/icon-wallet.png"
+};
+
+function generatedButtonFrameAsset(variant) {
+  return GENERATED_BUTTON_FRAMES[variant] || GENERATED_BUTTON_FRAMES.green;
+}
+
+function generatedButtonIconAsset(icon) {
+  return GENERATED_BUTTON_ICONS[icon] || "";
+}
+
 function escapeSvgText(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -1425,6 +1794,7 @@ function buttonImageLabel(button) {
 
 function buttonImageVariant(button) {
   if (button.disabled || button.classList.contains("is-tutorial-locked")) return "disabled";
+  if (button.matches(".viewer-close")) return "red";
   if (button.classList.contains("is-active") || button.closest(".slot-picker") && button.classList.contains("is-active")) return "dark";
   if (button.matches(".ghost-button, .secondary-button, .online-code-form button")) return "paper";
   if (button.matches("[data-result-action='battle-menu'], [data-result-action='online-leave']")) return "red";
@@ -1455,6 +1825,7 @@ function normalizedButtonLabel(label) {
 
 function buttonImageAsset(button, label) {
   const normalizedLabel = normalizedButtonLabel(label);
+  if (button.matches(".viewer-close")) return "";
   if (button.dataset.action && COMBAT_BUTTON_ART[button.dataset.action]) {
     return COMBAT_BUTTON_ART[button.dataset.action];
   }
@@ -1473,7 +1844,8 @@ function buttonImageAsset(button, label) {
   if (button.dataset.joinLobby) {
     return normalizedLabel.includes("entrar") ? COMBAT_BUTTON_ART.enter : "";
   }
-  if (button.dataset.team || button.dataset.goalkeeper) return COMBAT_BUTTON_ART.team;
+  if (button.dataset.team && !/^(por no slot|no trio)/.test(normalizedLabel)) return COMBAT_BUTTON_ART.team;
+  if (button.dataset.goalkeeper) return COMBAT_BUTTON_ART.team;
   if (button.dataset.claim || button.dataset.tutorialReward) {
     if (BUTTON_LABEL_ART[normalizedLabel]) return BUTTON_LABEL_ART[normalizedLabel];
     return normalizedLabel.includes("resgatad") ? COMBAT_BUTTON_ART.claimed : COMBAT_BUTTON_ART.claim;
@@ -1545,6 +1917,7 @@ function buttonImageIcon(button, label) {
     Loja: "shop",
     Missoes: "missions"
   }[label] || "";
+  if (button.closest(".slot-picker")) return "cards";
   if (button.id === "new-battle-button" || button.dataset.startBattle !== undefined) return "battle";
   if (button.id === "ranked-button") return "trophy";
   if (button.id === "create-lobby-button") return "online";
@@ -1566,9 +1939,17 @@ function buttonImageIcon(button, label) {
   if (button.dataset.team || button.dataset.goalkeeper) return "plus";
   if (button.dataset.upgrade) return "upgrade";
   if (button.dataset.profileMode) return normalizedLabel.includes("criar") ? "plus" : "login";
+  if (button.dataset.friendAccept || button.dataset.tradeAccept) return "accept";
+  if (button.dataset.friendDecline || button.dataset.tradeDecline) return "decline";
+  if (button.dataset.friendMessage !== undefined) return "send";
   if (normalizedLabel.includes("entrar")) return "login";
   if (normalizedLabel.includes("criar")) return "plus";
   if (normalizedLabel.includes("abrir")) return "pack";
+  if (normalizedLabel.includes("aceitar")) return "accept";
+  if (normalizedLabel.includes("recusar") || normalizedLabel.includes("cancelar")) return "decline";
+  if (normalizedLabel.includes("enviar")) return "send";
+  if (normalizedLabel.includes("amigo")) return "friends";
+  if (normalizedLabel.includes("trocar")) return "trade";
   if (normalizedLabel.includes("salvar") || normalizedLabel.includes("adicionar")) return "check";
   if (normalizedLabel.includes("continuar") || normalizedLabel.includes("ir")) return "next";
   return "";
@@ -1781,26 +2162,42 @@ function imageButtonUrl(label, variant, icon = "") {
 function decorateImageButtons(root = document) {
   if (!root) return;
   root.querySelectorAll(IMAGE_BUTTON_SELECTOR).forEach((button) => {
+    if (button.classList.contains("viewer-close")) {
+      button.classList.remove("image-button");
+      button.classList.remove("combat-art-button", "combat-start-button", "generated-text-button", "has-button-icon");
+      button.style.removeProperty("--button-min-width");
+      button.style.removeProperty("--button-art");
+      button.style.removeProperty("--button-icon-art");
+      button.dataset.imageButtonKey = "";
+      return;
+    }
     const label = buttonImageLabel(button);
     if (!label || button.childElementCount > 0 || button.classList.contains("art-view-button")) {
       button.classList.remove("image-button");
-      button.classList.remove("combat-art-button", "combat-start-button");
+      button.classList.remove("combat-art-button", "combat-start-button", "generated-text-button", "has-button-icon");
+      button.style.removeProperty("--button-min-width");
       button.style.removeProperty("--button-art");
+      button.style.removeProperty("--button-icon-art");
       button.dataset.imageButtonKey = "";
       return;
     }
     const variant = buttonImageVariant(button);
     const asset = buttonImageAsset(button, label);
     const icon = asset ? "" : buttonImageIcon(button, label);
-    const key = `${variant}:${asset || icon}:${label}:${button.disabled ? "off" : "on"}`;
+    const frame = asset ? "" : generatedButtonFrameAsset(variant);
+    const iconAsset = asset ? "" : generatedButtonIconAsset(icon);
+    const key = `${variant}:${asset || frame}:${iconAsset}:${label}:${button.disabled ? "off" : "on"}`;
     if (button.dataset.imageButtonKey === key) return;
     button.dataset.imageButtonKey = key;
     button.classList.add("image-button");
     button.classList.toggle("combat-art-button", Boolean(asset));
+    button.classList.toggle("generated-text-button", !asset);
     button.classList.toggle("combat-start-button", asset === COMBAT_BUTTON_ART.start);
-    button.classList.toggle("has-button-icon", Boolean(icon));
-    button.style.setProperty("--button-min-width", `${asset ? 120 : Math.min(icon ? 156 : 220, Math.max(icon ? 118 : 72, label.length * (icon ? 9 : 7) + (icon ? 58 : 36)))}px`);
-    button.style.setProperty("--button-art", asset ? imageAssetUrl(asset) : imageButtonUrl(label, variant, icon));
+    button.classList.toggle("has-button-icon", Boolean(iconAsset));
+    button.style.setProperty("--button-min-width", `${asset ? 132 : Math.min(iconAsset ? 188 : 250, Math.max(iconAsset ? 140 : 92, label.length * (iconAsset ? 9 : 8) + (iconAsset ? 74 : 44)))}px`);
+    button.style.setProperty("--button-art", imageAssetUrl(asset || frame));
+    if (iconAsset) button.style.setProperty("--button-icon-art", imageAssetUrl(iconAsset));
+    else button.style.removeProperty("--button-icon-art");
   });
 }
 
@@ -1809,6 +2206,13 @@ function setupOnlineLobbyRealtime() {
     if (state.server.enabled && state.online.socketStatus !== "online") connectOnlineSocket();
     if (state.currentTab === "online" && state.online.socketStatus !== "online") refreshOnlineLobbies();
   }, 10000);
+}
+
+function setupSocialRealtime() {
+  window.setInterval(() => {
+    if (!hasOnlineProfile()) return;
+    if (state.currentTab === "friends" || state.currentTab === "trade") refreshSocial();
+  }, 6000);
 }
 
 function setupFilters() {
@@ -1874,7 +2278,7 @@ function setupActions() {
   });
   document.getElementById("reveal-all-button").addEventListener("click", revealAllPulls);
   document.getElementById("pack-results").addEventListener("click", handlePackResultsClick);
-  document.getElementById("trade-button").addEventListener("click", doTrade);
+  document.getElementById("trade-button").addEventListener("click", createFriendTrade);
   document.getElementById("reset-save-button").addEventListener("click", resetSave);
   document.getElementById("ranked-button").addEventListener("click", () => runRankedMatch("ranked"));
   document.getElementById("create-lobby-button").addEventListener("click", createOnlineLobby);
@@ -1889,19 +2293,24 @@ function setupActions() {
   document.getElementById("tutorial-result-popup").addEventListener("click", handleTutorialControls);
 
   document.getElementById("friends-grid").addEventListener("click", (event) => {
-    const giftButton = event.target.closest("button[data-gift]");
-    const challengeButton = event.target.closest("button[data-challenge]");
-    if (giftButton && !giftButton.disabled) sendFriendGift(giftButton.dataset.gift);
-    if (challengeButton) challengeFriend(challengeButton.dataset.challenge);
+    handleFriendsClick(event);
+  });
+  document.getElementById("friends-grid").addEventListener("submit", (event) => {
+    handleFriendsSubmit(event);
   });
 
   document.getElementById("trade-offer").addEventListener("change", (event) => {
-    state.selectedTrade.offer = event.target.value;
+    updateTradeDraft("offerIds", selectedValues(event.target));
   });
 
   document.getElementById("trade-wish").addEventListener("change", (event) => {
-    state.selectedTrade.wish = event.target.value;
+    updateTradeDraft("requestIds", selectedValues(event.target));
   });
+  document.getElementById("trade-friend")?.addEventListener("change", (event) => {
+    state.social.tradeFriendId = event.target.value;
+    renderTrade();
+  });
+  document.querySelector(".trade-board")?.addEventListener("click", handleTradeBoardClick);
 
   if (ENABLE_PLAYER_EDIT) setupEditActions();
 
@@ -2846,6 +3255,26 @@ function setupMusicPlayer() {
     document.getElementById("music-track-name").textContent = "Musica indisponivel";
     syncMusicPlayer();
   });
+  requestMusicAutoplay();
+}
+
+function requestMusicAutoplay() {
+  playMusic({ fallbackToGesture: true });
+}
+
+function armMusicAutoplay() {
+  if (state.music.autoplayArmed) return;
+  state.music.autoplayArmed = true;
+  const resume = () => {
+    state.music.autoplayArmed = false;
+    window.removeEventListener("pointerdown", resume, true);
+    window.removeEventListener("keydown", resume, true);
+    window.removeEventListener("touchstart", resume, true);
+    playMusic();
+  };
+  window.addEventListener("pointerdown", resume, { once: true, capture: true });
+  window.addEventListener("keydown", resume, { once: true, capture: true });
+  window.addEventListener("touchstart", resume, { once: true, capture: true });
 }
 
 function musicTrackSrc(track) {
@@ -2880,11 +3309,12 @@ function toggleMusicPlayback() {
   audio.pause();
 }
 
-function playMusic() {
+function playMusic(options = {}) {
   const audio = state.music.audio;
   if (!audio || !MUSIC_TRACKS.length) return;
   audio.play().catch(() => {
     state.music.isPlaying = false;
+    if (options.fallbackToGesture) armMusicAutoplay();
     syncMusicPlayer();
   });
 }
@@ -2908,7 +3338,7 @@ function syncMusicPlayer() {
 function setupHolographicArtMotion() {
   document.addEventListener("pointermove", (event) => {
     const art = event.target.closest?.("[data-holo-art]");
-    if (!art || art.closest("[data-viewer-tilt]")) return;
+    if (!art || art.closest("[data-viewer-tilt], .pull-card")) return;
     const rect = art.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
     const x = clamp((event.clientX - rect.left) / rect.width, 0, 1);
@@ -2918,7 +3348,7 @@ function setupHolographicArtMotion() {
 
   document.addEventListener("pointerout", (event) => {
     const art = event.target.closest?.("[data-holo-art]");
-    if (!art || art.closest("[data-viewer-tilt]")) return;
+    if (!art || art.closest("[data-viewer-tilt], .pull-card")) return;
     if (event.relatedTarget && art.contains(event.relatedTarget)) return;
     resetHolographicArt(art);
   });
@@ -2982,11 +3412,23 @@ function setupEditActions() {
 function handleTazzoViewerClick(event) {
   const closeButton = event.target.closest("[data-close-tazzo-viewer]");
   const flipButton = event.target.closest("[data-flip-tazzo-viewer]");
+  const wishlistButton = event.target.closest("[data-viewer-wishlist]");
   const viewer = document.getElementById("tazzo-viewer");
   if (flipButton) {
     event.preventDefault();
     event.stopPropagation();
     flipTazzoViewer(flipButton);
+    return;
+  }
+
+  if (wishlistButton) {
+    event.preventDefault();
+    event.stopPropagation();
+    const monsterId = wishlistButton.dataset.viewerWishlist;
+    if (MONSTER_BY_ID[monsterId]) {
+      toggleWishlist(monsterId, { render: false });
+      syncViewerWishlistButton(wishlistButton, monsterId);
+    }
     return;
   }
 
@@ -3017,6 +3459,7 @@ function openTazzoViewer(monsterId) {
   const level = keeper ? 0 : upgradeLevel(monster.id);
   const abilityText = keeperAbilityText(monster);
   const ownedText = copies ? `${copies} copia(s) no album` : "Ainda nao obtido";
+  const wishlist = viewerWishlistState(monster.id);
   viewer.innerHTML = `
     <section class="tazzo-viewer-card${copies ? "" : " is-missing"}" role="dialog" aria-modal="true" aria-labelledby="tazzo-viewer-title">
       <button class="viewer-close" type="button" data-close-tazzo-viewer="true" aria-label="Fechar visualizacao">Fechar</button>
@@ -3029,7 +3472,13 @@ function openTazzoViewer(monsterId) {
       </div>
       <div class="viewer-info">
         <span class="eyebrow">Tazzo #${String(monster.number).padStart(2, "0")}</span>
-        <h2 id="tazzo-viewer-title">${monster.name}</h2>
+        <div class="viewer-title-row">
+          <h2 id="tazzo-viewer-title">${monster.name}</h2>
+          <button class="wishlist-button viewer-wishlist-button${wishlist.wanted ? " is-active" : ""}" type="button" data-viewer-wishlist="${monster.id}" aria-pressed="${wishlist.wanted ? "true" : "false"}" aria-label="${wishlist.label}" title="${wishlist.label}">
+            <span aria-hidden="true">&#9829;</span>
+            <span>${wishlist.text}</span>
+          </button>
+        </div>
         <div class="stat-line">
           ${typeChips(monster)}
           <span class="rarity-chip">${monster.rarity}</span>
@@ -3050,6 +3499,7 @@ function openTazzoViewer(monsterId) {
       </div>
     </section>
   `;
+  decorateImageButtons(viewer);
   viewer.classList.add("is-open");
   viewer.setAttribute("aria-hidden", "false");
   setupTazzoViewer3d(viewer);
@@ -3122,6 +3572,25 @@ function closeTazzoViewer() {
   viewer.classList.remove("is-open");
   viewer.setAttribute("aria-hidden", "true");
   viewer.innerHTML = "";
+}
+
+function viewerWishlistState(monsterId) {
+  const wanted = Boolean(state.save.wishlist?.[monsterId]);
+  return {
+    wanted,
+    label: wanted ? "Remover dos favoritos" : "Favoritar tazzo",
+    text: wanted ? "Favoritado" : "Favoritar"
+  };
+}
+
+function syncViewerWishlistButton(button, monsterId) {
+  const wishlist = viewerWishlistState(monsterId);
+  button.classList.toggle("is-active", wishlist.wanted);
+  button.setAttribute("aria-pressed", wishlist.wanted ? "true" : "false");
+  button.setAttribute("aria-label", wishlist.label);
+  button.setAttribute("title", wishlist.label);
+  const text = button.querySelector("span:last-child");
+  if (text) text.textContent = wishlist.text;
 }
 
 function smallViewerStat(label, value) {
@@ -3280,7 +3749,7 @@ function setupPlacementStatus() {
     const ok = isValidSetupPosition(pos, used);
     if (ok) used.add(`${pos.x},${pos.y}`);
     return ok;
-  });
+  }) && state.save.team.length === 3 && Boolean(state.save.goalkeeper);
   return {
     valid,
     text: valid ? "3 tazzos posicionados" : "Escolha 3 casas na zona inicial"
@@ -3605,6 +4074,7 @@ function renderAll() {
   renderTutorial();
   renderMissions();
   renderEntryGate();
+  renderStarterOnboarding();
   renderTutorialCoach();
   renderTutorialPopover();
   renderTutorialResultPopup();
@@ -3849,6 +4319,7 @@ function menuViewContext() {
     LEGENDARY_BOOST_MAX_TAZZOS,
     LEGENDARY_BOOST_MULTIPLIER,
     LEGENDARY_BOOST_MAX_MULTIPLIER,
+    hasOnlineProfile,
     formatNumber,
     clamp,
     missionPeriod,
@@ -3873,6 +4344,7 @@ function menuViewContext() {
     upgradeCost,
     setTeamSlot,
     upgradeMonster,
+    toggleWishlist,
     setGoalkeeper,
     decorateImageButtons,
     currentRank,
@@ -3884,7 +4356,8 @@ function menuViewContext() {
     isCurrentTutorialStep,
     activeTournamentBattle,
     activeRankedBattle,
-    claimMission
+    claimMission,
+    tradeValue
   };
 }
 
@@ -3959,7 +4432,7 @@ function revealPullBatch(indexes) {
       });
       updatePullCards(readyIndexes);
     }, 360);
-  }, 260);
+  }, 860);
 }
 
 function premiumRevealLabel(rarity) {
@@ -4289,11 +4762,11 @@ function saveEditedTazzo(event) {
 
   if (isGoalkeeper(edited)) {
     delete state.save.upgrades[edited.id];
-    state.save.team = normalizeTeam(state.save.team);
+    state.save.team = normalizeTeam(state.save.team, state.save.collection);
     state.save.goalkeeper = edited.id;
   } else {
-    state.save.team = normalizeTeam(state.save.team);
-    if (state.save.goalkeeper === edited.id) state.save.goalkeeper = normalizeGoalkeeper("");
+    state.save.team = normalizeTeam(state.save.team, state.save.collection);
+    if (state.save.goalkeeper === edited.id) state.save.goalkeeper = normalizeGoalkeeper("", state.save.collection);
   }
 
   if (state.battle && !state.battle.over) {
@@ -4325,39 +4798,7 @@ function renderTrade() {
 }
 
 function renderFriends() {
-  const grid = document.getElementById("friends-grid");
-  const todayGifts = state.save.friendGifts[TODAY_KEY] || {};
-  grid.innerHTML = FRIENDS.map((friend) => {
-    const ownedFriendHas = friend.collection.filter((id) => state.save.collection[id]).length;
-    const canOffer = friend.wants.some((id) => (state.save.collection[id] || 0) > 1);
-    const friendCanHelp = friend.collection.filter((id) => !state.save.collection[id]).length;
-    const giftSent = Boolean(todayGifts[friend.id]);
-    const avatar = MONSTER_BY_ID[friend.team[0]] || MONSTERS[friend.avatar - 1] || MONSTERS[0];
-    return `
-      <article class="friend-card">
-        <div class="friend-head">
-          <img src="${avatar.image}" alt="${friend.name}">
-          <div>
-            <h2>${friend.name}</h2>
-            <div class="stat-line">
-              <span>${friend.rank}</span>
-              <span>${ownedFriendHas}/${friend.collection.length} em comum</span>
-            </div>
-          </div>
-          <span class="chip">${friendCanHelp}</span>
-        </div>
-        <div class="small-list">
-          ${smallSummary("Procura", "Busca", friend.wants.map((id) => MONSTER_BY_ID[id].name).join(", "))}
-          ${smallSummary("Pode mostrar", "Album", friend.collection.slice(0, 3).map((id) => MONSTER_BY_ID[id].name).join(", "))}
-          ${smallSummary("Troca", "Match", canOffer ? "Voce tem repetido util" : "Sem repetido compativel")}
-        </div>
-        <div class="friend-actions">
-          <button type="button" data-gift="${friend.id}" ${giftSent ? "disabled" : ""}>${giftSent ? "Enviado" : "Presente"}</button>
-          <button type="button" data-challenge="${friend.id}">Desafiar</button>
-        </div>
-      </article>
-    `;
-  }).join("");
+  return menuViews().renderFriends(menuViewContext());
 }
 
 function renderOnline() {
@@ -4684,6 +5125,269 @@ function holographicChip(monster) {
   return hasHolographicArt(monster) ? `<span class="rarity-chip holo-chip">Holografico</span>` : "";
 }
 
+function starterPack() {
+  return PACKS.find((pack) => pack.id === STARTER_PACK_ID) || PACKS[0];
+}
+
+function starterCanShow() {
+  return !state.save.starterOnboardingComplete && (!canUseServerSave() || hasOnlineProfile());
+}
+
+function starterOverlayVisible() {
+  return starterCanShow() || state.starter.opening || state.starter.reveal.length > 0 || state.starter.loading || Boolean(state.starter.message);
+}
+
+function ensureStarterOnboardingRoot() {
+  let root = document.getElementById("starter-onboarding");
+  if (!root) {
+    root = document.createElement("div");
+    root.id = "starter-onboarding";
+    root.className = "starter-onboarding";
+    document.body.append(root);
+  }
+  return root;
+}
+
+function setupStarterOnboardingActions() {
+  document.addEventListener("click", (event) => {
+    if (event.target.closest("[data-starter-open]")) {
+      openStarterOnboardingPack();
+      return;
+    }
+    if (event.target.closest("[data-starter-continue]")) {
+      finishStarterOnboardingView();
+    }
+  });
+}
+
+function renderStarterOnboarding() {
+  const root = ensureStarterOnboardingRoot();
+  if (!starterOverlayVisible()) {
+    root.hidden = true;
+    root.innerHTML = "";
+    return;
+  }
+
+  root.hidden = false;
+  if (state.starter.opening) {
+    root.innerHTML = starterOpeningTemplate();
+    return;
+  }
+  if (state.starter.reveal.length) {
+    root.innerHTML = starterResultsTemplate();
+    root.querySelector("[data-starter-continue]")?.addEventListener("click", finishStarterOnboardingView);
+    decorateImageButtons(root);
+    return;
+  }
+  root.innerHTML = starterIntroTemplate();
+  root.querySelector("[data-starter-open]")?.addEventListener("click", openStarterOnboardingPack);
+  decorateImageButtons(root);
+}
+
+function starterIntroTemplate() {
+  const pack = starterPack();
+  const loadingText = state.starter.loading ? "Abrindo..." : "Abrir salgadinho";
+  const disabled = state.starter.loading ? "disabled" : "";
+  return `
+    <section class="pack-results-overlay" role="dialog" aria-modal="true" aria-labelledby="starter-title">
+      <div class="pack-results-dialog">
+        <div class="pack-results-head">
+          <div>
+            <span class="eyebrow">Boas-vindas ao recreio</span>
+            <h2 id="starter-title">Abra seu primeiro salgadinho recheado</h2>
+          </div>
+          <div class="pack-results-actions">
+            <button class="viewer-close" type="button" data-starter-open ${disabled}>${loadingText}</button>
+          </div>
+        </div>
+        <div class="pack-results-grid">
+          <article class="pack-card">
+            <img class="pack-card-art" src="${pack.image}" alt="Pacote ${pack.name}">
+            <h2>${pack.name}</h2>
+            <p>Ele sempre vem com 1 atacante, 1 meia, 1 zagueiro, 1 goleiro ate Epico e 1 Lendario aleatorio.</p>
+            <div class="pack-meta">
+              <span class="chip">5x</span>
+              <span class="chip">Time inicial</span>
+            </div>
+          </article>
+          <article class="panel">
+            <span class="eyebrow">Sem extras escondidos</span>
+            <h2>Seu inventario comeca daqui</h2>
+            <p class="evolution-note">Depois da abertura, apenas esses cinco tazzos entram no album. O trio de campo e o goleiro ja ficam escalados para a primeira partida.</p>
+            ${state.starter.message ? `<p class="profile-message is-error">${state.starter.message}</p>` : ""}
+          </article>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function starterOpeningTemplate() {
+  const pack = starterPack();
+  const snacks = Array.from({ length: 10 }, (_, index) => `<span style="--delay:${index * 70}ms"></span>`).join("");
+  return `
+    <section class="pack-opening-overlay" role="dialog" aria-modal="true" aria-live="polite">
+      <div class="pack-opening is-auto-opening">
+        <div class="snack-pack has-image is-tearing" aria-label="Abrindo salgadinho ${pack.name}">
+          <img class="snack-pack-art snack-pack-art-closed" src="${pack.image}" alt="Pacote ${pack.name}">
+          <img class="snack-pack-art snack-pack-art-open" src="${pack.openImage || pack.image}" alt="Pacote ${pack.name} aberto">
+          <div class="snack-rain" aria-hidden="true">${snacks}</div>
+        </div>
+        <div class="opening-copy">
+          <span class="eyebrow">Primeiro salgadinho</span>
+          <h2>Abrindo ${pack.name}</h2>
+          <p>Separando seu atacante, meia, zagueiro, goleiro e Lendario.</p>
+          <div class="pack-opening-progress" aria-hidden="true"><span></span></div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function starterResultsTemplate() {
+  const pullsHtml = state.starter.reveal.map((pull, index) => renderPullCard({ ...pull, revealed: true }, index)).join("");
+  const summary = state.starter.reveal.map((pull) => {
+    const monster = MONSTER_BY_ID[pull.monsterId];
+    return monster ? `<span class="chip">${pull.roleLabel}: ${monster.name}</span>` : "";
+  }).join("");
+  return `
+    <section class="pack-results-overlay" role="dialog" aria-modal="true" aria-labelledby="starter-results-title">
+      <div class="pack-results-dialog">
+        <div class="pack-results-head">
+          <div>
+            <span class="eyebrow">Time inicial pronto</span>
+            <h2 id="starter-results-title">Tazzos do primeiro salgadinho</h2>
+          </div>
+          <div class="pack-results-actions">
+            <button class="viewer-close" type="button" data-starter-continue>Comecar</button>
+          </div>
+        </div>
+        <p class="evolution-note">Esses cinco tazzos sao todo o seu inventario inicial. O atacante, meia, zagueiro e goleiro ja foram escalados; o Lendario fica no album para voce ajustar o time quando quiser.</p>
+        <div class="pack-meta">${summary}</div>
+        <div class="pack-results-grid">${pullsHtml}</div>
+      </div>
+    </section>
+  `;
+}
+
+async function openStarterOnboardingPack() {
+  if (state.starter.loading || state.starter.opening || state.starter.reveal.length || !starterCanShow()) return;
+  state.starter.loading = true;
+  state.starter.message = "";
+  renderStarterOnboarding();
+
+  try {
+    const pulls = hasOnlineProfile()
+      ? await openStarterPackOnServer()
+      : openStarterPackLocally();
+    if (!pulls.length && state.save.starterOnboardingComplete) {
+      state.starter.reveal = [];
+      state.starter.opening = false;
+      state.starter.message = "";
+      renderAll();
+      return;
+    }
+    state.starter.reveal = pulls.map((pull) => ({ ...pull, revealed: true }));
+    state.starter.opening = true;
+    window.setTimeout(() => {
+      state.starter.opening = false;
+      renderAll();
+    }, PACK_OPENING_DURATION_MS);
+    renderAll();
+  } catch (error) {
+    state.starter.loading = false;
+    if (state.save.starterOnboardingComplete) {
+      state.starter.message = "";
+      renderAll();
+      return;
+    }
+    state.starter.message = error.message || "Nao foi possivel abrir o primeiro salgadinho.";
+    renderStarterOnboarding();
+  } finally {
+    state.starter.loading = false;
+  }
+}
+
+async function openStarterPackOnServer() {
+  if (state.server.saveTimer) await pushServerSave();
+  setServerStatus("syncing", "Starter");
+  const response = await fetch(SERVER_STARTER_PACK_ENDPOINT, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: "{}"
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (payload.save) {
+      state.save = normalizeSave(payload.save);
+      persistLocalSave();
+    }
+    throw new Error(payload.error || "Nao foi possivel abrir o primeiro salgadinho.");
+  }
+  state.server.playerId = payload.playerId || state.server.playerId;
+  state.save = normalizeSave(payload.save);
+  persistLocalSave();
+  state.server.localChangedWhileLoading = false;
+  setServerStatus("online", "Salvo");
+  return payload.pulls || [];
+}
+
+function openStarterPackLocally() {
+  const pulls = applyStarterPackToSave(state.save);
+  saveGame();
+  return pulls;
+}
+
+function applyStarterPackToSave(save) {
+  const starter = drawStarterPackPulls(save.collection || {});
+  const collection = { ...(save.collection || {}) };
+  starter.pulls.forEach((pull) => {
+    collection[pull.monsterId] = (collection[pull.monsterId] || 0) + 1;
+  });
+  save.collection = collection;
+  save.team = starter.team;
+  save.goalkeeper = starter.goalkeeper;
+  save.starterOnboardingComplete = true;
+  save.starterPackOpenedAt = new Date().toISOString();
+  save.starterPackCards = starter.pulls.map((pull) => pull.monsterId);
+  return starter.pulls;
+}
+
+function drawStarterPackPulls(collection = {}) {
+  const used = new Set(Object.entries(collection).filter(([, count]) => Number(count) > 0).map(([id]) => id));
+  const packUsed = new Set();
+  const epicOrLower = (monster) => rarityIndex(monster.rarity) <= rarityIndex("Epico");
+  const pick = (label, test) => {
+    const pool = MONSTERS.filter((monster) => test(monster) && !packUsed.has(monster.id));
+    const freshPool = pool.filter((monster) => !used.has(monster.id));
+    const safePool = freshPool.length ? freshPool : pool;
+    const monster = safePool[Math.floor(Math.random() * safePool.length)];
+    packUsed.add(monster.id);
+    return { monster, pull: { monsterId: monster.id, roleLabel: label, isNew: !collection[monster.id], fragments: 0, revealed: true } };
+  };
+
+  const attacker = pick("Atacante", (monster) => !isGoalkeeper(monster) && epicOrLower(monster) && STARTER_FIELD_SLOTS[0].test(monster));
+  const midfielder = pick("Meia", (monster) => !isGoalkeeper(monster) && epicOrLower(monster) && STARTER_FIELD_SLOTS[1].test(monster));
+  const defender = pick("Zagueiro", (monster) => !isGoalkeeper(monster) && epicOrLower(monster) && STARTER_FIELD_SLOTS[2].test(monster));
+  const goalkeeper = pick("Goleiro", (monster) => isGoalkeeper(monster) && epicOrLower(monster));
+  const legendary = pick("Lendario", (monster) => monster.rarity === "Lendario");
+  return {
+    pulls: [attacker.pull, midfielder.pull, defender.pull, goalkeeper.pull, legendary.pull],
+    team: [attacker.monster.id, midfielder.monster.id, defender.monster.id],
+    goalkeeper: goalkeeper.monster.id
+  };
+}
+
+function finishStarterOnboardingView() {
+  state.starter.reveal = [];
+  state.starter.opening = false;
+  state.starter.message = "";
+  switchTab("battle");
+}
+
+window.openStarterOnboardingPack = openStarterOnboardingPack;
+
 function matchesCollectionFilters(monster) {
   const copies = state.save.collection[monster.id] || 0;
   const filter = state.collectionFilters;
@@ -4697,7 +5401,11 @@ function matchesCollectionFilters(monster) {
 }
 
 function isPackBusy() {
-  return state.packPurchasePending || Boolean(state.packOpening) || state.packReveal.some((pull) => !pull.revealed || pull.flipping);
+  return state.starter.loading
+    || state.starter.opening
+    || state.packPurchasePending
+    || Boolean(state.packOpening)
+    || state.packReveal.some((pull) => !pull.revealed || pull.flipping);
 }
 
 function clearPackOpeningTimers() {
@@ -4870,6 +5578,11 @@ function isAtLeastRarity(rarity, minRarity) {
   return rarityIndex(rarity) >= rarityIndex(minRarity);
 }
 
+function tradeValue(monsterOrId) {
+  const monster = typeof monsterOrId === "string" ? MONSTER_BY_ID[monsterOrId] : monsterOrId;
+  return TAZZO_TRADE_VALUES?.[monster?.rarity] || 0;
+}
+
 function nextPackPity(previousPity, monster) {
   return isAtLeastRarity(monster.rarity, "Lendario")
     ? 0
@@ -4964,8 +5677,12 @@ async function upgradeMonsterOnServer(monsterId) {
   }
 }
 
+function currentRankForPoints(points) {
+  return [...RANKS].reverse().find((rank) => (Number(points) || 0) >= rank.min) || RANKS[0];
+}
+
 function currentRank() {
-  return [...RANKS].reverse().find((rank) => state.save.trophies >= rank.min) || RANKS[0];
+  return currentRankForPoints(Math.max(Number(state.save.trophies) || 0, Number(state.save.rankFloor) || 0));
 }
 
 function rankedOpponentForCurrentRank() {
@@ -4975,6 +5692,41 @@ function rankedOpponentForCurrentRank() {
 
 function nextRank() {
   return RANKS.find((rank) => rank.min > state.save.trophies) || null;
+}
+
+function ensureCompetitiveRankFloor(save = state.save) {
+  const currentFloor = currentRankForPoints(Math.max(Number(save.trophies) || 0, Number(save.rankFloor) || 0)).min;
+  save.rankFloor = Math.max(0, Number(save.rankFloor) || 0, currentFloor);
+  save.trophies = Math.max(save.rankFloor, Number(save.trophies) || 0);
+  return save.rankFloor;
+}
+
+function competitiveWinBonus(streak) {
+  const safeStreak = Math.max(0, Math.floor(Number(streak)) || 0);
+  if (safeStreak >= 5) return COMPETITIVE_STREAK_BONUSES[5];
+  return COMPETITIVE_STREAK_BONUSES[safeStreak] || 0;
+}
+
+function applyCompetitivePointsLocally(outcome) {
+  const floorBefore = ensureCompetitiveRankFloor();
+  if (outcome === "win") {
+    state.save.competitiveWinStreak = Math.max(0, Math.floor(Number(state.save.competitiveWinStreak)) || 0) + 1;
+    const bonus = competitiveWinBonus(state.save.competitiveWinStreak);
+    const points = COMPETITIVE_WIN_POINTS + bonus;
+    state.save.trophies += points;
+    ensureCompetitiveRankFloor();
+    return { points, bonus, streak: state.save.competitiveWinStreak, floorProtected: false };
+  }
+  state.save.competitiveWinStreak = 0;
+  if (outcome === "draw") return { points: 0, bonus: 0, streak: 0, floorProtected: false };
+  const before = Number(state.save.trophies) || 0;
+  state.save.trophies = Math.max(floorBefore, before - COMPETITIVE_LOSS_POINTS);
+  return {
+    points: state.save.trophies - before,
+    bonus: 0,
+    streak: 0,
+    floorProtected: before - COMPETITIVE_LOSS_POINTS < floorBefore
+  };
 }
 
 function teamCost() {
@@ -5060,14 +5812,17 @@ async function runRankedMatchOnServer() {
   if (teamCost() > 10 && !isCurrentTutorialStep("ranked")) return;
 
   try {
+    startMatchmakingSearch("ranked", "Ranqueada");
     const payload = await postServerMutation(SERVER_RANKED_START_ENDPOINT, {}, "Ranqueada");
+    finishMatchmakingSearch();
     const opponent = payload.opponent;
     const rank = payload.rank;
     const match = payload.match;
     if (!opponent || !rank || !match) return;
     const battleOptions = competitiveBattleOptions("ranked");
     progressTutorial("ranked");
-    state.competitiveLog.unshift(`Ranqueada ${rank.name} iniciada contra ${opponent.name}.`);
+    const queueText = matchmakingLogText(payload.matchmaking, "bot");
+    state.competitiveLog.unshift(`Ranqueada ${rank.name} iniciada contra ${opponent.name}. ${queueText}`);
     switchTab("battle");
     newBattle({
       enemyTeam: opponent.team,
@@ -5077,11 +5832,12 @@ async function runRankedMatchOnServer() {
       matchTime: BATTLE_MODES.ranked.matchTime,
       actionTime: BATTLE_MODES.ranked.actionTime,
       playerPositions: selectedFormationPositions(),
-      ranked: { rank: rank.name, opponent: opponent.name, matchId: match.id },
-      logIntro: `Ranqueada ${rank.name}: batalha contra ${opponent.name} comecou.`,
+      ranked: { rank: rank.name, opponent: opponent.name, matchId: match.id, matchmaking: payload.matchmaking },
+      logIntro: `Ranqueada ${rank.name}: batalha contra ${opponent.name} comecou. ${queueText}`,
       ...battleOptions
     });
   } catch (error) {
+    finishMatchmakingSearch();
     renderAll();
   }
 }
@@ -5104,29 +5860,33 @@ function resolveRankedBattleLocally(outcome, reason = "") {
   state.save.activeCompetitive = null;
 
   if (outcome === "win") {
-    const trophies = 90 + Math.floor(Math.random() * 61);
-    state.save.trophies += trophies;
+    const points = applyCompetitivePointsLocally("win");
+    const merreisReward = awardRankedWinMerreis();
     state.save.rankedWins += 1;
-    state.save.merreis += 180;
-    state.battle.status = `Vitoria ranqueada! +${trophies} trofeus`;
-    state.competitiveLog.unshift(`Vitoria ranqueada${reason ? ` por ${reason}` : ""}: +${trophies} trofeus.`);
-    return { rewards: [`+${trophies} trofeus`, "+180 Merreis"] };
+    const bonusText = points.bonus ? ` (+${points.bonus} bonus de sequencia ${points.streak})` : "";
+    state.battle.status = `Vitoria ranqueada! +${points.points} pontos${bonusText}`;
+    state.competitiveLog.unshift(`Vitoria ranqueada${reason ? ` por ${reason}` : ""}: +${points.points} pontos${bonusText}.`);
+    return {
+      rewards: [
+        `+${points.points} pontos`,
+        merreisReward.amount ? `+${formatNumber(merreisReward.amount)} Merreis` : "Limite diario de Merreis ranqueados atingido"
+      ]
+    };
   }
 
   if (outcome === "draw") {
-    state.save.merreis += 80;
-    state.battle.status = "Empate ranqueado. +80 Merreis";
+    applyCompetitivePointsLocally("draw");
+    state.battle.status = "Empate ranqueado. Sem Merreis";
     state.competitiveLog.unshift(`Empate ranqueado${reason ? ` por ${reason}` : ""}.`);
-    return { rewards: ["Sem perda de trofeus", "+80 Merreis"] };
+    return { rewards: ["Sem perda de trofeus"] };
   }
 
-  const loss = 28 + Math.floor(Math.random() * 31);
-  state.save.trophies = Math.max(0, state.save.trophies - loss);
+  const points = applyCompetitivePointsLocally("loss");
   state.save.rankedLosses += 1;
-  state.save.merreis += 45;
-  state.battle.status = `Derrota ranqueada. -${loss} trofeus`;
-  state.competitiveLog.unshift(`Derrota ranqueada${reason ? ` por ${reason}` : ""}: -${loss} trofeus.`);
-  return { rewards: [`-${loss} trofeus`, "+45 Merreis"] };
+  const floorText = points.floorProtected ? " Piso de divisao segurou seus pontos." : "";
+  state.battle.status = `Derrota ranqueada. ${points.points} pontos.${floorText}`;
+  state.competitiveLog.unshift(`Derrota ranqueada${reason ? ` por ${reason}` : ""}: ${points.points} pontos.${floorText}`);
+  return { rewards: [`${points.points} pontos`] };
 }
 
 async function resolveRankedBattleOnServer(outcome, reason = "") {
@@ -5202,14 +5962,17 @@ async function runTournamentOnServer(tournamentId) {
   if (teamCost() > 10 && !tutorialReady) return;
 
   try {
+    startMatchmakingSearch("tournament", "Torneio");
     const payload = await postServerMutation(SERVER_TOURNAMENT_START_ENDPOINT, { tournamentId }, "Torneio");
+    finishMatchmakingSearch();
     const tournament = payload.tournament;
     const opponent = payload.opponent;
     const match = payload.match;
     if (!tournament || !opponent || !match) return;
     const battleOptions = competitiveBattleOptions("tournament");
     progressTutorial("tournament");
-    state.competitiveLog.unshift(`Torneio ${tournament.name} iniciado. Resolva na arena.`);
+    const queueText = matchmakingLogText(payload.matchmaking, "bot");
+    state.competitiveLog.unshift(`Torneio ${tournament.name} iniciado contra ${opponent.name}. ${queueText}`);
     switchTab("battle");
     newBattle({
       enemyTeam: opponent.team,
@@ -5221,10 +5984,12 @@ async function runTournamentOnServer(tournamentId) {
       playerPositions: selectedFormationPositions(),
       tournamentId: tournament.id,
       competitiveMatchId: match.id,
-      logIntro: `Torneio ${tournament.name}: batalha contra ${opponent.name} comecou.`,
+      matchmaking: payload.matchmaking,
+      logIntro: `Torneio ${tournament.name}: batalha contra ${opponent.name} comecou. ${queueText}`,
       ...battleOptions
     });
   } catch (error) {
+    finishMatchmakingSearch();
     renderAll();
   }
 }
@@ -5249,32 +6014,35 @@ function resolveTournamentBattleLocally(won, reason = "") {
   state.pendingTournament = null;
   state.save.activeCompetitive = null;
   if (won) {
-    const rewards = ["+70 trofeus"];
+    const points = applyCompetitivePointsLocally("win");
+    const bonusText = points.bonus ? ` (+${points.bonus} bonus de sequencia ${points.streak})` : "";
+    const rewards = [`+${points.points} pontos`];
     state.save.tournamentWins += 1;
-    state.save.trophies += 70;
     if (tournament.id === "event") {
       state.save.merreis += 100;
       grantTournamentPack();
-      state.battle.status = "Campeao do Evento! Pacotinho Recheado enviado.";
+      state.battle.status = `Campeao do Evento! +${points.points} pontos${bonusText}. Pacotinho Recheado enviado.`;
       rewards.push("+100 Merreis", "Pacotinho Recheado");
-      state.competitiveLog.unshift(`Campeao do torneio ${tournament.name}${reason ? ` por ${reason}` : ""}.`);
+      state.competitiveLog.unshift(`Campeao do torneio ${tournament.name}${reason ? ` por ${reason}` : ""}: +${points.points} pontos${bonusText}.`);
       return { rewards, packReward: true };
     } else {
       state.save.merreis += tournament.reward;
       rewards.push(`+${formatNumber(tournament.reward)} Merreis`);
       if (tournament.id === "weekly") state.save.fragments += 24;
       if (tournament.id === "weekly") rewards.push("+24 fragmentos");
-      state.battle.status = `Campeao do torneio ${tournament.name}! +${formatNumber(tournament.reward)} Merreis`;
+      state.battle.status = `Campeao do torneio ${tournament.name}! +${points.points} pontos${bonusText} e +${formatNumber(tournament.reward)} Merreis`;
     }
-    state.competitiveLog.unshift(`Campeao do torneio ${tournament.name}${reason ? ` por ${reason}` : ""}.`);
+    state.competitiveLog.unshift(`Campeao do torneio ${tournament.name}${reason ? ` por ${reason}` : ""}: +${points.points} pontos${bonusText}.`);
     return { rewards, packReward: false };
   }
 
+  const points = applyCompetitivePointsLocally("loss");
   const refund = Math.floor(tournament.entry * 0.25);
   state.save.merreis += refund;
-  state.battle.status = `Eliminado no torneio ${tournament.name}. Reembolso ${formatNumber(refund)} Merreis.`;
-  state.competitiveLog.unshift(`Eliminado no torneio ${tournament.name}${reason ? ` por ${reason}` : ""}.`);
-  return { rewards: [`+${formatNumber(refund)} Merreis reembolso`], packReward: false };
+  const floorText = points.floorProtected ? " Piso de divisao segurou seus pontos." : "";
+  state.battle.status = `Eliminado no torneio ${tournament.name}. ${points.points} pontos. Reembolso ${formatNumber(refund)} Merreis.${floorText}`;
+  state.competitiveLog.unshift(`Eliminado no torneio ${tournament.name}${reason ? ` por ${reason}` : ""}: ${points.points} pontos.${floorText}`);
+  return { rewards: [`${points.points} pontos`, `+${formatNumber(refund)} Merreis reembolso`], packReward: false };
 }
 
 async function resolveTournamentBattleOnServer(won, reason = "") {
@@ -5339,11 +6107,7 @@ function buyShopItemLocally(itemId) {
   if (!item) return;
 
   if (item.type === "merreis") {
-    const amount = Math.max(0, Math.floor(Number(item.merreis)) || 0);
-    if (!amount) return;
-    state.save.merreis += amount;
-    state.shopMessage = `${item.name} comprado: +${formatNumber(amount)} Merreis.`;
-    saveGame();
+    state.shopMessage = "Compra de Merreis precisa do checkout seguro no servidor.";
     renderAll();
     return;
   }
@@ -5367,11 +6131,21 @@ function buyShopItemLocally(itemId) {
 
 async function buyShopItemOnServer(itemId) {
   try {
-    const payload = await postServerMutation(SERVER_SHOP_ENDPOINT, { itemId }, "Comprando");
+    const item = SHOP_ITEMS.find((entry) => entry.id === itemId);
+    const clientRequestId = window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+    if (item?.type === "merreis") state.shopPayments.checkoutPending = true;
+    const payload = await postServerMutation(SERVER_SHOP_ENDPOINT, { itemId, clientRequestId }, "Comprando");
     if (payload?.message) state.shopMessage = payload.message;
+    if (payload?.checkout && payload.checkoutUrl) {
+      window.location.assign(payload.checkoutUrl);
+      return;
+    }
     renderAll();
   } catch (error) {
+    state.shopMessage = error.message || "Erro na loja.";
     renderAll();
+  } finally {
+    state.shopPayments.checkoutPending = false;
   }
 }
 
@@ -5383,7 +6157,7 @@ function setTeamSlot(monsterId) {
     team[currentIndex] = team[state.selectedSlot];
   }
   team[state.selectedSlot] = monsterId;
-  state.save.team = normalizeTeam(team);
+  state.save.team = normalizeTeam(team, state.save.collection);
   progressTutorial("team");
   saveGame();
   if (activeLockedBattle()) {
@@ -5397,6 +6171,19 @@ function setTeamSlot(monsterId) {
     state.battleSceneOpen = false;
   }
   renderAll();
+}
+
+function toggleWishlist(monsterId, options = {}) {
+  if (!MONSTER_BY_ID[monsterId]) return;
+  const shouldRender = options.render !== false;
+  state.save.wishlist = sanitizeWishlist(state.save.wishlist);
+  if (state.save.wishlist[monsterId]) {
+    delete state.save.wishlist[monsterId];
+  } else {
+    state.save.wishlist[monsterId] = true;
+  }
+  saveGame();
+  if (shouldRender) renderAll();
 }
 
 function setGoalkeeper(monsterId) {
@@ -5414,6 +6201,143 @@ function setGoalkeeper(monsterId) {
     clearMatchTimer();
     state.battle = null;
     state.battleSceneOpen = false;
+  }
+  renderAll();
+}
+
+function selectedValues(select) {
+  return Array.from(select?.selectedOptions || []).map((option) => option.value).filter(Boolean);
+}
+
+function updateTradeDraft(field, ids) {
+  state.social.tradeDraft[field] = ids.filter((id) => MONSTER_BY_ID[id]).slice(0, 3);
+  renderTrade();
+}
+
+function handleFriendsClick(event) {
+  const selectButton = event.target.closest("button[data-friend-select]");
+  const acceptButton = event.target.closest("button[data-friend-accept]");
+  const declineButton = event.target.closest("button[data-friend-decline]");
+  if (selectButton) {
+    state.social.selectedFriendId = selectButton.dataset.friendSelect;
+    state.social.tradeFriendId = selectButton.dataset.friendSelect;
+    renderFriends();
+    return;
+  }
+  if (acceptButton && !acceptButton.disabled) {
+    respondFriendInvite(acceptButton.dataset.friendAccept, true);
+    return;
+  }
+  if (declineButton && !declineButton.disabled) {
+    respondFriendInvite(declineButton.dataset.friendDecline, false);
+  }
+}
+
+function handleFriendsSubmit(event) {
+  if (event.target.id === "friend-add-form") {
+    event.preventDefault();
+    const input = document.getElementById("friend-name-input");
+    state.social.inviteName = input?.value || "";
+    sendFriendInvite();
+    return;
+  }
+  if (event.target.id === "friend-chat-form") {
+    event.preventDefault();
+    const input = document.getElementById("friend-chat-input");
+    state.social.draftMessage = input?.value || "";
+    sendFriendChat();
+  }
+}
+
+function handleTradeBoardClick(event) {
+  const acceptButton = event.target.closest("button[data-trade-accept]");
+  const declineButton = event.target.closest("button[data-trade-decline]");
+  if (acceptButton && !acceptButton.disabled) {
+    respondFriendTrade(acceptButton.dataset.tradeAccept, true);
+    return;
+  }
+  if (declineButton && !declineButton.disabled) {
+    respondFriendTrade(declineButton.dataset.tradeDecline, false);
+  }
+}
+
+async function sendFriendInvite() {
+  if (!requireOnlineProfile("Entre em uma conta para adicionar amigos.")) return;
+  try {
+    await postServerMutation(SERVER_FRIEND_INVITE_ENDPOINT, {
+      name: state.social.inviteName
+    }, "Convidando");
+    state.social.message = "Convite enviado.";
+    state.social.inviteName = "";
+  } catch (error) {
+    state.social.error = error.message || "Nao foi possivel enviar o convite.";
+  }
+  renderAll();
+}
+
+async function respondFriendInvite(requestId, accept) {
+  if (!requireOnlineProfile()) return;
+  try {
+    await postServerMutation(SERVER_FRIEND_RESPOND_ENDPOINT, { requestId, accept }, accept ? "Aceitando" : "Recusando");
+    state.social.message = accept ? "Convite aceito." : "Convite recusado.";
+  } catch (error) {
+    state.social.error = error.message || "Nao foi possivel responder o convite.";
+  }
+  renderAll();
+}
+
+async function sendFriendChat() {
+  if (!requireOnlineProfile()) return;
+  const friendPlayerId = state.social.selectedFriendId;
+  if (!friendPlayerId || !state.social.draftMessage.trim()) return;
+  try {
+    await postServerMutation(SERVER_FRIEND_MESSAGE_ENDPOINT, {
+      friendPlayerId,
+      message: state.social.draftMessage
+    }, "Enviando");
+    state.social.draftMessage = "";
+  } catch (error) {
+    state.social.error = error.message || "Mensagem nao enviada.";
+  }
+  renderAll();
+}
+
+async function createFriendTrade() {
+  if (!requireOnlineProfile("Entre em uma conta para trocar com amigos.")) return;
+  const friendPlayerId = state.social.tradeFriendId;
+  const offeredIds = state.social.tradeDraft.offerIds;
+  const requestedIds = state.social.tradeDraft.requestIds;
+  if (!friendPlayerId || !offeredIds.length || !requestedIds.length) return;
+  const offerValue = offeredIds.reduce((sum, id) => sum + tradeValue(id), 0);
+  const requestValue = requestedIds.reduce((sum, id) => sum + tradeValue(id), 0);
+  if (offerValue !== requestValue) {
+    state.social.error = "Os valores da proposta precisam ser iguais.";
+    renderTrade();
+    return;
+  }
+  try {
+    await postServerMutation(SERVER_SOCIAL_TRADE_CREATE_ENDPOINT, {
+      friendPlayerId,
+      offeredIds,
+      requestedIds
+    }, "Propondo");
+    state.social.tradeDraft = { offerIds: [], requestIds: [] };
+    state.social.message = "Proposta enviada.";
+    progressTutorial("trade");
+  } catch (error) {
+    state.social.error = error.message || "Proposta nao enviada.";
+  }
+  renderAll();
+}
+
+async function respondFriendTrade(tradeId, accept) {
+  if (!requireOnlineProfile()) return;
+  try {
+    await postServerMutation(SERVER_SOCIAL_TRADE_RESPOND_ENDPOINT, { tradeId, accept }, accept ? "Trocando" : "Recusando");
+    state.social.message = accept ? "Troca concluida." : "Proposta recusada.";
+    if (accept) progressTutorial("trade");
+  } catch (error) {
+    state.social.error = error.message || "Nao foi possivel responder a proposta.";
   }
   renderAll();
 }

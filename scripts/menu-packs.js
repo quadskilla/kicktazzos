@@ -131,6 +131,14 @@
     }[rarity] || "";
   }
 
+  function escapeAttribute(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
   function packResultsRenderKey(ctx) {
     if (!ctx.state.packReveal.length) return "empty";
     return `results:${ctx.state.packReveal.map((pull) => [
@@ -150,11 +158,13 @@
       const auraClass = rarityAuraClass(monster.rarity);
       const flippingClass = pull.flipping ? " is-flipping" : "";
       return `
-        <button class="pull-card is-hidden ${auraClass}${flippingClass}" type="button" data-reveal="${index}" data-pull-index="${index}">
+        <button class="pull-card is-hidden ${auraClass}${flippingClass}" type="button" data-reveal="${index}" data-pull-index="${index}" aria-label="Virar tazzo ${index + 1}">
           <span class="pull-art-frame">
-            <img class="pull-back-image" src="${ctx.monsterBackImage(monster)}" alt="Verso do tazzo">
+            <span class="pull-art-disc">
+              <img class="pull-back-image" src="${ctx.monsterBackImage(monster)}" alt="" aria-hidden="true">
+              ${ctx.renderMonsterArt(monster, "pull-front-image", { revealHolographic: true })}
+            </span>
           </span>
-          <span class="pull-hidden-spacer" aria-hidden="true">?</span>
         </button>
       `;
     }
@@ -164,24 +174,15 @@
     const premiumReveal = pull.justRevealed && ctx.isAtLeastRarity(monster.rarity, "Epico") ? ` is-premium-reveal ${rarityAuraClass(monster.rarity)}` : "";
     const revealBadge = premiumReveal ? `<span class="pull-reveal-badge">${ctx.premiumRevealLabel(monster.rarity)}</span>` : "";
     const label = pull.isNew ? "Novo" : `+${pull.fragments} frag`;
-    const stats = ctx.monsterStats(monster);
+    const roleLabel = monster.types?.join(", ") || monster.role || "Tazzo";
+    const accessibleLabel = escapeAttribute(`${monster.name}, ${roleLabel}, ${monster.rarity}, ${label}. Abrir detalhes do tazzo.`);
     return `
-      <button class="pull-card${rare}${flippedIn}${premiumReveal}" type="button" data-monster-view="${monster.id}" data-pull-index="${index}">
+      <button class="pull-card${rare}${flippedIn}${premiumReveal}" type="button" data-monster-view="${monster.id}" data-pull-index="${index}" aria-label="${accessibleLabel}">
         ${revealBadge}
         <span class="pull-art-frame">
-          ${ctx.renderMonsterArt(monster, "pull-front-image")}
-        </span>
-        <span class="pull-info">
-          <h3>${monster.name}</h3>
-          <span class="stat-line">
-            ${ctx.typeChips(monster)}
-            <span class="rarity-chip">${monster.rarity}</span>
-            ${ctx.holographicChip(monster)}
+          <span class="pull-art-disc">
+            ${ctx.renderMonsterArt(monster, "pull-front-image")}
           </span>
-          <span class="stat-line">
-            ${ctx.monsterStatsLine(monster, stats)}
-          </span>
-          <span class="chip">${label}</span>
         </span>
       </button>
     `;

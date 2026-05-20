@@ -24,6 +24,16 @@ const RARITIES = {
   "Mistico Secreto": { chance: 0.001, cost: 7, fragments: 45, secret: true }
 };
 
+const TAZZO_TRADE_VALUES = {
+  Comum: 1,
+  Incomum: 3,
+  Raro: 5,
+  Epico: 15,
+  Lendario: 50,
+  Mistico: 150,
+  "Mistico Secreto": 450
+};
+
 const MONSTERS = [
   mon("artilheiro-brasil", 1, "Menino Ney", ["Atacante"], "Mistico", 78, 89, 95, 94, "Atacante"),
   keeperCard("goleiro-brasil-alison", 2, ASSETS[1], "Allishow", "Epico", "extraTurn"),
@@ -154,9 +164,9 @@ const TOURNAMENTS = [
 ];
 
 const SHOP_ITEMS = [
-  { id: "merreis-bolso", type: "merreis", name: "Bolso de Merreis", merreis: 2400, priceLabel: "R$ 4,99", note: "Recarga rapida para abrir pacotinhos e entrar em torneios." },
-  { id: "merreis-recreio", type: "merreis", name: "Combo Recreio", merreis: 5000, priceLabel: "R$ 9,99", note: "Mais folego para comprar pacotinhos e melhorar seu time." },
-  { id: "merreis-campeao", type: "merreis", name: "Cofre Campeao", merreis: 10000, priceLabel: "R$ 14,99", note: "Pacote grande para colecionadores que querem acelerar a liga." },
+  { id: "merreis-2000", type: "merreis", name: "Bolso de Merreis", merreis: 2000, priceCents: 490, currency: "BRL", priceLabel: "R$ 4,90", note: "Recarga rapida para abrir pacotinhos e entrar em torneios." },
+  { id: "merreis-10000", type: "merreis", name: "Combo Recreio", merreis: 10000, priceCents: 1490, currency: "BRL", priceLabel: "R$ 14,90", note: "Mais folego para comprar pacotinhos e melhorar seu time." },
+  { id: "merreis-30000", type: "merreis", name: "Cofre Campeao", merreis: 30000, priceCents: 2990, currency: "BRL", priceLabel: "R$ 29,90", note: "Pacote grande para colecionadores que querem acelerar a liga." },
   { id: "frame-holo", name: "Moldura Holografica", cost: 380, note: "Realce visual para tazzos do seu time." },
   { id: "album-crocante", name: "Capa Crocante", cost: 460, note: "Capa cosmetica para o album digital." },
   { id: "tear-effect", name: "Efeito Rasgo Neon", cost: 520, note: "Efeito cosmetico para abertura de pacotinhos." },
@@ -192,7 +202,9 @@ const MISSIONS = [
   { id: "monthly-packs", title: "Abrir 35 pacotinhos", target: 35, reward: 3200, fragments: 45, period: "monthly", event: "pack" },
   { id: "monthly-battles", title: "Jogar 30 batalhas", target: 30, reward: 3600, fragments: 40, period: "monthly", event: "battle" },
   { id: "monthly-wins", title: "Vencer 12 batalhas", target: 12, reward: 4200, fragments: 60, period: "monthly", event: "win" },
+  { id: "monthly-ranked", title: "Disputar 20 ranqueadas", target: 20, reward: 4400, fragments: 58, period: "monthly", event: "ranked" },
   { id: "monthly-tournaments", title: "Entrar em 6 torneios", target: 6, reward: 3800, fragments: 48, period: "monthly", event: "tournament" },
+  { id: "monthly-evolve", title: "Melhorar 10 tazzos", target: 10, reward: 4600, fragments: 70, period: "monthly", event: "evolve" },
   { id: "monthly-gifts", title: "Enviar 12 presentes", target: 12, reward: 2600, fragments: 36, period: "monthly", event: "gift" },
   { id: "album-brasil", title: "Completar selecao do Brasil", target: 22, reward: 1000, period: "album", scope: "album", range: [1, 22] },
   { id: "album-argentina", title: "Completar selecao da Argentina", target: 21, reward: 1000, period: "album", scope: "album", range: [23, 43] },
@@ -200,6 +212,11 @@ const MISSIONS = [
   { id: "album-portugal", title: "Completar selecao de Portugal", target: 23, reward: 1300, period: "album", scope: "album", range: [66, 88] },
   { id: "album-franca", title: "Completar selecao da Franca", target: 9, reward: 900, period: "album", scope: "album", range: [89, 97] }
 ];
+
+const ECONOMY_REWARD_RULES = Object.freeze({
+  trainingAi: { merreis: 25, dailyMatches: 10 },
+  rankedWin: { merreis: 50, dailyMerreisCap: 1000 }
+});
 
 const FRIENDS = [
   {
@@ -546,6 +563,7 @@ window.TAZZOMON_DATA = {
   DEFAULT_BACK_IMAGE,
   TYPES,
   RARITIES,
+  TAZZO_TRADE_VALUES,
   MONSTERS,
   MONSTER_BY_ID,
   RANKS,
@@ -553,6 +571,7 @@ window.TAZZOMON_DATA = {
   SHOP_ITEMS,
   PACKS,
   MISSIONS,
+  ECONOMY_REWARD_RULES,
   FRIENDS,
   BATTLE_MODES,
   BATTLE_FORMATIONS,
