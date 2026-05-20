@@ -261,31 +261,17 @@ img {
 }
 
 .wallet-token-album {
-  border-radius: 6px;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.42), transparent 34%),
-    linear-gradient(135deg, #f7f0d0, #d9a23a);
-  border: 2px solid rgba(255, 248, 203, 0.92);
-  box-shadow: 0 3px 7px rgba(120, 74, 12, 0.24);
+  background: url("assets/icones/album.png") center / contain no-repeat;
+  filter: drop-shadow(0 3px 6px rgba(11, 43, 52, 0.3));
 }
 
 .wallet-token-album::after {
-  content: "";
-  width: 12px;
-  height: 16px;
-  border-radius: 3px;
-  background: linear-gradient(180deg, #0e3958, #071929);
-  box-shadow: 5px 3px 0 rgba(14, 57, 88, 0.56);
+  content: none;
 }
 
 .wallet-token-server {
-  border-radius: 50%;
-  background:
-    radial-gradient(circle at center, #86efac 0 28%, transparent 30%),
-    radial-gradient(circle, rgba(134, 239, 172, 0.24), transparent 62%),
-    #0b2235;
-  border: 2px solid rgba(134, 239, 172, 0.68);
-  box-shadow: 0 0 12px rgba(34, 197, 94, 0.2);
+  background: url("assets/icones/servidor.png") center / contain no-repeat;
+  filter: drop-shadow(0 3px 6px rgba(34, 197, 94, 0.24));
 }
 
 .profile-button {
@@ -3835,6 +3821,24 @@ button.image-button:focus-visible {
   box-shadow: 0 14px 34px rgba(240, 180, 41, 0.28);
 }
 
+.shop-card.is-merreis-pack {
+  background:
+    linear-gradient(180deg, rgba(255, 252, 229, 0.9), rgba(232, 255, 247, 0.92)),
+    var(--recess-panel) center / cover no-repeat;
+  border-color: rgba(15, 125, 121, 0.28);
+  box-shadow: 0 12px 28px rgba(15, 125, 121, 0.12);
+}
+
+.shop-card.is-merreis-pack h2::before {
+  content: "";
+  display: inline-block;
+  width: 1.05em;
+  height: 1.05em;
+  margin-right: 0.42em;
+  vertical-align: -0.16em;
+  background: url("assets/icones/merreis.png") center / contain no-repeat;
+}
+
 body[data-cosmetic="frame-holo"] .tazzo-token.player,
 body[data-cosmetic="frame-holo"] .monster-card.is-team,
 body[data-cosmetic="frame-holo"] .team-item,
@@ -3933,6 +3937,27 @@ body[data-cosmetic="avatar-master"] .tazzo-token.player {
 }
 
 .mission-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.mission-period-section {
+  display: grid;
+  gap: 12px;
+}
+
+.mission-period-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mission-period-heading h2 {
+  margin: 2px 0 0;
+}
+
+.mission-period-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 14px;
@@ -4341,6 +4366,31 @@ body[data-tutorial-step="ranked"] #ranked-button {
   padding: 14px;
 }
 
+.mission-card-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mission-card-heading span {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(28, 36, 48, 0.12);
+  border-radius: 999px;
+}
+
+.mission-card h3 {
+  margin: 0;
+  font-size: 1rem;
+  line-height: 1.2;
+}
+
 .mission-card p {
   margin: 8px 0 12px;
   color: var(--muted);
@@ -4363,6 +4413,14 @@ body[data-tutorial-step="ranked"] #ranked-button {
 .mission-card button {
   margin-top: 12px;
   width: 100%;
+}
+
+.mission-card.is-ready {
+  border-color: rgba(15, 125, 121, 0.42);
+}
+
+.mission-card.is-claimed {
+  opacity: 0.78;
 }
 
 .music-player {
@@ -4954,7 +5012,7 @@ body[data-tutorial-step="ranked"] #ranked-button {
 .battle-head h1,
 .panel h2,
 .pack-card h2,
-.mission-card h2,
+.mission-card h3,
 .tournament-card h3,
 .shop-card h3 {
   color: #ffffff;
@@ -4973,6 +5031,10 @@ body[data-tutorial-step="ranked"] #ranked-button {
   --section-banner-art: url("assets/icones/jogar_online.png");
 }
 
+#view-competitive > .section-head {
+  --section-banner-art: url("assets/icones/banner_torneios.png");
+}
+
 #view-packs > .section-head {
   --section-banner-art: url("assets/icones/abrir_salgadinhos.png");
 }
@@ -4981,15 +5043,36 @@ body[data-tutorial-step="ranked"] #ranked-button {
   --section-banner-art: url("assets/icones/colecao_de_tazzos.png");
 }
 
+#view-edit > .section-head {
+  --section-banner-art: url("assets/icones/banner_edit.png");
+}
+
+#view-friends > .section-head {
+  --section-banner-art: url("assets/icones/banner_amigos.png");
+}
+
 #view-trade > .section-head {
   --section-banner-art: url("assets/icones/banner_troca.png");
 }
 
+#view-shop > .section-head {
+  --section-banner-art: url("assets/icones/banner_loja.png");
+}
+
+#view-missions > .section-head {
+  --section-banner-art: url("assets/icones/banner_missoes.png");
+}
+
 #view-battle .battle-home > .section-head,
 #view-online > .section-head,
+#view-competitive > .section-head,
 #view-packs > .section-head,
 #view-collection > .section-head,
-#view-trade > .section-head {
+#view-edit > .section-head,
+#view-friends > .section-head,
+#view-trade > .section-head,
+#view-shop > .section-head,
+#view-missions > .section-head {
   align-items: flex-end;
   min-height: clamp(170px, 20vw, 300px);
   padding: clamp(14px, 1.8vw, 22px);
@@ -5003,9 +5086,14 @@ body[data-tutorial-step="ranked"] #ranked-button {
 
 #view-battle .battle-home > .section-head > div:first-child,
 #view-online > .section-head > div:first-child,
+#view-competitive > .section-head > div:first-child,
 #view-packs > .section-head > div:first-child,
 #view-collection > .section-head > div:first-child,
-#view-trade > .section-head > div:first-child {
+#view-edit > .section-head > div:first-child,
+#view-friends > .section-head > div:first-child,
+#view-trade > .section-head > div:first-child,
+#view-shop > .section-head > div:first-child,
+#view-missions > .section-head > div:first-child {
   background: linear-gradient(180deg, rgba(8, 31, 52, 0.84), rgba(4, 14, 26, 0.94));
   backdrop-filter: blur(5px);
 }
@@ -5151,6 +5239,20 @@ button.image-button.has-button-icon {
 .battle-resume-card button.combat-start-button.image-button {
   width: min(190px, 100%);
   justify-self: center;
+}
+
+.pack-card button.combat-art-button.image-button,
+.mission-card button.combat-art-button.image-button,
+.shop-card button.combat-art-button.image-button,
+.friend-actions button.combat-art-button.image-button,
+.online-current-actions button.combat-art-button.image-button,
+.online-lobby-list button.combat-art-button.image-button,
+.tutorial-panel button.combat-art-button.image-button,
+.tutorial-coach button.combat-art-button.image-button,
+.tutorial-popover button.combat-art-button.image-button,
+.tutorial-active-card button.combat-art-button.image-button,
+.tutorial-result-dialog button.combat-art-button.image-button {
+  min-height: clamp(72px, 6vw, 88px);
 }
 
 .action-grid button.image-button.has-button-icon,
@@ -5437,9 +5539,14 @@ button.image-button.has-button-icon {
 
   #view-battle .battle-home > .section-head,
   #view-online > .section-head,
+  #view-competitive > .section-head,
   #view-packs > .section-head,
   #view-collection > .section-head,
-  #view-trade > .section-head {
+  #view-edit > .section-head,
+  #view-friends > .section-head,
+  #view-trade > .section-head,
+  #view-shop > .section-head,
+  #view-missions > .section-head {
     min-height: clamp(168px, 42vw, 240px);
     background-position: center;
   }

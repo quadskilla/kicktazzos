@@ -154,6 +154,9 @@ const TOURNAMENTS = [
 ];
 
 const SHOP_ITEMS = [
+  { id: "merreis-bolso", type: "merreis", name: "Bolso de Merreis", merreis: 2400, priceLabel: "R$ 4,99", note: "Recarga rapida para abrir pacotinhos e entrar em torneios." },
+  { id: "merreis-recreio", type: "merreis", name: "Combo Recreio", merreis: 5000, priceLabel: "R$ 9,99", note: "Mais folego para comprar pacotinhos e melhorar seu time." },
+  { id: "merreis-campeao", type: "merreis", name: "Cofre Campeao", merreis: 10000, priceLabel: "R$ 14,99", note: "Pacote grande para colecionadores que querem acelerar a liga." },
   { id: "frame-holo", name: "Moldura Holografica", cost: 380, note: "Realce visual para tazzos do seu time." },
   { id: "album-crocante", name: "Capa Crocante", cost: 460, note: "Capa cosmetica para o album digital." },
   { id: "tear-effect", name: "Efeito Rasgo Neon", cost: 520, note: "Efeito cosmetico para abertura de pacotinhos." },
@@ -164,27 +167,38 @@ const PACKS = [
   { id: "simples", name: "Simples", cards: 1, cost: 120, note: "1 tazzo", image: "assets/pack-simples.png", openImage: "assets/pack-simples-open.png" },
   { id: "crocante", name: "Crocante", cards: 3, cost: 300, note: "3 tazzos", image: "assets/pack-crocante.png", openImage: "assets/pack-crocante-open.png" },
   { id: "recheado", name: "Recheado", cards: 5, cost: 650, note: "5 tazzos, raro garantido", image: "assets/pack-recheado.png", openImage: "assets/pack-recheado-open.png" },
-  { id: "familia", name: "Familia", cards: 8, cost: 1, note: "8 tazzos, mais fragmentos", image: "assets/pack-familia.png", openImage: "assets/pack-familia-open.png" }
+  { id: "familia", name: "Familia", cards: 8, cost: 800, note: "8 tazzos, mais fragmentos", image: "assets/pack-familia.png", openImage: "assets/pack-familia-open.png" }
 ];
 
 const MISSIONS = [
-  { id: "login", title: "Fazer login", target: 1, reward: 100 },
-  { id: "pack", title: "Abrir 1 pacotinho", target: 1, reward: 100 },
-  { id: "battle", title: "Jogar 1 batalha", target: 1, reward: 150 },
-  { id: "win", title: "Vencer 1 batalha", target: 1, reward: 250 },
-  { id: "push", title: "Empurrar contra borda", target: 1, reward: 180 },
-  { id: "keeper", title: "Usar habilidade de goleiro", target: 1, reward: 160 },
-  { id: "collision", title: "Causar 1 colisao", target: 1, reward: 200 },
-  { id: "trade", title: "Fazer 1 troca", target: 1, reward: 200 },
-  { id: "evolve", title: "Melhorar 1 tazzo", target: 1, reward: 220 },
-  { id: "ranked", title: "Disputar ranqueada", target: 1, reward: 180 },
-  { id: "tournament", title: "Entrar em torneio", target: 1, reward: 240 },
-  { id: "gift", title: "Enviar presente", target: 1, reward: 120 },
-  { id: "album-brasil", title: "Completar selecao do Brasil", target: 22, reward: 1000, scope: "album", range: [1, 22] },
-  { id: "album-argentina", title: "Completar selecao da Argentina", target: 21, reward: 1000, scope: "album", range: [23, 43] },
-  { id: "album-inglaterra", title: "Completar selecao da Inglaterra", target: 22, reward: 1100, scope: "album", range: [44, 65] },
-  { id: "album-portugal", title: "Completar selecao de Portugal", target: 23, reward: 1300, scope: "album", range: [66, 88] },
-  { id: "album-franca", title: "Completar selecao da Franca", target: 9, reward: 900, scope: "album", range: [89, 97] }
+  { id: "login", title: "Fazer login", target: 1, reward: 100, period: "daily", event: "login" },
+  { id: "pack", title: "Abrir 1 pacotinho", target: 1, reward: 100, period: "daily", event: "pack" },
+  { id: "battle", title: "Jogar 1 batalha", target: 1, reward: 150, period: "daily", event: "battle" },
+  { id: "win", title: "Vencer 1 batalha", target: 1, reward: 250, period: "daily", event: "win" },
+  { id: "push", title: "Empurrar contra borda", target: 1, reward: 180, period: "daily", event: "push" },
+  { id: "keeper", title: "Usar habilidade de goleiro", target: 1, reward: 160, period: "daily", event: "keeper" },
+  { id: "collision", title: "Causar 1 colisao", target: 1, reward: 200, period: "daily", event: "collision" },
+  { id: "trade", title: "Fazer 1 troca", target: 1, reward: 200, period: "daily", event: "trade" },
+  { id: "evolve", title: "Melhorar 1 tazzo", target: 1, reward: 220, period: "daily", event: "evolve" },
+  { id: "ranked", title: "Disputar ranqueada", target: 1, reward: 180, period: "daily", event: "ranked" },
+  { id: "tournament", title: "Entrar em torneio", target: 1, reward: 240, period: "daily", event: "tournament" },
+  { id: "gift", title: "Enviar presente", target: 1, reward: 120, period: "daily", event: "gift" },
+  { id: "weekly-packs", title: "Abrir 10 pacotinhos", target: 10, reward: 850, fragments: 12, period: "weekly", event: "pack" },
+  { id: "weekly-battles", title: "Jogar 8 batalhas", target: 8, reward: 1000, fragments: 10, period: "weekly", event: "battle" },
+  { id: "weekly-wins", title: "Vencer 3 batalhas", target: 3, reward: 1200, fragments: 16, period: "weekly", event: "win" },
+  { id: "weekly-ranked", title: "Disputar 5 ranqueadas", target: 5, reward: 1100, fragments: 14, period: "weekly", event: "ranked" },
+  { id: "weekly-trades", title: "Fazer 3 trocas", target: 3, reward: 900, fragments: 10, period: "weekly", event: "trade" },
+  { id: "weekly-evolve", title: "Melhorar 3 tazzos", target: 3, reward: 1250, fragments: 18, period: "weekly", event: "evolve" },
+  { id: "monthly-packs", title: "Abrir 35 pacotinhos", target: 35, reward: 3200, fragments: 45, period: "monthly", event: "pack" },
+  { id: "monthly-battles", title: "Jogar 30 batalhas", target: 30, reward: 3600, fragments: 40, period: "monthly", event: "battle" },
+  { id: "monthly-wins", title: "Vencer 12 batalhas", target: 12, reward: 4200, fragments: 60, period: "monthly", event: "win" },
+  { id: "monthly-tournaments", title: "Entrar em 6 torneios", target: 6, reward: 3800, fragments: 48, period: "monthly", event: "tournament" },
+  { id: "monthly-gifts", title: "Enviar 12 presentes", target: 12, reward: 2600, fragments: 36, period: "monthly", event: "gift" },
+  { id: "album-brasil", title: "Completar selecao do Brasil", target: 22, reward: 1000, period: "album", scope: "album", range: [1, 22] },
+  { id: "album-argentina", title: "Completar selecao da Argentina", target: 21, reward: 1000, period: "album", scope: "album", range: [23, 43] },
+  { id: "album-inglaterra", title: "Completar selecao da Inglaterra", target: 22, reward: 1100, period: "album", scope: "album", range: [44, 65] },
+  { id: "album-portugal", title: "Completar selecao de Portugal", target: 23, reward: 1300, period: "album", scope: "album", range: [66, 88] },
+  { id: "album-franca", title: "Completar selecao da Franca", target: 9, reward: 900, period: "album", scope: "album", range: [89, 97] }
 ];
 
 const FRIENDS = [

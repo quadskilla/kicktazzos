@@ -40,6 +40,14 @@ const SERVER_COMPETITIVE_RESOLVE_ENDPOINT = "/api/competitive/resolve";
 const SERVER_SAVE_DEBOUNCE_MS = 450;
 const ONLINE_WS_RECONNECT_MS = 2200;
 const TODAY_KEY = new Date().toISOString().slice(0, 10);
+const MISSION_PERIODS = ["daily", "weekly", "monthly"];
+const MISSION_PERIOD_LABELS = {
+  daily: "Diaria",
+  weekly: "Semanal",
+  monthly: "Mensal",
+  album: "Album"
+};
+const MISSION_PERIOD_ORDER = ["daily", "weekly", "monthly", "album"];
 const PACK_OPENING_DURATION_MS = 1500;
 const PACK_CLOSE_AFTER_REVEAL_MS = 900;
 const LEGENDARY_BOOST_TAZZOS = 50;
@@ -100,6 +108,51 @@ function initialLobbyInviteCode() {
   } catch (error) {
     return "";
   }
+}
+
+function missionPeriod(mission) {
+  return mission?.period || (mission?.scope === "album" ? "album" : "daily");
+}
+
+function missionEvent(mission) {
+  return mission?.event || mission?.id;
+}
+
+function missionCycleKey(period, date = new Date()) {
+  const year = date.getUTCFullYear();
+  if (period === "monthly") {
+    return `${year}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+  }
+  if (period === "weekly") {
+    const day = date.getUTCDay() || 7;
+    const thursday = new Date(Date.UTC(year, date.getUTCMonth(), date.getUTCDate() + 4 - day));
+    const weekYear = thursday.getUTCFullYear();
+    const firstThursday = new Date(Date.UTC(weekYear, 0, 4));
+    const firstDay = firstThursday.getUTCDay() || 7;
+    const week = Math.ceil((((thursday - firstThursday) / 86400000) + firstDay) / 7);
+    return `${weekYear}-W${String(week).padStart(2, "0")}`;
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+function currentMissionCycles(date = new Date()) {
+  return Object.fromEntries(MISSION_PERIODS.map((period) => [period, missionCycleKey(period, date)]));
+}
+
+function normalizeMissionCycles(cycles = {}, legacyMissionDate = TODAY_KEY) {
+  const current = currentMissionCycles();
+  return {
+    daily: String(cycles.daily || legacyMissionDate || current.daily),
+    weekly: String(cycles.weekly || current.weekly),
+    monthly: String(cycles.monthly || current.monthly)
+  };
+}
+
+function defaultMissionStatuses() {
+  return Object.fromEntries(MISSIONS.map((mission) => [
+    mission.id,
+    { progress: missionEvent(mission) === "login" ? 1 : 0, claimed: false }
+  ]));
 }
 
 const startupLocalSave = loadSave();
@@ -213,10 +266,8 @@ function defaultSave() {
     tutorial: Object.fromEntries(TUTORIAL_STEPS.map((step) => [step.id, false])),
     tutorialRewardClaimed: false,
     missionDate: TODAY_KEY,
-    missions: Object.fromEntries(MISSIONS.map((mission) => [
-      mission.id,
-      { progress: mission.id === "login" ? 1 : 0, claimed: false }
-    ]))
+    missionCycles: currentMissionCycles(),
+    missions: defaultMissionStatuses()
   };
 }
 
@@ -243,9 +294,13 @@ function normalizeSave(rawSave) {
     const customTazzos = sanitizeCustomCatalog(save.customTazzos || []);
     applyCustomCatalog(customTazzos);
     const fresh = defaultSave();
+    const savedMissionCycles = normalizeMissionCycles(save.missionCycles || {}, save.missionDate);
     const missions = Object.fromEntries(MISSIONS.map((mission) => [
       mission.id,
-      { ...fresh.missions[mission.id], ...((save.missions || {})[mission.id] || {}) }
+      sanitizeMissionStatus({
+        ...fresh.missions[mission.id],
+        ...((save.missions || {})[mission.id] || {})
+      }, mission)
     ]));
     const tutorial = Object.fromEntries(TUTORIAL_STEPS.map((step) => [
       step.id,
@@ -262,6 +317,7 @@ function normalizeSave(rawSave) {
       customTazzos,
       tutorial,
       missions,
+      missionCycles: savedMissionCycles,
       team: normalizeTeam(save.team || fresh.team),
       goalkeeper: normalizeGoalkeeper(save.goalkeeper || (save.team || []).find((id) => isGoalkeeper(id)) || fresh.goalkeeper)
     };
@@ -269,10 +325,9 @@ function normalizeSave(rawSave) {
     merged.musicVolume = clamp(Number(merged.musicVolume), 0, 1);
     if (!Number.isFinite(merged.musicVolume)) merged.musicVolume = fresh.musicVolume;
 
-    if (merged.missionDate !== TODAY_KEY) {
-      merged.missionDate = TODAY_KEY;
-      merged.missions = resetDailyMissions(merged.missions, fresh.missions);
-    }
+    merged.missions = resetExpiredMissions(merged.missions, fresh.missions, savedMissionCycles);
+    merged.missionCycles = currentMissionCycles();
+    merged.missionDate = TODAY_KEY;
 
     return merged;
   } catch (error) {
@@ -304,18 +359,30 @@ function shouldMigrateLocalSaveToServer(localSave, serverSave) {
   return saveProgressScore(localSave) > saveProgressScore(serverSave) + 120;
 }
 
-function resetDailyMissions(currentMissions, freshMissions) {
+function sanitizeMissionStatus(status, mission) {
+  return {
+    progress: clamp(Math.floor(Number(status?.progress)) || 0, 0, mission.target),
+    claimed: Boolean(status?.claimed)
+  };
+}
+
+function resetExpiredMissions(currentMissions, freshMissions, savedMissionCycles) {
+  const currentCycles = currentMissionCycles();
   return Object.fromEntries(MISSIONS.map((mission) => {
-    if (mission.scope === "album") {
+    const period = missionPeriod(mission);
+    if (period === "album" || mission.scope === "album") {
       return [
         mission.id,
         {
-          ...freshMissions[mission.id],
+          ...sanitizeMissionStatus(freshMissions[mission.id], mission),
           claimed: Boolean(currentMissions?.[mission.id]?.claimed)
         }
       ];
     }
-    return [mission.id, freshMissions[mission.id]];
+    if (savedMissionCycles?.[period] !== currentCycles[period]) {
+      return [mission.id, sanitizeMissionStatus(freshMissions[mission.id], mission)];
+    }
+    return [mission.id, sanitizeMissionStatus(currentMissions?.[mission.id] || freshMissions[mission.id], mission)];
   }));
 }
 
@@ -1239,6 +1306,7 @@ const IMAGE_BUTTON_SELECTOR = [
   ".result-actions button",
   ".tutorial-panel button",
   ".tutorial-coach button",
+  ".tutorial-popover button",
   ".tutorial-active-card button",
   ".tutorial-result-dialog button",
   ".online-code-form button",
@@ -1270,6 +1338,75 @@ const COMBAT_BUTTON_ART = {
   refresh: "assets/icones/atualizar.png",
   claim: "assets/icones/resgatar.png",
   claimed: "assets/icones/resgatada.png"
+};
+
+const BUTTON_LABEL_ART = {
+  "abrir": "assets/icones/botao_abrir.png",
+  "abrir cena": "assets/icones/botao_abrir_cena.png",
+  "abrir pacotinhos": "assets/icones/botao_abrir_pacotinhos.png",
+  "abrir premio": "assets/icones/botao_abrir_premio.png",
+  "abrir trocas": "assets/icones/botao_abrir_trocas.png",
+  "adicionar tazzo": "assets/icones/botao_adicionar_tazzo.png",
+  "ativo": "assets/icones/botao_ativo.png",
+  "ativar": "assets/icones/botao_ativar.png",
+  "comprar": "assets/icones/botao_comprar.png",
+  "comprar merreis": "assets/icones/botao_comprar_merreis.png",
+  "continuar": "assets/icones/botao_continuar.png",
+  "continuar assistindo": "assets/icones/botao_continuar_assistindo.png",
+  "continuar batalha": "assets/icones/botao_continuar_batalha.png",
+  "continuar seu turno": "assets/icones/botao_continuar_turno.png",
+  "continuar turno": "assets/icones/botao_continuar_turno.png",
+  "copiar convite": "assets/icones/botao_copiar_convite.png",
+  "desafiar": "assets/icones/botao_desafiar.png",
+  "desistir": "assets/icones/botao_desistir.png",
+  "disputar ranqueada": "assets/icones/botao_disputar_ranqueada.png",
+  "disputar ranqueada tutorial": "assets/icones/botao_disputar_ranqueada.png",
+  "em batalha": "assets/icones/botao_em_batalha.png",
+  "em andamento": "assets/icones/botao_em_andamento.png",
+  "entrar e batalhar": "assets/icones/botao_entrar_batalhar.png",
+  "entrar na cena": "assets/icones/botao_entrar_cena.png",
+  "entrar pelo tutorial": "assets/icones/botao_entrar_tutorial.png",
+  "enviado": "assets/icones/botao_enviado.png",
+  "fechar": "assets/icones/botao_fechar.png",
+  "finalize o torneio": "assets/icones/botao_finalize_torneio.png",
+  "ir": "assets/icones/botao_ir.png",
+  "ir para batalha": "assets/icones/botao_ir_batalha.png",
+  "inspecionar tazzo": "assets/icones/botao_inspecionar_tazzo.png",
+  "liga e torneios": "assets/icones/botao_ver_liga_torneios.png",
+  "montar time": "assets/icones/botao_montar_time.png",
+  "novo tazzo": "assets/icones/botao_novo_tazzo.png",
+  "preparar batalha": "assets/icones/botao_preparar_batalha.png",
+  "presente": "assets/icones/botao_presente.png",
+  "pronto": "assets/icones/botao_pronto.png",
+  "ranqueada ativa": "assets/icones/botao_ranqueada_ativa.png",
+  "recompensa resgatada": "assets/icones/botao_recompensa_resgatada.png",
+  "reiniciar save": "assets/icones/botao_reiniciar_save.png",
+  "resgatar tutorial": "assets/icones/botao_resgatar_tutorial.png",
+  "sair": "assets/icones/botao_sair.png",
+  "sair da conta google": "assets/icones/botao_sair_perfil.png",
+  "sair da sala": "assets/icones/botao_sair_sala.png",
+  "sair do perfil": "assets/icones/botao_sair_perfil.png",
+  "sair sem punicao": "assets/icones/botao_sair_sem_punicao.png",
+  "salvar tazzo": "assets/icones/botao_salvar_tazzo.png",
+  "torneio ativo": "assets/icones/botao_torneio_ativo.png",
+  "treinar chute": "assets/icones/botao_treinar_chute.png",
+  "treinar drible": "assets/icones/botao_treinar_drible.png",
+  "treinar movimento": "assets/icones/botao_treinar_movimento.png",
+  "treinar passe": "assets/icones/botao_treinar_passe.png",
+  "treinar pressao": "assets/icones/botao_treinar_pressao.png",
+  "treinar recuo": "assets/icones/botao_treinar_recuo.png",
+  "treinar troca": "assets/icones/botao_treinar_troca.png",
+  "treino de borda": "assets/icones/botao_treino_borda.png",
+  "trocar repetido": "assets/icones/botao_trocar_repetido.png",
+  "usar goleiro": "assets/icones/botao_usar_goleiro.png",
+  "vencer por w.o.": "assets/icones/botao_vencer_wo.png",
+  "ver colecao": "assets/icones/botao_ver_colecao.png",
+  "ver liga": "assets/icones/botao_ver_liga.png",
+  "ver resultado": "assets/icones/botao_ver_resultado.png",
+  "ver torneios": "assets/icones/botao_ver_torneios.png",
+  "virar todos": "assets/icones/botao_virar_todos.png",
+  "voltar": "assets/icones/botao_voltar.png",
+  "voltar para sala": "assets/icones/botao_voltar_sala.png"
 };
 
 function escapeSvgText(value) {
@@ -1321,6 +1458,7 @@ function buttonImageAsset(button, label) {
   if (button.dataset.action && COMBAT_BUTTON_ART[button.dataset.action]) {
     return COMBAT_BUTTON_ART[button.dataset.action];
   }
+  if (BUTTON_LABEL_ART[normalizedLabel]) return BUTTON_LABEL_ART[normalizedLabel];
   if (button.id === "new-battle-button" || button.dataset.startBattle !== undefined) {
     if (button.disabled && !/(abrir|iniciar|nova)/.test(normalizedLabel)) return "";
     return COMBAT_BUTTON_ART.start;
@@ -1328,12 +1466,16 @@ function buttonImageAsset(button, label) {
   if (button.id === "create-lobby-button") return COMBAT_BUTTON_ART.createRoom;
   if (button.id === "refresh-lobbies-button") return COMBAT_BUTTON_ART.refresh;
   if (button.id === "back-to-battle-menu-button") return COMBAT_BUTTON_ART.gameMenu;
+  if (button.id === "entry-login-button" || button.id === "profile-submit-button" && normalizedLabel === "entrar") return COMBAT_BUTTON_ART.enter;
+  if (button.id === "profile-submit-button" && normalizedLabel.includes("criar")) return "assets/icones/botao_criar_jogador.png";
+  if (button.id === "entry-register-button") return "assets/icones/botao_criar_jogador.png";
   if (button.matches(".online-code-form button")) return COMBAT_BUTTON_ART.enter;
   if (button.dataset.joinLobby) {
     return normalizedLabel.includes("entrar") ? COMBAT_BUTTON_ART.enter : "";
   }
   if (button.dataset.team || button.dataset.goalkeeper) return COMBAT_BUTTON_ART.team;
   if (button.dataset.claim || button.dataset.tutorialReward) {
+    if (BUTTON_LABEL_ART[normalizedLabel]) return BUTTON_LABEL_ART[normalizedLabel];
     return normalizedLabel.includes("resgatad") ? COMBAT_BUTTON_ART.claimed : COMBAT_BUTTON_ART.claim;
   }
   if (button.dataset.resultAction) {
@@ -3684,184 +3826,86 @@ function renderWallet() {
   refreshWalletInfoContent();
 }
 
-function renderPackPity() {
-  const pity = state.save.packPity;
-  const legendaryCount = Math.min(pity.sinceLegendaryPlus, LEGENDARY_BOOST_MAX_TAZZOS);
-  const boostMultiplier = legendaryBoostMultiplier(pity.sinceLegendaryPlus);
-  const boostReady = boostMultiplier > 1;
-  const boostMaxReady = boostMultiplier >= LEGENDARY_BOOST_MAX_MULTIPLIER;
-  const nextGoal = boostReady ? LEGENDARY_BOOST_MAX_TAZZOS : LEGENDARY_BOOST_TAZZOS;
-  const nextBoost = boostReady ? LEGENDARY_BOOST_MAX_MULTIPLIER : LEGENDARY_BOOST_MULTIPLIER;
-  const remaining = Math.max(0, nextGoal - pity.sinceLegendaryPlus);
-  const headline = boostMaxReady
-    ? "Chance 4x ativa para Lendario+"
-    : boostReady
-    ? `${remaining} tazzo(s) para boost 4x`
-    : `${remaining} tazzo(s) para boost ${nextBoost}x`;
+function menuViews() {
+  if (!window.TazzoMenuViews) {
+    throw new Error("Modulo de menus nao carregado.");
+  }
+  return window.TazzoMenuViews;
+}
 
-  return `
-    <article class="pack-pity-card${boostReady ? " is-ready" : ""}${boostMaxReady ? " is-max" : ""}">
-      <div>
-        <span class="eyebrow">Boost lendario</span>
-        <strong>${headline}</strong>
-        <small>${legendaryCount}/${LEGENDARY_BOOST_MAX_TAZZOS} sem Lendario+${boostReady && !boostMaxReady ? " - 2x ativo" : ""}</small>
-      </div>
-      <div class="progress" aria-label="Progresso para boost lendario">
-        <span style="width:${Math.round((legendaryCount / LEGENDARY_BOOST_MAX_TAZZOS) * 100)}%"></span>
-      </div>
-    </article>
-  `;
+function menuViewContext() {
+  return {
+    state,
+    PACKS,
+    MONSTERS,
+    MONSTER_BY_ID,
+    TOURNAMENTS,
+    TOURNAMENT_OPPONENTS,
+    SHOP_ITEMS,
+    MISSIONS,
+    MISSION_PERIOD_ORDER,
+    MISSION_PERIOD_LABELS,
+    LEGENDARY_BOOST_TAZZOS,
+    LEGENDARY_BOOST_MAX_TAZZOS,
+    LEGENDARY_BOOST_MULTIPLIER,
+    LEGENDARY_BOOST_MAX_MULTIPLIER,
+    formatNumber,
+    clamp,
+    missionPeriod,
+    isPackBusy,
+    legendaryBoostMultiplier,
+    openPack,
+    tearOpenPack,
+    showPackCards,
+    renderMonsterArt,
+    monsterBackImage,
+    isAtLeastRarity,
+    premiumRevealLabel,
+    monsterStats,
+    monsterStatsLine,
+    typeChips,
+    holographicChip,
+    hasHolographicArt,
+    visibleCollectionMonsters,
+    matchesCollectionFilters,
+    isGoalkeeper,
+    upgradeLevel,
+    upgradeCost,
+    setTeamSlot,
+    upgradeMonster,
+    setGoalkeeper,
+    decorateImageButtons,
+    currentRank,
+    nextRank,
+    teamCost,
+    teamPower,
+    rankedChance,
+    rankedOpponentForCurrentRank,
+    isCurrentTutorialStep,
+    activeTournamentBattle,
+    activeRankedBattle,
+    claimMission
+  };
+}
+
+function renderPackPity() {
+  return menuViews().renderPackPity(menuViewContext());
 }
 
 function renderPacks() {
-  const grid = document.getElementById("pack-grid");
-  const packBusy = isPackBusy();
-  const canRevealAll = !state.packOpening && state.packReveal.some((pull) => !pull.revealed && !pull.flipping);
-  const pityPanel = document.getElementById("pack-pity");
-  if (pityPanel) pityPanel.innerHTML = renderPackPity();
-  document.getElementById("reveal-all-button").disabled = !canRevealAll;
-  const gridKey = `packs:${packBusy}:${state.save.merreis}:${PACKS.length}:${state.save.packPity.sinceLegendaryPlus}`;
-  if (grid.dataset.renderKey !== gridKey) {
-    grid.dataset.renderKey = gridKey;
-    grid.innerHTML = PACKS.map((pack) => `
-      <article class="pack-card${packBusy ? " is-disabled" : ""}">
-        <img class="pack-card-art" src="${pack.image}" alt="Pacote ${pack.name}">
-        <h2>${pack.name}</h2>
-        <p>${pack.note}</p>
-        <div class="pack-meta">
-          <span class="chip">${pack.cards}x</span>
-          <span class="chip">${formatNumber(pack.cost)} Merreis</span>
-        </div>
-        <button type="button" data-pack="${pack.id}" ${packBusy || state.save.merreis < pack.cost ? "disabled" : ""}>Abrir</button>
-      </article>
-    `).join("");
-
-    grid.querySelectorAll("button[data-pack]").forEach((button) => {
-      button.addEventListener("click", () => openPack(button.dataset.pack));
-    });
-  }
-
-  const results = document.getElementById("pack-results");
-  results.classList.remove("has-reveal-shortcut", "is-results-popup");
-  if (state.packOpening) {
-    const openingKey = `opening:${state.packOpening.packId}:${state.packOpening.packName}:${state.packReveal.length}`;
-    if (results.dataset.renderKey !== openingKey) {
-      results.dataset.renderKey = openingKey;
-      results.innerHTML = renderPackOpening();
-      results.querySelectorAll("[data-pack-stage='tear']").forEach((button) => {
-        button.addEventListener("click", tearOpenPack);
-      });
-      results.querySelectorAll("[data-pack-stage='cards']").forEach((button) => {
-        button.addEventListener("click", showPackCards);
-      });
-    }
-    return;
-  }
-
-  if (!state.packReveal.length) {
-    if (results.dataset.renderKey !== "empty") {
-      results.dataset.renderKey = "empty";
-      results.innerHTML = "";
-    }
-    return;
-  }
-
-  const canRevealAllNow = state.packReveal.some((pull) => !pull.revealed && !pull.flipping);
-  const revealedCount = state.packReveal.filter((pull) => pull.revealed).length;
-  const resultsKey = packResultsRenderKey();
-  results.classList.toggle("has-reveal-shortcut", canRevealAllNow);
-  results.classList.add("is-results-popup");
-  if (results.dataset.renderKey === resultsKey) return;
-  results.dataset.renderKey = resultsKey;
-  const revealShortcut = canRevealAllNow
-    ? `<button class="pack-reveal-all-corner" type="button" data-reveal-all-pulls aria-label="Virar todos os tazzos"></button>`
-    : "";
-  const pullsHtml = state.packReveal.map((pull, index) => renderPullCard(pull, index)).join("");
-
-  results.innerHTML = `
-    <section class="pack-results-overlay" role="dialog" aria-modal="true" aria-labelledby="pack-results-title">
-      <div class="pack-results-dialog">
-        <div class="pack-results-head">
-          <div>
-            <span class="eyebrow">Pacotinho aberto</span>
-            <h2 id="pack-results-title">Tazzos encontrados</h2>
-          </div>
-          <div class="pack-results-actions">
-            <span class="chip" data-pack-results-count>${revealedCount}/${state.packReveal.length}</span>
-            <button class="viewer-close" type="button" data-close-pack-results>Fechar</button>
-          </div>
-        </div>
-        <div class="pack-results-grid">
-          ${revealShortcut}
-          ${pullsHtml}
-        </div>
-      </div>
-    </section>
-  `;
+  return menuViews().renderPacks(menuViewContext());
 }
 
 function rarityAuraClass(rarity) {
-  return {
-    Epico: "rarity-epico",
-    Lendario: "rarity-lendario",
-    Mistico: "rarity-mistico",
-    "Mistico Secreto": "rarity-mistico-secreto"
-  }[rarity] || "";
+  return menuViews().rarityAuraClass(rarity);
 }
 
 function packResultsRenderKey() {
-  if (!state.packReveal.length) return "empty";
-  return `results:${state.packReveal.map((pull) => [
-    pull.monsterId,
-    pull.isNew ? 1 : 0,
-    pull.fragments,
-    pull.revealed ? 1 : 0,
-    pull.flipping ? 1 : 0,
-    pull.justRevealed ? 1 : 0
-  ].join(":")).join("|")}`;
+  return menuViews().packResultsRenderKey(menuViewContext());
 }
 
 function renderPullCard(pull, index) {
-  const monster = MONSTER_BY_ID[pull.monsterId];
-  if (!pull.revealed) {
-    const auraClass = rarityAuraClass(monster.rarity);
-    const flippingClass = pull.flipping ? " is-flipping" : "";
-    return `
-      <button class="pull-card is-hidden ${auraClass}${flippingClass}" type="button" data-reveal="${index}" data-pull-index="${index}">
-        <span class="pull-art-frame">
-          <img class="pull-back-image" src="${monsterBackImage(monster)}" alt="Verso do tazzo">
-        </span>
-        <span class="pull-hidden-spacer" aria-hidden="true">?</span>
-      </button>
-    `;
-  }
-
-  const rare = ["Raro", "Epico", "Lendario", "Mistico", "Mistico Secreto"].includes(monster.rarity) ? " is-rare" : "";
-  const flippedIn = pull.justRevealed ? " is-flipped-in" : "";
-  const premiumReveal = pull.justRevealed && isAtLeastRarity(monster.rarity, "Epico") ? ` is-premium-reveal ${rarityAuraClass(monster.rarity)}` : "";
-  const revealBadge = premiumReveal ? `<span class="pull-reveal-badge">${premiumRevealLabel(monster.rarity)}</span>` : "";
-  const label = pull.isNew ? "Novo" : `+${pull.fragments} frag`;
-  const stats = monsterStats(monster);
-  return `
-    <button class="pull-card${rare}${flippedIn}${premiumReveal}" type="button" data-monster-view="${monster.id}" data-pull-index="${index}">
-      ${revealBadge}
-      <span class="pull-art-frame">
-        ${renderMonsterArt(monster, "pull-front-image")}
-      </span>
-      <span class="pull-info">
-        <h3>${monster.name}</h3>
-        <span class="stat-line">
-          ${typeChips(monster)}
-          <span class="rarity-chip">${monster.rarity}</span>
-          ${holographicChip(monster)}
-        </span>
-        <span class="stat-line">
-          ${monsterStatsLine(monster, stats)}
-        </span>
-        <span class="chip">${label}</span>
-      </span>
-    </button>
-  `;
+  return menuViews().renderPullCard(menuViewContext(), pull, index);
 }
 
 function handlePackResultsClick(event) {
@@ -4006,98 +4050,11 @@ function updatePackResultsChrome() {
 }
 
 function renderPackOpening() {
-  const opening = state.packOpening;
-  const pack = PACKS.find((item) => item.id === opening.packId);
-  const packImage = pack?.image || "assets/pack-simples.png";
-  const packOpenImage = pack?.openImage || packImage;
-  const snacks = Array.from({ length: Math.min(10, pack?.cards ? pack.cards + 4 : 7) }, (_, index) => `<span style="--delay:${index * 70}ms"></span>`).join("");
-
-  return `
-    <section class="pack-opening-overlay" role="dialog" aria-modal="true" aria-live="polite">
-      <div class="pack-opening is-auto-opening">
-        <div class="snack-pack has-image is-tearing" aria-label="Abrindo pacotinho ${opening.packName}">
-          <img class="snack-pack-art snack-pack-art-closed" src="${packImage}" alt="Pacote ${opening.packName}">
-          <img class="snack-pack-art snack-pack-art-open" src="${packOpenImage}" alt="Pacote ${opening.packName} aberto">
-          <div class="snack-rain" aria-hidden="true">${snacks}</div>
-        </div>
-        <div class="opening-copy">
-          <span class="eyebrow">Pacotinho comprado</span>
-          <h2>Abrindo ${opening.packName}</h2>
-          <p>${state.packReveal.length} disco(s) estao saindo da embalagem.</p>
-          <div class="pack-opening-progress" aria-hidden="true"><span></span></div>
-        </div>
-      </div>
-    </section>
-  `;
+  return menuViews().renderPackOpening(menuViewContext());
 }
 
 function renderCollection() {
-  document.querySelectorAll("#slot-picker button").forEach((button) => {
-    button.classList.toggle("is-active", Number(button.dataset.slot) === state.selectedSlot);
-  });
-
-  const grid = document.getElementById("collection-grid");
-  const monsters = visibleCollectionMonsters().filter(matchesCollectionFilters);
-  grid.innerHTML = monsters.map((monster) => {
-    const copies = state.save.collection[monster.id] || 0;
-    const owned = copies > 0;
-    const keeper = isGoalkeeper(monster);
-    const inTeam = state.save.team.includes(monster.id);
-    const activeGoalkeeper = state.save.goalkeeper === monster.id;
-    const stats = monsterStats(monster);
-    const level = keeper ? 0 : upgradeLevel(monster.id);
-    const cost = keeper ? { fragments: 0, merreis: 0 } : upgradeCost(monster.id);
-    const canUpgrade = !keeper && owned && level < 2 && state.save.fragments >= cost.fragments && state.save.merreis >= cost.merreis;
-    const upgradeNote = keeper
-      ? "Goleiro nao entra no campo: habilidade unica, 1 uso por partida."
-      : level >= 2
-      ? "Melhoria maxima: +20% em todos os stats."
-      : `Melhoria +10% nos stats: ${formatNumber(cost.fragments)} fragmentos + ${formatNumber(cost.merreis)} Merreis. Nivel ${level}/2.`;
-    const classes = ["monster-card"];
-    if (!owned) classes.push("is-missing");
-    if (inTeam || activeGoalkeeper) classes.push("is-team");
-
-    return `
-      <article class="${classes.join(" ")}">
-        <span class="copy-badge">x${copies}</span>
-        <button class="art-view-button" type="button" data-monster-view="${monster.id}">
-          ${renderMonsterArt(monster, "monster-art", { loading: "lazy", revealHolographic: owned })}
-        </button>
-        <h3>#${String(monster.number).padStart(2, "0")} ${monster.name}</h3>
-        <div class="stat-line">
-          ${typeChips(monster)}
-          <span class="rarity-chip">${monster.rarity}</span>
-          ${holographicChip(monster)}
-          ${level ? `<span class="rarity-chip">+${level}</span>` : ""}
-          ${activeGoalkeeper ? `<span class="rarity-chip">Goleiro ativo</span>` : ""}
-        </div>
-        <div class="stat-line">
-          ${monsterStatsLine(monster, stats)}
-        </div>
-        <p class="evolution-note">${owned ? upgradeNote : "Tazzo ainda nao obtido."}</p>
-        <div class="card-actions">
-          ${keeper
-            ? `<button type="button" data-goalkeeper="${monster.id}" ${owned || activeGoalkeeper ? "" : "disabled"}>${activeGoalkeeper ? "Goleiro ativo" : "Usar como goleiro"}</button>`
-            : `<button type="button" data-team="${monster.id}" ${owned ? "" : "disabled"}>${inTeam ? "No trio" : `Colocar no slot ${state.selectedSlot + 1}`}</button>
-               <button class="secondary-button" type="button" data-upgrade="${monster.id}" ${canUpgrade ? "" : "disabled"}>${level >= 2 ? "Maximo" : "Melhorar"}</button>`}
-        </div>
-      </article>
-    `;
-  }).join("");
-
-  grid.querySelectorAll("button[data-team]").forEach((button) => {
-    button.addEventListener("click", () => setTeamSlot(button.dataset.team));
-  });
-
-  grid.querySelectorAll("button[data-upgrade]").forEach((button) => {
-    button.addEventListener("click", () => upgradeMonster(button.dataset.upgrade));
-  });
-
-  grid.querySelectorAll("button[data-goalkeeper]").forEach((button) => {
-    button.addEventListener("click", () => setGoalkeeper(button.dataset.goalkeeper));
-  });
-  decorateImageButtons(grid);
-  decorateImageButtons(document.getElementById("slot-picker"));
+  return menuViews().renderCollection(menuViewContext());
 }
 
 function renderEdit() {
@@ -4364,43 +4321,7 @@ function uniqueCustomId(baseId) {
 }
 
 function renderTrade() {
-  const duplicates = MONSTERS.filter((monster) => (state.save.collection[monster.id] || 0) > 1);
-  const missing = visibleCollectionMonsters().filter((monster) => !state.save.collection[monster.id]);
-  const offerSelect = document.getElementById("trade-offer");
-  const wishSelect = document.getElementById("trade-wish");
-
-  if (!duplicates.some((monster) => monster.id === state.selectedTrade.offer)) {
-    state.selectedTrade.offer = duplicates[0]?.id || "";
-  }
-  if (!missing.some((monster) => monster.id === state.selectedTrade.wish)) {
-    state.selectedTrade.wish = missing[0]?.id || "";
-  }
-
-  offerSelect.innerHTML = duplicates.length
-    ? duplicates.map((monster) => `<option value="${monster.id}" ${monster.id === state.selectedTrade.offer ? "selected" : ""}>${monster.name} x${state.save.collection[monster.id]}</option>`).join("")
-    : `<option value="">Sem repetidos</option>`;
-
-  wishSelect.innerHTML = missing.length
-    ? missing.map((monster) => `<option value="${monster.id}" ${monster.id === state.selectedTrade.wish ? "selected" : ""}>${monster.name} - ${monster.rarity}</option>`).join("")
-    : `<option value="">Album completo</option>`;
-
-  document.getElementById("duplicate-list").innerHTML = duplicates.length
-    ? duplicates.map((monster) => smallRow(monster, `x${state.save.collection[monster.id]}`)).join("")
-    : `<p>Nenhum repetido agora.</p>`;
-
-  document.getElementById("wish-list").innerHTML = missing.length
-    ? missing.slice(0, 8).map((monster) => smallRow(monster, monster.rarity)).join("")
-    : `<p>Album completo.</p>`;
-
-  document.getElementById("trade-log").innerHTML = state.tradeLog.length
-    ? state.tradeLog.map((line) => `<p>${line}</p>`).join("")
-    : `<p>Sem trocas nesta sessao.</p>`;
-
-  document.getElementById("trade-message").textContent = duplicates.length && missing.length
-    ? "Taxa de 60 Merreis por troca."
-    : "Abra pacotinhos para criar repetidos e desejos.";
-
-  document.getElementById("trade-button").disabled = !duplicates.length || !missing.length || state.save.merreis < 60;
+  return menuViews().renderTrade(menuViewContext());
 }
 
 function renderFriends() {
@@ -4609,212 +4530,43 @@ function renderOnlineLobbyRow(lobby) {
 }
 
 function renderCompetitive() {
-  const rank = currentRank();
-  const next = nextRank();
-  const progress = next ? Math.round(((state.save.trophies - rank.min) / (next.min - rank.min)) * 100) : 100;
-  const cost = teamCost();
-  const power = Math.round(teamPower());
-  const legal = cost <= 10;
-  const rankedTutorialReady = isCurrentTutorialStep("ranked");
-  const tournamentTutorialReady = isCurrentTutorialStep("tournament");
-  const chance = Math.round(rankedChance() * 100);
-  const latest = state.competitiveLog[0] || "Sem partidas competitivas nesta sessao.";
-  const rankedOpponent = rankedOpponentForCurrentRank();
-
-  document.getElementById("rank-card").innerHTML = `
-    <span class="eyebrow">Divisao atual</span>
-    <div class="rank-value">${rank.name}</div>
-    <div class="stat-line">
-      <span>${formatNumber(state.save.trophies)} trofeus</span>
-      <span>${state.save.rankedWins}V/${state.save.rankedLosses}D</span>
-      <span>Online ${formatNumber(state.save.onlineTrophies || 0)}</span>
-      <span>${state.save.tournamentWins} torneio(s)</span>
-    </div>
-    <div class="rank-meter">
-      <div class="progress"><span style="width:${clamp(progress, 0, 100)}%"></span></div>
-    </div>
-    <p class="evolution-note">${next ? `${next.name} em ${next.min} trofeus.` : "Topo da liga local."}</p>
-  `;
-
-  document.getElementById("ranked-summary").innerHTML = `
-    ${smallSummary("Custo competitivo", `${cost}/10`, legal ? "Time valido" : "Ajuste o time na colecao")}
-    ${smallSummary("Forca do trio", power, `${chance}% de chance estimada`)}
-    ${smallSummary("Oponente", rankedOpponent.name, `${rankedOpponent.team.map((id) => MONSTER_BY_ID[id].name).join(", ")} | Goleiro ${MONSTER_BY_ID[rankedOpponent.goalkeeper]?.name || "sorteado"}`)}
-    ${smallSummary("Recompensa", "+90 a +150 trofeus", "Resolvida na arena")}
-    ${smallSummary("Ultimo resultado", "Liga", latest)}
-  `;
-
-  const activeTournamentId = activeTournamentBattle() ? state.battle.tournamentId : "";
-  const activeRanked = activeRankedBattle();
-  const rankedButton = document.getElementById("ranked-button");
-  rankedButton.disabled = (!legal && !rankedTutorialReady) || Boolean(activeTournamentId) || activeRanked;
-  rankedButton.textContent = activeTournamentId
-    ? "Finalize o torneio"
-    : activeRanked
-    ? "Ranqueada ativa"
-    : !legal && rankedTutorialReady
-    ? "Disputar ranqueada tutorial"
-    : "Disputar ranqueada";
-  document.getElementById("tournament-list").innerHTML = TOURNAMENTS.map((tournament) => {
-    const active = activeTournamentId === tournament.id;
-    const tutorialBypass = tournamentTutorialReady;
-    const disabled = activeTournamentId || activeRanked || (!tutorialBypass && (state.save.merreis < tournament.entry || !legal));
-    const label = active ? "Em batalha" : tutorialBypass && (state.save.merreis < tournament.entry || !legal) ? "Entrar pelo tutorial" : "Entrar e batalhar";
-    const opponent = TOURNAMENT_OPPONENTS[tournament.id];
-    return `
-      <article class="tournament-card${active ? " is-active" : ""}">
-        <h3>${tournament.name}</h3>
-        <p>Entrada ${formatNumber(tournament.entry)} Merreis. Premio: ${tournament.prize}.</p>
-        <div class="tournament-opponent">
-          <span class="eyebrow">Oponente</span>
-          <strong>${opponent.name}</strong>
-          <span>${opponent.team.map((id) => MONSTER_BY_ID[id].name).join(", ")} | Goleiro ${MONSTER_BY_ID[opponent.goalkeeper]?.name || "sorteado"}</span>
-        </div>
-        <button type="button" data-tournament="${tournament.id}" ${disabled ? "disabled" : ""}>${label}</button>
-      </article>
-    `;
-  }).join("");
-
-  document.getElementById("leaderboard-list").innerHTML = renderLeaderboardRows(rank);
+  return menuViews().renderCompetitive(menuViewContext());
 }
 
 function renderLeaderboardRows(currentPlayerRank) {
-  const serverRows = state.leaderboard.rows || [];
-  const currentPlayerId = state.server.playerId;
-  const currentName = state.server.profile?.name || "Voce";
-  const currentRow = {
-    playerId: currentPlayerId || "local",
-    name: currentName,
-    trophies: state.save.trophies,
-    rank: currentPlayerRank.name,
-    rankedWins: state.save.rankedWins,
-    rankedLosses: state.save.rankedLosses,
-    tournamentWins: state.save.tournamentWins,
-    onlineTrophies: state.save.onlineTrophies,
-    onlineWins: state.save.onlineWins,
-    onlineLosses: state.save.onlineLosses,
-    onlineDraws: state.save.onlineDraws,
-    album: visibleCollectionMonsters().filter((monster) => state.save.collection[monster.id] > 0).length,
-    albumTotal: visibleCollectionMonsters().length
-  };
-  const rows = serverRows.length
-    ? serverRows
-    : [
-      { name: "Nina Holo", trophies: 1180, rank: "Lendario", rankedWins: 12, rankedLosses: 3, tournamentWins: 4 },
-      { name: "Tio Croc", trophies: 910, rank: "Lendario", rankedWins: 9, rankedLosses: 4, tournamentWins: 2 },
-      { name: "Bia Caps", trophies: 640, rank: "Holografico", rankedWins: 7, rankedLosses: 5, tournamentWins: 1 },
-      currentRow,
-      { name: "Lipe Snack", trophies: 350, rank: "Crocante", rankedWins: 4, rankedLosses: 4, tournamentWins: 0 },
-      { name: "Madu Tazo", trophies: 210, rank: "Recreio", rankedWins: 2, rankedLosses: 2, tournamentWins: 0 }
-    ];
-  const hasCurrent = rows.some((row) => row.playerId && currentPlayerId && row.playerId === currentPlayerId);
-  const withCurrent = hasCurrent ? rows : [...rows, currentRow];
-  const sorted = [...withCurrent].sort((a, b) => (b.onlineTrophies || 0) - (a.onlineTrophies || 0) || b.trophies - a.trophies || (b.onlineWins || 0) - (a.onlineWins || 0) || (b.album || 0) - (a.album || 0));
-  const visibleRows = sorted.slice(0, 20);
-  const currentSortedRow = currentPlayerId
-    ? sorted.find((row) => row.playerId === currentPlayerId)
-    : null;
-  if (currentSortedRow && !visibleRows.some((row) => row.playerId === currentPlayerId)) {
-    visibleRows.push(currentSortedRow);
-  }
-  const statusRow = state.leaderboard.loading
-    ? `<div class="small-row"><span class="chip">...</span><div><strong>Atualizando ranking</strong><span>Buscando jogadores online</span></div><span></span></div>`
-    : state.leaderboard.error
-    ? `<div class="small-row"><span class="chip">!</span><div><strong>Ranking local</strong><span>${state.leaderboard.error}</span></div><span></span></div>`
-    : "";
-
-  return `${statusRow}${visibleRows.map((row, index) => {
-    const isCurrent = row.playerId && currentPlayerId && row.playerId === currentPlayerId;
-    const onlineRecord = `${Number(row.onlineWins) || 0}V/${Number(row.onlineLosses) || 0}D/${Number(row.onlineDraws) || 0}E`;
-    const meta = `Online ${formatNumber(row.onlineTrophies || 0)} pts ${onlineRecord} | Liga ${row.rank || "Tampinha"} | ${Number(row.tournamentWins) || 0} torneio(s)`;
-    const album = row.albumTotal ? `${row.album}/${row.albumTotal}` : "";
-    return `
-      <div class="small-row${isCurrent ? " is-selected" : ""}">
-        <span class="chip">#${index + 1}</span>
-        <div>
-          <strong>${row.name}${isCurrent ? " (voce)" : ""}</strong>
-          <span>${meta}${album ? ` | Album ${album}` : ""}</span>
-        </div>
-        <span class="chip">${formatNumber(row.onlineTrophies || row.trophies || 0)}</span>
-      </div>
-    `;
-  }).join("")}`;
+  return menuViews().renderLeaderboardRows(menuViewContext(), currentPlayerRank);
 }
 
 function renderShop() {
-  document.getElementById("shop-message").textContent = state.shopMessage;
-  document.getElementById("shop-grid").innerHTML = SHOP_ITEMS.map((item) => {
-    const owned = Boolean(state.save.cosmetics[item.id]);
-    const active = state.save.selectedCosmetic === item.id;
-    const disabled = !owned && state.save.merreis < item.cost;
-    const label = active ? "Ativo" : owned ? "Ativar" : "Comprar";
-    return `
-      <article class="shop-card${owned ? " is-owned" : ""}${active ? " is-active" : ""}">
-        <h2>${item.name}</h2>
-        <p>${item.note}</p>
-        <div class="pack-meta">
-          <span class="chip">${formatNumber(item.cost)} Merreis</span>
-          <span class="rarity-chip">${owned ? "Obtido" : "Cosmetico"}</span>
-        </div>
-        <button type="button" data-shop="${item.id}" ${disabled || active ? "disabled" : ""}>${label}</button>
-      </article>
-    `;
-  }).join("");
+  return menuViews().renderShop(menuViewContext());
 }
 
 function smallSummary(title, value, meta) {
-  return `
-    <div class="small-row">
-      <span class="chip">${value}</span>
-      <div>
-        <strong>${title}</strong>
-        <span>${meta}</span>
-      </div>
-      <span></span>
-    </div>
-  `;
+  return menuViews().smallSummary(title, value, meta);
 }
 
 function renderMissions() {
-  const grid = document.getElementById("mission-grid");
-  grid.innerHTML = MISSIONS.map((mission) => {
-    const status = missionStatus(mission);
-    const progress = clamp(status.progress, 0, mission.target);
-    const ready = progress >= mission.target && !status.claimed;
-    const done = status.claimed;
-    const width = Math.round((progress / mission.target) * 100);
-    return `
-      <article class="mission-card">
-        <h2>${mission.title}</h2>
-        <p>${progress}/${mission.target} - ${formatNumber(mission.reward)} Merreis</p>
-        <div class="progress"><span style="width:${width}%"></span></div>
-        <button type="button" data-claim="${mission.id}" ${ready ? "" : "disabled"}>${done ? "Resgatada" : "Resgatar"}</button>
-      </article>
-    `;
-  }).join("");
+  return menuViews().renderMissions(menuViewContext());
+}
 
-  grid.querySelectorAll("button[data-claim]").forEach((button) => {
-    button.addEventListener("click", () => claimMission(button.dataset.claim));
-  });
+function missionCardTemplate(mission) {
+  return menuViews().missionCardTemplate(menuViewContext(), mission);
+}
+
+function missionPeriodTitle(period) {
+  return menuViews().missionPeriodTitle(period);
+}
+
+function missionRewardText(mission) {
+  return menuViews().missionRewardText(menuViewContext(), mission);
 }
 
 function missionStatus(mission) {
-  const saved = state.save.missions[mission.id] || { progress: 0, claimed: false };
-  if (mission.scope === "album") {
-    return {
-      progress: albumMissionProgress(mission),
-      claimed: Boolean(saved.claimed)
-    };
-  }
-  return saved;
+  return menuViews().missionStatus(menuViewContext(), mission);
 }
 
 function albumMissionProgress(mission) {
-  const [from, to] = mission.range || [0, -1];
-  return MONSTERS
-    .filter((monster) => monster.number >= from && monster.number <= to)
-    .filter((monster) => (state.save.collection[monster.id] || 0) > 0)
-    .length;
+  return menuViews().albumMissionProgress(menuViewContext(), mission);
 }
 
 function renderTutorial() {
@@ -5586,6 +5338,16 @@ function buyShopItemLocally(itemId) {
   const item = SHOP_ITEMS.find((entry) => entry.id === itemId);
   if (!item) return;
 
+  if (item.type === "merreis") {
+    const amount = Math.max(0, Math.floor(Number(item.merreis)) || 0);
+    if (!amount) return;
+    state.save.merreis += amount;
+    state.shopMessage = `${item.name} comprado: +${formatNumber(amount)} Merreis.`;
+    saveGame();
+    renderAll();
+    return;
+  }
+
   if (state.save.cosmetics[item.id]) {
     state.save.selectedCosmetic = item.id;
     state.shopMessage = `${item.name} ativado.`;
@@ -5761,6 +5523,7 @@ function claimMissionLocally(id) {
   if (status.claimed || status.progress < mission.target) return;
   state.save.missions[id].claimed = true;
   state.save.merreis += mission.reward;
+  state.save.fragments += Number(mission.fragments) || 0;
   saveGame();
   renderAll();
 }
@@ -5774,13 +5537,16 @@ async function claimMissionOnServer(id) {
   }
 }
 
-function progressMission(id, amount) {
-  const mission = MISSIONS.find((item) => item.id === id);
-  if (!mission || mission.scope === "album") return;
-  if (!state.save.missions[id]) {
-    state.save.missions[id] = { progress: 0, claimed: false };
-  }
-  state.save.missions[id].progress = clamp(state.save.missions[id].progress + amount, 0, mission.target);
+function progressMission(eventId, amount) {
+  const missions = MISSIONS.filter((mission) => missionEvent(mission) === eventId && mission.scope !== "album" && missionPeriod(mission) !== "album");
+  if (!missions.length) return;
+  missions.forEach((mission) => {
+    if (!state.save.missions[mission.id]) {
+      state.save.missions[mission.id] = { progress: 0, claimed: false };
+    }
+    const current = Number(state.save.missions[mission.id].progress) || 0;
+    state.save.missions[mission.id].progress = clamp(current + amount, 0, mission.target);
+  });
   saveGame();
 }
 

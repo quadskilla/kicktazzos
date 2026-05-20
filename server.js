@@ -48,6 +48,7 @@ const LEGENDARY_BOOST_TAZZOS = 50;
 const LEGENDARY_BOOST_MAX_TAZZOS = 100;
 const LEGENDARY_BOOST_MULTIPLIER = 2;
 const LEGENDARY_BOOST_MAX_MULTIPLIER = 4;
+const MISSION_PERIODS = ["daily", "weekly", "monthly"];
 const ONLINE_TARGET_ACTIONS = new Set(["move", "retreat", "swap", "dribble", "shot", "pressure"]);
 const ONLINE_ACTION_LABELS = {
   pass: "passou",
@@ -107,6 +108,51 @@ let onlineHeartbeat = null;
 let onlineTurnHeartbeat = null;
 let shuttingDown = false;
 let firebaseCertCache = { certs: null, expiresAt: 0 };
+
+function missionPeriod(mission) {
+  return mission?.period || (mission?.scope === "album" ? "album" : "daily");
+}
+
+function missionEvent(mission) {
+  return mission?.event || mission?.id;
+}
+
+function missionCycleKey(period, date = new Date()) {
+  const year = date.getUTCFullYear();
+  if (period === "monthly") {
+    return `${year}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+  }
+  if (period === "weekly") {
+    const day = date.getUTCDay() || 7;
+    const thursday = new Date(Date.UTC(year, date.getUTCMonth(), date.getUTCDate() + 4 - day));
+    const weekYear = thursday.getUTCFullYear();
+    const firstThursday = new Date(Date.UTC(weekYear, 0, 4));
+    const firstDay = firstThursday.getUTCDay() || 7;
+    const week = Math.ceil((((thursday - firstThursday) / 86400000) + firstDay) / 7);
+    return `${weekYear}-W${String(week).padStart(2, "0")}`;
+  }
+  return date.toISOString().slice(0, 10);
+}
+
+function currentMissionCycles(date = new Date()) {
+  return Object.fromEntries(MISSION_PERIODS.map((period) => [period, missionCycleKey(period, date)]));
+}
+
+function normalizeMissionCycles(cycles = {}, legacyMissionDate = new Date().toISOString().slice(0, 10)) {
+  const current = currentMissionCycles();
+  return {
+    daily: String(cycles.daily || legacyMissionDate || current.daily),
+    weekly: String(cycles.weekly || current.weekly),
+    monthly: String(cycles.monthly || current.monthly)
+  };
+}
+
+function defaultMissionStatuses() {
+  return Object.fromEntries(MISSIONS.map((mission) => [
+    mission.id,
+    { progress: missionEvent(mission) === "login" ? 1 : 0, claimed: false }
+  ]));
+}
 
 function json(res, status, payload, headers = {}) {
   const body = JSON.stringify(payload);
@@ -2817,10 +2863,8 @@ function defaultServerSave() {
     tutorial: Object.fromEntries(TUTORIAL_STEPS.map((step) => [step.id, false])),
     tutorialRewardClaimed: false,
     missionDate: new Date().toISOString().slice(0, 10),
-    missions: Object.fromEntries(MISSIONS.map((mission) => [
-      mission.id,
-      { progress: mission.id === "login" ? 1 : 0, claimed: false }
-    ]))
+    missionCycles: currentMissionCycles(),
+    missions: defaultMissionStatuses()
   };
 }
 
@@ -2917,19 +2961,20 @@ function normalizeServerSave(rawSave = {}) {
   Object.entries({ ...fresh.collection, ...(save.collection || {}) }).forEach(([id, count]) => {
     if (catalog.has(id)) collection[id] = Math.max(0, Math.floor(Number(count)) || 0);
   });
+  const savedMissionCycles = normalizeMissionCycles(save.missionCycles || {}, save.missionDate);
   const missions = Object.fromEntries(MISSIONS.map((mission) => [
     mission.id,
-    {
+    sanitizeMissionStatus({
       ...fresh.missions[mission.id],
       ...((save.missions || {})[mission.id] || {})
-    }
+    }, mission)
   ]));
   const tutorial = Object.fromEntries(TUTORIAL_STEPS.map((step) => [
     step.id,
     Boolean((save.tutorial || fresh.tutorial)[step.id])
   ]));
 
-  return {
+  const normalized = {
     ...fresh,
     ...save,
     merreis: Math.max(0, Math.floor(Number(save.merreis ?? fresh.merreis)) || 0),
@@ -2947,6 +2992,7 @@ function normalizeServerSave(rawSave = {}) {
     team: normalizeServerTeam(save.team || fresh.team, collection, catalog, fresh.team),
     goalkeeper: normalizeServerGoalkeeper(save.goalkeeper || fresh.goalkeeper, collection, catalog, fresh.goalkeeper),
     missions,
+    missionCycles: savedMissionCycles,
     tutorial,
     upgrades: save.upgrades && typeof save.upgrades === "object" ? save.upgrades : fresh.upgrades,
     cosmetics: save.cosmetics && typeof save.cosmetics === "object" ? save.cosmetics : fresh.cosmetics,
@@ -2956,6 +3002,10 @@ function normalizeServerSave(rawSave = {}) {
     musicVolume: Number.isFinite(musicVolume) ? clamp(musicVolume, 0, 1) : fresh.musicVolume,
     migratedFromLocalAt
   };
+  normalized.missions = resetExpiredMissions(normalized.missions, fresh.missions, savedMissionCycles);
+  normalized.missionCycles = currentMissionCycles();
+  normalized.missionDate = new Date().toISOString().slice(0, 10);
+  return normalized;
 }
 
 function economicSaveFingerprint(save) {
@@ -3166,11 +3216,41 @@ function nextPackPity(previousPity, monster) {
     : previousPity.sinceLegendaryPlus + 1;
 }
 
-function progressServerMission(save, id, amount) {
-  const mission = MISSIONS.find((item) => item.id === id);
-  if (!mission || mission.scope === "album") return;
-  if (!save.missions[id]) save.missions[id] = { progress: 0, claimed: false };
-  save.missions[id].progress = clamp((Number(save.missions[id].progress) || 0) + amount, 0, mission.target);
+function sanitizeMissionStatus(status, mission) {
+  return {
+    progress: clamp(Math.floor(Number(status?.progress)) || 0, 0, mission.target),
+    claimed: Boolean(status?.claimed)
+  };
+}
+
+function resetExpiredMissions(currentMissions, freshMissions, savedMissionCycles) {
+  const currentCycles = currentMissionCycles();
+  return Object.fromEntries(MISSIONS.map((mission) => {
+    const period = missionPeriod(mission);
+    if (period === "album" || mission.scope === "album") {
+      return [
+        mission.id,
+        {
+          ...sanitizeMissionStatus(freshMissions[mission.id], mission),
+          claimed: Boolean(currentMissions?.[mission.id]?.claimed)
+        }
+      ];
+    }
+    if (savedMissionCycles?.[period] !== currentCycles[period]) {
+      return [mission.id, sanitizeMissionStatus(freshMissions[mission.id], mission)];
+    }
+    return [mission.id, sanitizeMissionStatus(currentMissions?.[mission.id] || freshMissions[mission.id], mission)];
+  }));
+}
+
+function progressServerMission(save, eventId, amount) {
+  const missions = MISSIONS.filter((mission) => missionEvent(mission) === eventId && mission.scope !== "album" && missionPeriod(mission) !== "album");
+  if (!missions.length) return;
+  missions.forEach((mission) => {
+    if (!save.missions[mission.id]) save.missions[mission.id] = { progress: 0, claimed: false };
+    const current = Number(save.missions[mission.id].progress) || 0;
+    save.missions[mission.id].progress = clamp(current + amount, 0, mission.target);
+  });
 }
 
 function isGoalkeeper(monsterOrId) {
@@ -3345,6 +3425,27 @@ async function buyShopItemForPlayer(playerId, itemId) {
   const record = await readOrCreateSave(playerId);
   const save = normalizeServerSave(record.save);
   save.cosmetics = save.cosmetics || {};
+
+  if (item.type === "merreis") {
+    const amount = Math.max(0, Math.floor(Number(item.merreis)) || 0);
+    if (!amount) {
+      const error = new Error("Pacote de Merreis invalido.");
+      error.status = 400;
+      error.save = save;
+      throw error;
+    }
+    save.merreis += amount;
+    const message = `${item.name} comprado: +${amount.toLocaleString("pt-BR")} Merreis.`;
+    await writeSave(playerId, save);
+    recordAccountEvent(playerId, "shop:merreis", {
+      item: { id: item.id, name: item.name },
+      merreis: amount,
+      priceLabel: item.priceLabel || "",
+      balances: accountEventBalance(save)
+    });
+    return { save, item, message };
+  }
+
   const alreadyOwned = Boolean(save.cosmetics[item.id]);
 
   let message = "";
@@ -3450,6 +3551,7 @@ async function claimMissionForPlayer(playerId, missionId) {
 
   save.missions[mission.id].claimed = true;
   save.merreis += mission.reward;
+  save.fragments += Number(mission.fragments) || 0;
   await writeSave(playerId, save);
   recordAccountEvent(playerId, "mission:claim", {
     mission: {
