@@ -1,6 +1,16 @@
 (function () {
   "use strict";
 
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      "\"": "&quot;",
+      "'": "&#39;"
+    }[char]));
+  }
+
   function renderShop(ctx) {
     const payments = ctx.state.shopPayments || {};
     const paymentNotice = payments.checked && !payments.configured ? payments.message : "";
@@ -26,8 +36,12 @@
         : "Comprar";
       const price = merreisPack ? item.priceLabel : `${ctx.formatNumber(item.cost)} Merreis`;
       const tag = merreisPack ? `+${ctx.formatNumber(item.merreis)} Merreis` : owned ? "Obtido" : "Cosmetico";
+      const artwork = merreisPack && item.image
+        ? `<figure class="shop-merreis-art"><img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.name)}"></figure>`
+        : "";
       return `
         <article class="shop-card${owned ? " is-owned" : ""}${active ? " is-active" : ""}${merreisPack ? " is-merreis-pack" : ""}">
+          ${artwork}
           <h2>${item.name}</h2>
           <p>${item.note}</p>
           <div class="pack-meta">

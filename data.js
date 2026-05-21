@@ -164,9 +164,9 @@ const TOURNAMENTS = [
 ];
 
 const SHOP_ITEMS = [
-  { id: "merreis-2000", type: "merreis", name: "Bolso de Merreis", merreis: 2000, priceCents: 490, currency: "BRL", priceLabel: "R$ 4,90", note: "Recarga rapida para abrir pacotinhos e entrar em torneios." },
-  { id: "merreis-10000", type: "merreis", name: "Combo Recreio", merreis: 10000, priceCents: 1490, currency: "BRL", priceLabel: "R$ 14,90", note: "Mais folego para comprar pacotinhos e melhorar seu time." },
-  { id: "merreis-30000", type: "merreis", name: "Cofre Campeao", merreis: 30000, priceCents: 2990, currency: "BRL", priceLabel: "R$ 29,90", note: "Pacote grande para colecionadores que querem acelerar a liga." },
+  { id: "merreis-2000", type: "merreis", name: "Bolso de Merreis", merreis: 2000, priceCents: 499, currency: "BRL", priceLabel: "R$ 4,99", image: "assets/4,99.png", note: "Recarga rapida para abrir pacotinhos e entrar em torneios." },
+  { id: "merreis-10000", type: "merreis", name: "Combo Recreio", merreis: 10000, priceCents: 1499, currency: "BRL", priceLabel: "R$ 14,99", image: "assets/14,99.png", note: "Mais folego para comprar pacotinhos e melhorar seu time." },
+  { id: "merreis-30000", type: "merreis", name: "Cofre Campeao", merreis: 30000, priceCents: 2499, currency: "BRL", priceLabel: "R$ 24,99", image: "assets/24,99.png", note: "Pacote grande para colecionadores que querem acelerar a liga." },
   { id: "frame-holo", name: "Moldura Holografica", cost: 380, note: "Realce visual para tazzos do seu time." },
   { id: "album-crocante", name: "Capa Crocante", cost: 460, note: "Capa cosmetica para o album digital." },
   { id: "tear-effect", name: "Efeito Rasgo Neon", cost: 520, note: "Efeito cosmetico para abertura de pacotinhos." },
