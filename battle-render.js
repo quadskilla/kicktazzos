@@ -315,6 +315,7 @@ function renderArena() {
   arena.innerHTML = "";
   const active = activePiece();
   const animation = state.battle.animation;
+  const keeperCell = keeperAbilityCell(animation);
 
   for (let y = 0; y < 5; y += 1) {
     for (let x = 0; x < 7; x += 1) {
@@ -346,6 +347,9 @@ function renderArena() {
 
       if (piece) {
         cell.append(renderPieceToken(piece));
+      }
+      if (keeperCell && keeperCell.x === x && keeperCell.y === y) {
+        cell.append(renderKeeperAbilityToken(animation));
       }
       if (target) {
         const hint = targetHint(active, target);
@@ -381,6 +385,29 @@ function renderArena() {
   document.getElementById("round-label").textContent = `Rodada ${Math.max(1, state.battle.round)}`;
   document.getElementById("match-label").textContent = formatTime(state.battle.matchTime || 0);
   document.getElementById("active-label").textContent = active ? `${monsterOf(active).name} (${active.side === "player" ? "voce" : state.battle.enemyName})` : state.battle.status;
+}
+
+function keeperAbilityCell(animation) {
+  if (!animation || animation.action !== "keeper" || !animation.keeperMonsterId) return null;
+  const side = animation.side === "cpu" ? "cpu" : "player";
+  const x = side === "cpu" ? 6 : 0;
+  const rawY = Number(animation.to?.y ?? animation.from?.y ?? 2);
+  const baseY = Math.max(0, Math.min(4, Number.isFinite(rawY) ? rawY : 2));
+  const candidates = [baseY, 2, 1, 3, 0, 4].filter((value, index, list) => list.indexOf(value) === index);
+  const emptyY = candidates.find((y) => !pieceAt(x, y));
+  return { x, y: Number.isFinite(emptyY) ? emptyY : baseY };
+}
+
+function renderKeeperAbilityToken(animation) {
+  const monster = MONSTER_BY_ID[animation.keeperMonsterId];
+  const token = document.createElement("div");
+  token.className = `keeper-ability-token ${animation.side === "cpu" ? "cpu" : "player"} is-${animation.stage || "windup"}`;
+  token.setAttribute("aria-label", monster ? `${monster.name} ativou a habilidade de goleiro` : "Habilidade de goleiro ativada");
+  token.innerHTML = `
+    ${monster ? `<img src="${monster.image}" alt="${monster.name}">` : ""}
+    <span>Goleiro</span>
+  `;
+  return token;
 }
 
 function renderBattleScore() {

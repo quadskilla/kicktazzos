@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Kick Tazzos: Copa da zoeira!</title>
-  <link rel="stylesheet" href="styles.css?v=20260520-shop-merreis-art-1">
+  <link rel="stylesheet" href="styles.css?v=20260522-mobile-7">
 </head>
 <body>
   <div class="app-shell">
@@ -357,7 +357,7 @@
             <h2>Lista de desejo</h2>
             <div id="wish-list" class="small-list"></div>
           </div>
-          <div class="panel">
+          <div class="panel trade-history-panel">
             <h2>Historico</h2>
             <div class="battle-log" id="trade-log"></div>
           </div>
@@ -460,11 +460,15 @@
     </section>
   </div>
 
+  <div class="reward-celebration" id="reward-celebration" hidden></div>
+  <div class="social-notice-stack" id="social-notice-stack" aria-live="polite" aria-atomic="false"></div>
+
   <aside class="music-player" id="music-player" aria-label="Player de musicas">
     <button class="music-disc-button" type="button" id="music-toggle-button" aria-label="Tocar musica">
       <img src="assets/music-diskman.png" alt="">
     </button>
-    <div class="music-player-main">
+    <button class="music-collapse-button" type="button" id="music-collapse-button" aria-label="Recolher player de musicas" aria-expanded="true" aria-controls="music-player-main"></button>
+    <div class="music-player-main" id="music-player-main">
       <span class="eyebrow">Diskman do recreio</span>
       <strong id="music-track-name">Sem musica</strong>
       <div class="music-controls">
@@ -484,13 +488,13 @@
   <script src="scripts/menu-packs.js?v=20260520-real-flip-1"></script>
   <script src="scripts/menu-collection.js?v=20260520-ui-polish-2"></script>
   <script src="scripts/menu-friends.js?v=20260520-agent-features-1"></script>
-  <script src="scripts/menu-tournaments.js?v=20260520-agent-features-1"></script>
-  <script src="scripts/menu-trades.js?v=20260520-trades-live-1"></script>
+  <script src="scripts/menu-tournaments.js?v=20260521-tournament-tutorial-1"></script>
+  <script src="scripts/menu-trades.js?v=20260521-trade-offer-1"></script>
   <script src="scripts/menu-shop.js?v=20260520-shop-merreis-art-1"></script>
-  <script src="scripts/menu-missions.js?v=20260520-agent-features-1"></script>
+  <script src="scripts/menu-missions.js?v=20260521-missions-economy-1"></script>
   <script src="scripts/menu-views.js?v=20260520-agent-features-1"></script>
-  <script src="app.js?v=20260520-trades-live-1"></script>
-  <script src="battle-render.js?v=20260520-agent-features-1"></script>
-  <script src="battle-engine.js?v=20260520-agent-features-1"></script>
+  <script src="app.js?v=20260521-tournament-tutorial-1"></script>
+  <script src="battle-render.js?v=20260521-feedback-1"></script>
+  <script src="battle-engine.js?v=20260521-feedback-1"></script>
 </body>
 </html>

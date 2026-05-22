@@ -1731,7 +1731,9 @@ async function createSocialTrade(playerId, friendPlayerId, offeredIds, requested
     from: publicSocialProfile(profile),
     value: trade.offerValue
   });
-  return socialPayloadForPlayer(playerId);
+  const payload = await socialPayloadForPlayer(playerId);
+  broadcastSocialUpdateToPlayers([playerId, friendPlayerId]).catch(() => {});
+  return payload;
 }
 
 async function respondSocialTrade(playerId, tradeId, accept) {
@@ -1785,6 +1787,7 @@ async function respondSocialTrade(playerId, tradeId, accept) {
     });
   }
   const payload = await socialPayloadForPlayer(playerId);
+  broadcastSocialUpdateToPlayers([playerId, trade.from_player_id]).catch(() => {});
   return { ...payload, save: resultSave || payload.save };
 }
 
@@ -3388,6 +3391,28 @@ async function sendOnlineUpdateToClient(client) {
   });
 }
 
+async function sendSocialUpdateToClient(client) {
+  sendWebSocketJson(client, {
+    type: "social:update",
+    ...(await socialPayloadForPlayer(client.playerId))
+  });
+}
+
+async function broadcastSocialUpdateToPlayers(playerIds = []) {
+  if (!wsClients.size) return;
+  const targets = new Set(playerIds.filter((playerId) => isValidPlayerId(playerId)));
+  if (!targets.size) return;
+  await Promise.all([...wsClients]
+    .filter((client) => targets.has(client.playerId))
+    .map(async (client) => {
+      try {
+        await sendSocialUpdateToClient(client);
+      } catch (error) {
+        closeWebSocketClient(client);
+      }
+    }));
+}
+
 async function broadcastOnlineLobbies() {
   if (!wsClients.size) return;
   await Promise.all([...wsClients].map(async (client) => {
@@ -4707,7 +4732,15 @@ async function openStarterPackForPlayer(playerId) {
     return { save, pulls, alreadyComplete: true };
   }
 
-  const starter = drawStarterPackPulls(save.collection || {});
+  const hasExistingProgress = hasLegacyStarterProgress(save);
+  const starterSourceCollection = hasExistingProgress ? save.collection || {} : {};
+  const starter = drawStarterPackPulls(starterSourceCollection);
+  if (!hasExistingProgress) {
+    save.collection = {};
+    save.upgrades = {};
+    save.wishlist = {};
+    save.activeCompetitive = null;
+  }
   starter.pulls.forEach((pull) => {
     save.collection[pull.monsterId] = (save.collection[pull.monsterId] || 0) + 1;
   });

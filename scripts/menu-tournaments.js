@@ -16,6 +16,17 @@
     const searching = Boolean(ctx.state.matchmaking?.active);
     const streak = Number(ctx.state.save.competitiveWinStreak) || 0;
     const nextBonus = streak >= 5 ? 8 : streak >= 4 ? 8 : streak >= 3 ? 6 : streak >= 2 ? 4 : 2;
+    const savedCompetitive = ctx.activeSavedCompetitive();
+    const competitiveTutorialReady = rankedTutorialReady || tournamentTutorialReady;
+    const savedTournamentId = !competitiveTutorialReady && savedCompetitive?.type === "tournament" ? savedCompetitive.tournamentId : "";
+    const savedRanked = !competitiveTutorialReady && savedCompetitive?.type === "ranked";
+    const matchmakingElapsed = searching ? Math.max(0, Date.now() - (Number(ctx.state.matchmaking.startedAt) || Date.now())) : 0;
+    const matchmakingRemaining = searching ? Math.max(0, Math.ceil((ctx.COMPETITIVE_MATCHMAKING_TIMEOUT_MS - matchmakingElapsed) / 1000)) : 0;
+    const matchmakingLabel = searching
+      ? matchmakingRemaining
+        ? `Bot em ${matchmakingRemaining}s`
+        : "Chamando bot"
+      : "Fila real";
 
     document.getElementById("rank-card").innerHTML = `
       <span class="eyebrow">Divisao atual</span>
@@ -37,17 +48,19 @@
       ${window.TazzoMenuShared.smallSummary("Custo competitivo", `${cost}/10`, legal ? "Time valido" : "Ajuste o time na colecao")}
       ${window.TazzoMenuShared.smallSummary("Forca do trio", power, `${chance}% de chance estimada`)}
       ${window.TazzoMenuShared.smallSummary("Oponente", rankedOpponent.name, `${rankedOpponent.team.map((id) => ctx.MONSTER_BY_ID[id].name).join(", ")} | Goleiro ${ctx.MONSTER_BY_ID[rankedOpponent.goalkeeper]?.name || "sorteado"}`)}
-      ${window.TazzoMenuShared.smallSummary("Matchmaking", searching ? "Procurando" : "Fila real", searching ? `${ctx.state.matchmaking.label || "Partida"}: ate 40s antes do bot` : "Se nao parear em 40s, vem bot")}
+      ${window.TazzoMenuShared.smallSummary("Matchmaking", searching ? "Procurando" : matchmakingLabel, searching ? `${ctx.state.matchmaking.label || "Partida"}: ${matchmakingLabel}` : "Se nao parear em 40s, vem bot")}
       ${window.TazzoMenuShared.smallSummary("Pontuacao", "+10 / -5", streak ? `Proximo bonus ate +${nextBonus}` : "2V seguidas ativam bonus")}
       ${window.TazzoMenuShared.smallSummary("Ultimo resultado", "Liga", latest)}
     `;
 
-    const activeTournamentId = ctx.activeTournamentBattle() ? ctx.state.battle.tournamentId : "";
-    const activeRanked = ctx.activeRankedBattle();
+    const activeTournamentId = ctx.activeTournamentBattle() ? ctx.state.battle.tournamentId : savedTournamentId;
+    const activeRanked = ctx.activeRankedBattle() || savedRanked;
     const rankedButton = document.getElementById("ranked-button");
-    rankedButton.disabled = searching || (!legal && !rankedTutorialReady) || Boolean(activeTournamentId) || activeRanked;
+    rankedButton.disabled = searching || (!savedRanked && ((!legal && !rankedTutorialReady) || Boolean(activeTournamentId)));
     rankedButton.textContent = searching
-      ? "Procurando partida"
+      ? `Procurando partida (${matchmakingLabel})`
+      : savedRanked
+      ? "Retomar ranqueada"
       : activeTournamentId
       ? "Finalize o torneio"
       : activeRanked
@@ -59,8 +72,14 @@
     document.getElementById("tournament-list").innerHTML = ctx.TOURNAMENTS.map((tournament) => {
       const active = activeTournamentId === tournament.id;
       const tutorialBypass = tournamentTutorialReady;
-      const disabled = searching || activeTournamentId || activeRanked || (!tutorialBypass && (ctx.state.save.merreis < tournament.entry || !legal));
-      const label = searching ? "Procurando partida" : active ? "Em batalha" : tutorialBypass && (ctx.state.save.merreis < tournament.entry || !legal) ? "Entrar pelo tutorial" : "Entrar e batalhar";
+      const disabled = searching || (activeTournamentId && !active) || activeRanked || (!active && !tutorialBypass && (ctx.state.save.merreis < tournament.entry || !legal));
+      const label = searching
+        ? `Procurando (${matchmakingLabel})`
+        : active
+        ? ctx.activeTournamentBattle() ? "Voltar para batalha" : "Retomar torneio"
+        : tutorialBypass && (ctx.state.save.merreis < tournament.entry || !legal)
+        ? "Entrar pelo tutorial"
+        : "Entrar e batalhar";
       const opponent = ctx.TOURNAMENT_OPPONENTS[tournament.id];
       return `
         <article class="tournament-card${active ? " is-active" : ""}">

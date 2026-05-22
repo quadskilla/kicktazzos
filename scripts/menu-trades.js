@@ -106,27 +106,91 @@
     const fromYou = trade.fromPlayerId === ctx.state.server.playerId;
     const incoming = trade.toPlayerId === ctx.state.server.playerId && trade.status === "pending";
     const friendName = fromYou ? trade.to?.name : trade.from?.name;
-    const offered = trade.offeredIds.map((id) => monsterName(ctx, id)).join(", ");
-    const requested = trade.requestedIds.map((id) => monsterName(ctx, id)).join(", ");
+    const offerValue = selectedValue(ctx, trade.offeredIds || []);
+    const requestValue = selectedValue(ctx, trade.requestedIds || []);
+    const balanced = offerValue === requestValue;
+    const receiveIds = incoming ? trade.offeredIds : trade.requestedIds;
+    const giveIds = incoming ? trade.requestedIds : trade.offeredIds;
+    const receiveValue = selectedValue(ctx, receiveIds || []);
+    const giveValue = selectedValue(ctx, giveIds || []);
+    const receiveTitle = incoming ? "Voce recebe" : fromYou ? "Voce pediu" : "Oferta";
+    const giveTitle = incoming ? "Voce entrega" : fromYou ? "Voce oferece" : "Pedido";
+    const title = incoming
+      ? `${friendName || "Amigo"} quer trocar com voce`
+      : fromYou
+      ? `Sua proposta para ${friendName || "amigo"}`
+      : `${friendName || "Amigo"} fez uma proposta`;
     return `
-      <div class="trade-offer-row">
-        <div>
-          <strong>${escapeHtml(fromYou ? `Voce -> ${friendName || "amigo"}` : `${friendName || "Amigo"} -> voce`)}</strong>
-          <span>Oferta: ${escapeHtml(offered)} | Pedido: ${escapeHtml(requested)} | Valor ${Number(trade.value) || 0}</span>
+      <article class="trade-offer-row trade-offer-card ${incoming ? "is-incoming" : fromYou ? "is-outgoing" : ""} is-${escapeHtml(trade.status)}">
+        <div class="trade-offer-header">
+          <div>
+            <span class="eyebrow">${incoming ? "Nova proposta" : "Proposta"}</span>
+            <strong>${escapeHtml(title)}</strong>
+          </div>
+          <span class="chip">${escapeHtml(statusLabel(trade.status))}</span>
         </div>
-        <span class="chip">${escapeHtml(statusLabel(trade.status))}</span>
-        ${incoming ? `
-          <span class="friend-inline-actions">
-            <button type="button" data-trade-accept="${escapeHtml(trade.id)}">Aceitar</button>
-            <button type="button" data-trade-decline="${escapeHtml(trade.id)}">Recusar</button>
+        <div class="trade-offer-visual">
+          ${tradeSideTemplate(ctx, receiveTitle, receiveIds, receiveValue, incoming ? "receive" : "neutral")}
+          <div class="trade-swap-mark" aria-hidden="true">
+            <img src="assets/generated-ui/icon-trade.png" alt="">
+          </div>
+          ${tradeSideTemplate(ctx, giveTitle, giveIds, giveValue, incoming ? "give" : "neutral")}
+        </div>
+        <div class="trade-offer-summary">
+          <span class="trade-balance ${balanced ? "is-balanced" : "is-warning"}">
+            ${balanced ? "Valores iguais" : "Valores diferentes"}: ${offerValue} x ${requestValue}
           </span>
+          <span>${incoming ? "Confira os tazzos antes de aceitar." : tradeStatusDetail(trade.status)}</span>
+        </div>
+        ${incoming ? `
+          <div class="trade-offer-actions">
+            <button type="button" data-trade-accept="${escapeHtml(trade.id)}">Aceitar troca</button>
+            <button type="button" data-trade-decline="${escapeHtml(trade.id)}">Recusar</button>
+          </div>
         ` : ""}
-      </div>
+      </article>
+    `;
+  }
+
+  function tradeSideTemplate(ctx, title, ids = [], value = 0, tone = "neutral") {
+    return `
+      <section class="trade-side-card is-${escapeHtml(tone)}">
+        <div class="trade-side-heading">
+          <span>${escapeHtml(title)}</span>
+          <strong>${value} pts</strong>
+        </div>
+        <div class="trade-tazzo-stack">
+          ${ids.length ? ids.map((id) => tradeTazzoTile(ctx, id)).join("") : `<p>Nenhum tazzo.</p>`}
+        </div>
+      </section>
+    `;
+  }
+
+  function tradeTazzoTile(ctx, id) {
+    const monster = ctx.MONSTER_BY_ID[id];
+    if (!monster) return `<div class="trade-tazzo-tile"><span>${escapeHtml(id)}</span></div>`;
+    return `
+      <button class="trade-tazzo-tile" type="button" data-monster-view="${escapeHtml(monster.id)}">
+        ${ctx.renderMonsterArt(monster, "trade-tazzo-art")}
+        <span>
+          <strong>${escapeHtml(monster.name)}</strong>
+          <small>${escapeHtml(monster.rarity)} - ${ctx.tradeValue(monster.id)} pts</small>
+        </span>
+      </button>
     `;
   }
 
   function monsterName(ctx, id) {
     return ctx.MONSTER_BY_ID[id]?.name || id;
+  }
+
+  function tradeStatusDetail(status) {
+    return {
+      pending: "Aguardando resposta.",
+      accepted: "Troca concluida e colecoes atualizadas.",
+      declined: "Proposta recusada.",
+      cancelled: "Proposta cancelada."
+    }[status] || "Historico da proposta.";
   }
 
   function statusLabel(status) {

@@ -84,6 +84,12 @@ const AI_ACTION_WINDUP_MS = 760;
 const AI_ACTION_RESULT_MS = 820;
 const ONLINE_TARGET_ACTIONS = ["move", "retreat", "swap", "dribble", "shot", "pressure"];
 const ONLINE_INSTANT_ACTIONS = ["pass", "keeper"];
+const REWARD_GIFT_CLOSED_ART = "assets/generated-ui/icon-gift.png";
+const REWARD_GIFT_OPEN_ART = "assets/generated-ui/icon-gift-open.png";
+const REWARD_GIFT_SHAKE_MS = 720;
+const REWARD_CELEBRATION_TTL_MS = 4400;
+const SOCIAL_NOTICE_TTL_MS = 7200;
+const SOCIAL_NOTICE_STORAGE_PREFIX = "tazzomon-social-notices-v1";
 const ENABLE_PLAYER_EDIT = false;
 const PLAYER_TABS = new Set([
   "battle",
@@ -210,6 +216,9 @@ const state = {
     message: ""
   },
   tutorialResult: null,
+  missionClaimPending: false,
+  rewardCelebration: null,
+  rewardCelebrationTimers: [],
   tradeLog: [],
   competitiveLog: [],
   leaderboard: { rows: [], loading: false, loadedAt: 0, error: "" },
@@ -227,7 +236,10 @@ const state = {
     selectedFriendId: "",
     draftMessage: "",
     tradeFriendId: "",
-    tradeDraft: { offerIds: [], requestIds: [] }
+    tradeDraft: { offerIds: [], requestIds: [] },
+    notices: [],
+    notifiedTradeKeys: [],
+    noticeHydratedFor: ""
   },
   online: {
     lobbies: [],
@@ -256,7 +268,7 @@ const state = {
   },
   battle: null,
   battleSceneOpen: false,
-  music: { audio: null, isPlaying: false, autoplayArmed: false },
+  music: { audio: null, isPlaying: false, autoplayArmed: false, collapsed: false },
   server: {
     enabled: false,
     loading: false,
@@ -521,6 +533,32 @@ function awardRankedWinMerreis() {
   economy.rankedWinMerreis += amount;
   state.save.merreis += amount;
   return { amount, capped: economy.rankedWinMerreis >= rule.dailyMerreisCap, earnedToday: economy.rankedWinMerreis, cap: rule.dailyMerreisCap };
+}
+
+function dailyEconomyStats() {
+  const economy = ensureDailyEconomyRewards();
+  const trainingRule = ECONOMY_REWARD_RULES.trainingAi;
+  const rankedRule = ECONOMY_REWARD_RULES.rankedWin;
+  const trainingUsed = clamp(Number(economy.trainingAiMatches) || 0, 0, trainingRule.dailyMatches);
+  const rankedEarned = clamp(Number(economy.rankedWinMerreis) || 0, 0, rankedRule.dailyMerreisCap);
+  return {
+    dateKey: economy.dateKey,
+    training: {
+      used: trainingUsed,
+      limit: trainingRule.dailyMatches,
+      merreis: trainingRule.merreis,
+      remaining: Math.max(0, trainingRule.dailyMatches - trainingUsed),
+      percent: Math.round((trainingUsed / trainingRule.dailyMatches) * 100)
+    },
+    ranked: {
+      earned: rankedEarned,
+      cap: rankedRule.dailyMerreisCap,
+      merreis: rankedRule.merreis,
+      remaining: Math.max(0, rankedRule.dailyMerreisCap - rankedEarned),
+      winsRemaining: Math.ceil(Math.max(0, rankedRule.dailyMerreisCap - rankedEarned) / rankedRule.merreis),
+      percent: Math.round((rankedEarned / rankedRule.dailyMerreisCap) * 100)
+    }
+  };
 }
 
 function resetExpiredMissions(currentMissions, freshMissions, savedMissionCycles) {
@@ -1073,7 +1111,10 @@ async function postServerMutation(endpoint, body, statusLabel) {
   return payload;
 }
 
-function applySocialPayload(payload = {}) {
+function applySocialPayload(payload = {}, options = {}) {
+  if (Array.isArray(payload.trades)) {
+    applySocialTradeNotices(payload.trades, options);
+  }
   state.social.friends = Array.isArray(payload.friends) ? payload.friends : state.social.friends;
   state.social.incomingInvites = Array.isArray(payload.incomingInvites) ? payload.incomingInvites : state.social.incomingInvites;
   state.social.outgoingInvites = Array.isArray(payload.outgoingInvites) ? payload.outgoingInvites : state.social.outgoingInvites;
@@ -1084,6 +1125,260 @@ function applySocialPayload(payload = {}) {
   state.social.error = "";
   if (!state.social.selectedFriendId && state.social.friends[0]) state.social.selectedFriendId = state.social.friends[0].playerId;
   if (!state.social.tradeFriendId && state.social.friends[0]) state.social.tradeFriendId = state.social.friends[0].playerId;
+}
+
+function socialNoticeStorageKey() {
+  return `${SOCIAL_NOTICE_STORAGE_PREFIX}:${state.server.playerId || "guest"}`;
+}
+
+function readSocialNoticeKeys(storageKey) {
+  try {
+    const value = JSON.parse(localStorage.getItem(storageKey) || "[]");
+    return new Set(Array.isArray(value) ? value.filter(Boolean).map(String) : []);
+  } catch (error) {
+    return new Set();
+  }
+}
+
+function writeSocialNoticeKeys(storageKey, keys) {
+  try {
+    localStorage.setItem(storageKey, JSON.stringify([...keys].slice(-180)));
+  } catch (error) {}
+}
+
+function hydrateSocialNoticeKeys() {
+  const storageKey = socialNoticeStorageKey();
+  if (state.social.noticeHydratedFor === storageKey) {
+    return {
+      storageKey,
+      keys: new Set(state.social.notifiedTradeKeys)
+    };
+  }
+  const keys = readSocialNoticeKeys(storageKey);
+  state.social.noticeHydratedFor = storageKey;
+  state.social.notifiedTradeKeys = [...keys];
+  return { storageKey, keys };
+}
+
+function applySocialTradeNotices(trades = [], options = {}) {
+  const playerId = state.server.playerId;
+  if (!playerId) return;
+  const { storageKey, keys } = hydrateSocialNoticeKeys();
+  const candidates = trades.flatMap((trade) => socialTradeNoticeCandidates(trade, playerId));
+  const silentInitial = Boolean(options.silentInitial && !state.social.loadedAt);
+  if (silentInitial) {
+    candidates.forEach((candidate) => keys.add(candidate.key));
+    state.social.notifiedTradeKeys = [...keys];
+    writeSocialNoticeKeys(storageKey, keys);
+    return;
+  }
+
+  candidates.forEach((candidate) => {
+    if (keys.has(candidate.key)) return;
+    keys.add(candidate.key);
+    enqueueSocialNotice(candidate);
+  });
+  state.social.notifiedTradeKeys = [...keys];
+  writeSocialNoticeKeys(storageKey, keys);
+}
+
+function socialTradeNoticeCandidates(trade, playerId) {
+  if (!trade?.id) return [];
+  const status = String(trade.status || "");
+  const fromYou = trade.fromPlayerId === playerId;
+  const toYou = trade.toPlayerId === playerId;
+  if (!fromYou && !toYou) return [];
+  const friend = fromYou ? trade.to : trade.from;
+  const friendName = friend?.name || "um amigo";
+  const stamp = trade.resolvedAt || trade.updatedAt || trade.createdAt || "";
+  if (status === "pending" && toYou) {
+    return [{
+      key: `trade:${trade.id}:offered:${trade.createdAt || stamp}`,
+      kind: "offer",
+      title: "Nova troca oferecida",
+      body: `${friendName} enviou uma proposta de troca.`,
+      tradeId: trade.id
+    }];
+  }
+  if (status === "pending" && fromYou) {
+    return [{
+      key: `trade:${trade.id}:sent:${trade.createdAt || stamp}`,
+      kind: "sent",
+      title: "Troca oferecida",
+      body: `Sua proposta foi enviada para ${friendName}.`,
+      tradeId: trade.id
+    }];
+  }
+  if (status === "accepted") {
+    return [{
+      key: `trade:${trade.id}:accepted:${stamp}`,
+      kind: "accepted",
+      title: "Troca concluida",
+      body: `A troca com ${friendName} foi concluida.`,
+      tradeId: trade.id
+    }];
+  }
+  return [];
+}
+
+function enqueueSocialNotice(notice) {
+  const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  state.social.notices = [{ ...notice, id }, ...state.social.notices.filter((item) => item.key !== notice.key)].slice(0, 4);
+  renderSocialNotices();
+  window.setTimeout(() => dismissSocialNotice(id), SOCIAL_NOTICE_TTL_MS);
+}
+
+function dismissSocialNotice(id) {
+  const next = state.social.notices.filter((notice) => notice.id !== id);
+  if (next.length === state.social.notices.length) return;
+  state.social.notices = next;
+  renderSocialNotices();
+}
+
+function renderSocialNotices() {
+  const stack = document.getElementById("social-notice-stack");
+  if (!stack) return;
+  stack.innerHTML = "";
+  state.social.notices.forEach((notice) => {
+    const card = document.createElement("article");
+    card.className = `social-notice-card is-${notice.kind || "trade"}`;
+    card.dataset.noticeId = notice.id;
+
+    const icon = document.createElement("img");
+    icon.src = "assets/generated-ui/icon-trade.png";
+    icon.alt = "";
+    icon.setAttribute("aria-hidden", "true");
+
+    const text = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = notice.title || "Troca atualizada";
+    const body = document.createElement("span");
+    body.textContent = notice.body || "A aba de trocas recebeu uma atualizacao.";
+    text.append(title, body);
+
+    const actions = document.createElement("div");
+    actions.className = "social-notice-actions";
+    const openButton = document.createElement("button");
+    openButton.type = "button";
+    openButton.dataset.socialNoticeOpen = notice.id;
+    openButton.textContent = "Ver";
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.dataset.socialNoticeDismiss = notice.id;
+    closeButton.setAttribute("aria-label", "Fechar aviso de troca");
+    closeButton.textContent = "x";
+    actions.append(openButton, closeButton);
+
+    card.append(icon, text, actions);
+    stack.append(card);
+  });
+}
+
+function handleSocialNoticeClick(event) {
+  const openButton = event.target.closest("[data-social-notice-open]");
+  if (openButton) {
+    const id = openButton.dataset.socialNoticeOpen;
+    dismissSocialNotice(id);
+    switchTab("trade");
+    refreshSocial({ force: true });
+    return;
+  }
+  const closeButton = event.target.closest("[data-social-notice-dismiss]");
+  if (closeButton) {
+    dismissSocialNotice(closeButton.dataset.socialNoticeDismiss);
+  }
+}
+
+function clearRewardCelebrationTimers() {
+  state.rewardCelebrationTimers.forEach((timer) => window.clearTimeout(timer));
+  state.rewardCelebrationTimers = [];
+}
+
+function showRewardCelebration(details = {}) {
+  clearRewardCelebrationTimers();
+  state.rewardCelebration = {
+    stage: "closed",
+    title: details.title || "Recompensa resgatada",
+    message: details.message || "",
+    rewards: Array.isArray(details.rewards) ? details.rewards.filter(Boolean) : []
+  };
+  renderRewardCelebration();
+  state.rewardCelebrationTimers.push(window.setTimeout(() => {
+    if (!state.rewardCelebration) return;
+    state.rewardCelebration.stage = "open";
+    renderRewardCelebration();
+  }, REWARD_GIFT_SHAKE_MS));
+  state.rewardCelebrationTimers.push(window.setTimeout(hideRewardCelebration, REWARD_CELEBRATION_TTL_MS));
+}
+
+function hideRewardCelebration() {
+  clearRewardCelebrationTimers();
+  state.rewardCelebration = null;
+  renderRewardCelebration();
+}
+
+function renderRewardCelebration() {
+  const overlay = document.getElementById("reward-celebration");
+  if (!overlay) return;
+  const celebration = state.rewardCelebration;
+  overlay.innerHTML = "";
+  if (!celebration) {
+    overlay.hidden = true;
+    overlay.className = "reward-celebration";
+    return;
+  }
+
+  overlay.hidden = false;
+  overlay.className = `reward-celebration is-${celebration.stage || "closed"}`;
+  const panel = document.createElement("section");
+  panel.className = "reward-celebration-card";
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-modal", "true");
+  panel.setAttribute("aria-label", celebration.title);
+
+  const gift = document.createElement("div");
+  gift.className = "reward-gift-shell";
+  const giftImage = document.createElement("img");
+  giftImage.src = celebration.stage === "open" ? REWARD_GIFT_OPEN_ART : REWARD_GIFT_CLOSED_ART;
+  giftImage.alt = "";
+  gift.append(giftImage);
+
+  const title = document.createElement("strong");
+  title.textContent = celebration.title;
+  const message = document.createElement("span");
+  message.textContent = celebration.message || "Itens adicionados ao seu perfil.";
+
+  const list = document.createElement("div");
+  list.className = "reward-celebration-rewards";
+  celebration.rewards.forEach((reward) => {
+    const item = document.createElement("span");
+    item.textContent = reward;
+    list.append(item);
+  });
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.dataset.rewardClose = "true";
+  close.setAttribute("aria-label", "Fechar recompensa");
+  close.textContent = "Fechar";
+
+  panel.append(gift, title, message, list, close);
+  overlay.append(panel);
+}
+
+function handleRewardCelebrationClick(event) {
+  if (event.target === event.currentTarget || event.target.closest("[data-reward-close]")) {
+    hideRewardCelebration();
+  }
+}
+
+function missionRewardLines(missions = []) {
+  const totalMerreis = missions.reduce((sum, mission) => sum + (Number(mission.reward) || 0), 0);
+  const totalFragments = missions.reduce((sum, mission) => sum + (Number(mission.fragments) || 0), 0);
+  const rewards = [];
+  if (totalMerreis) rewards.push(`${totalMerreis.toLocaleString("pt-BR")} Merreis`);
+  if (totalFragments) rewards.push(`${totalFragments.toLocaleString("pt-BR")} fragmentos`);
+  return rewards;
 }
 
 async function refreshSocial(options = {}) {
@@ -1108,7 +1403,7 @@ async function refreshSocial(options = {}) {
       state.save = normalizeSave(payload.save);
       persistLocalSave();
     }
-    applySocialPayload(payload);
+    applySocialPayload(payload, { silentInitial: true });
   } catch (error) {
     state.social.error = error.message || "Social indisponivel.";
     state.social.loading = false;
@@ -1197,6 +1492,20 @@ function connectOnlineSocket() {
         renderBattle();
       }
       if (state.currentTab === "online") renderOnline();
+      return;
+    }
+    if (payload.type === "social:update") {
+      state.online.socketStatus = "online";
+      if (payload.save) {
+        state.save = normalizeSave(payload.save);
+        persistLocalSave();
+        renderWallet();
+      }
+      applySocialPayload(payload);
+      if (state.currentTab === "friends" || state.currentTab === "trade") {
+        renderFriends();
+        renderTrade();
+      }
       return;
     }
     if (payload.type !== "online:update") return;
@@ -1317,6 +1626,7 @@ function syncOpenOnlineBattleFromLobby(lobby) {
   const match = lobby?.match;
   if (!match || !state.battle?.online || state.battle.online.matchId !== match.id) return;
   const appliedSnapshot = applyOnlineBattleSnapshot(match.battleState);
+  if (appliedSnapshot) showOnlineKeeperFeedback(match.lastAction);
   const appliedAction = !appliedSnapshot && applyOnlineBattleEvent(match.lastAction);
   state.battle.online.message = match.message;
   state.battle.online.isYourTurn = match.isYourTurn;
@@ -1465,6 +1775,7 @@ function setup() {
   setupMusicPlayer();
   setupOnlineLobbyRealtime();
   setupSocialRealtime();
+  setupCompetitiveRealtime();
   loadShopPaymentConfig();
   setupServerSave();
   renderAll();
@@ -1606,11 +1917,13 @@ const IMAGE_BUTTON_SELECTOR = [
   ".pack-card button",
   ".monster-card button",
   ".mission-card button",
+  ".mission-economy-actions button",
   ".shop-card button",
   ".battle-resume-card button",
   ".tournament-card button",
   ".edit-actions button",
   ".friend-actions button",
+  ".trade-offer-actions button",
   ".result-actions button",
   ".tutorial-panel button",
   ".tutorial-coach button",
@@ -1622,6 +1935,7 @@ const IMAGE_BUTTON_SELECTOR = [
   ".online-lobby-list button",
   ".opening-copy button",
   ".pack-results-actions button",
+  ".starter-actions button",
   ".music-controls button",
   ".profile-mode-tabs button",
   ".setup-start"
@@ -1750,6 +2064,7 @@ const GENERATED_BUTTON_ICONS = {
   online: "assets/generated-ui/icon-online.png",
   pack: "assets/generated-ui/icon-pack.png",
   pass: "assets/generated-ui/icon-send.png",
+  pause: "assets/generated-ui/icon-pause.png",
   play: "assets/generated-ui/icon-play.png",
   plus: "assets/generated-ui/icon-plus.png",
   pressure: "assets/generated-ui/icon-battle.png",
@@ -1850,6 +2165,7 @@ function buttonImageAsset(button, label) {
     if (BUTTON_LABEL_ART[normalizedLabel]) return BUTTON_LABEL_ART[normalizedLabel];
     return normalizedLabel.includes("resgatad") ? COMBAT_BUTTON_ART.claimed : COMBAT_BUTTON_ART.claim;
   }
+  if (button.dataset.claimReady) return COMBAT_BUTTON_ART.claim;
   if (button.dataset.resultAction) {
     return {
       "battle-menu": COMBAT_BUTTON_ART.gameMenu,
@@ -1926,7 +2242,7 @@ function buttonImageIcon(button, label) {
   if (button.id === "trade-button") return "trade";
   if (button.id === "reset-save-button") return "reset";
   if (button.id === "edit-new-button") return "edit";
-  if (button.id === "music-play-button") return "play";
+  if (button.id === "music-play-button") return normalizedLabel.includes("pausar") ? "pause" : "play";
   if (button.id === "music-next-button") return "next";
   if (button.matches(".viewer-close")) return "close";
   if (button.dataset.joinLobby) return "online";
@@ -1934,6 +2250,7 @@ function buttonImageIcon(button, label) {
   if (button.dataset.shop) return "shop";
   if (button.dataset.tournament) return "trophy";
   if (button.dataset.claim || button.dataset.tutorialReward) return "check";
+  if (button.dataset.claimReady) return "check";
   if (button.dataset.gift) return "gift";
   if (button.dataset.challenge) return "battle";
   if (button.dataset.team || button.dataset.goalkeeper) return "plus";
@@ -2211,8 +2528,15 @@ function setupOnlineLobbyRealtime() {
 function setupSocialRealtime() {
   window.setInterval(() => {
     if (!hasOnlineProfile()) return;
-    if (state.currentTab === "friends" || state.currentTab === "trade") refreshSocial();
+    refreshSocial();
   }, 6000);
+}
+
+function setupCompetitiveRealtime() {
+  window.setInterval(() => {
+    if (!state.matchmaking?.active || state.currentTab !== "competitive") return;
+    renderCompetitive();
+  }, 1000);
 }
 
 function setupFilters() {
@@ -2291,6 +2615,8 @@ function setupActions() {
   document.getElementById("tutorial-coach").addEventListener("click", handleTutorialControls);
   document.getElementById("tutorial-popover").addEventListener("click", handleTutorialControls);
   document.getElementById("tutorial-result-popup").addEventListener("click", handleTutorialControls);
+  document.getElementById("reward-celebration")?.addEventListener("click", handleRewardCelebrationClick);
+  document.getElementById("social-notice-stack")?.addEventListener("click", handleSocialNoticeClick);
 
   document.getElementById("friends-grid").addEventListener("click", (event) => {
     handleFriendsClick(event);
@@ -2341,6 +2667,7 @@ function setupActions() {
   document.addEventListener("click", handleTazzoViewerClick);
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
+      if (state.rewardCelebration) hideRewardCelebration();
       closeTazzoViewer();
       const profileModal = document.getElementById("profile-modal");
       if (profileModal && !profileModal.hidden) closeProfileModal();
@@ -2670,6 +2997,7 @@ function applyOnlineBattleEvent(event) {
   state.battle.validTargets = [];
 
   if (event.action === "pass" || event.action === "keeper") {
+    if (event.action === "keeper") showOnlineKeeperFeedback(event);
     logBattle(event.message || `${event.actorName || "Jogador"} passou.`);
     return true;
   }
@@ -2690,6 +3018,34 @@ function applyOnlineBattleEvent(event) {
 
   executeAction(actor, target, { skipFinishTurn: true });
   return true;
+}
+
+function showOnlineKeeperFeedback(event) {
+  if (!state.battle?.online || event?.action !== "keeper") return;
+  const sequence = Number(event.sequence) || 0;
+  if (sequence && sequence <= (Number(state.battle.online.keeperFeedbackSequence) || 0)) return;
+  const side = event.isYours ? "player" : "cpu";
+  const keeper = battleGoalkeeper(side);
+  if (!keeper?.monsterId) return;
+  const actor = state.battle.pieces.find((piece) => piece.side === side && piece.hp > 0);
+  const from = actor ? { x: actor.x, y: actor.y } : { x: side === "player" ? 0 : 6, y: 2 };
+  const animation = {
+    side,
+    stage: "resolve",
+    actorId: actor?.id || null,
+    targetId: null,
+    keeperMonsterId: keeper.monsterId,
+    action: "keeper",
+    from,
+    to: from,
+    text: event.message || `${event.actorName || "Jogador"} usou o goleiro.`
+  };
+  state.battle.online.keeperFeedbackSequence = sequence || Date.now();
+  state.battle.animation = animation;
+  state.battle.status = animation.text;
+  if (typeof scheduleBattleAnimationClear === "function") {
+    scheduleBattleAnimationClear(animation);
+  }
 }
 
 async function sendOnlineBattleAction(action, target = null) {
@@ -2800,6 +3156,7 @@ function openOnlineBattle() {
     absence: match.absence || null,
     stateSequence: -1,
     lastActionSequence: 0,
+    keeperFeedbackSequence: 0,
     pendingAction: false,
     logStarted: true
   };
@@ -3223,9 +3580,10 @@ function setupMusicPlayer() {
   const audio = document.getElementById("music-audio");
   const playButton = document.getElementById("music-play-button");
   const toggleButton = document.getElementById("music-toggle-button");
+  const collapseButton = document.getElementById("music-collapse-button");
   const nextButton = document.getElementById("music-next-button");
   const volumeControl = document.getElementById("music-volume-control");
-  if (!player || !audio || !playButton || !toggleButton || !nextButton || !volumeControl) return;
+  if (!player || !audio || !playButton || !toggleButton || !collapseButton || !nextButton || !volumeControl) return;
 
   state.music.audio = audio;
   audio.volume = clamp(Number(state.save.musicVolume), 0, 1);
@@ -3233,7 +3591,14 @@ function setupMusicPlayer() {
   setMusicTrack(state.save.musicTrackIndex, { autoplay: false });
 
   playButton.addEventListener("click", toggleMusicPlayback);
-  toggleButton.addEventListener("click", toggleMusicPlayback);
+  toggleButton.addEventListener("click", () => {
+    if (state.music.collapsed) {
+      setMusicPlayerCollapsed(false);
+      return;
+    }
+    toggleMusicPlayback();
+  });
+  collapseButton.addEventListener("click", () => setMusicPlayerCollapsed(!state.music.collapsed));
   nextButton.addEventListener("click", () => nextMusicTrack({ autoplay: state.music.isPlaying }));
   volumeControl.addEventListener("input", () => {
     const volume = clamp(Number(volumeControl.value), 0, 1);
@@ -3309,6 +3674,11 @@ function toggleMusicPlayback() {
   audio.pause();
 }
 
+function setMusicPlayerCollapsed(collapsed) {
+  state.music.collapsed = Boolean(collapsed);
+  syncMusicPlayer();
+}
+
 function playMusic(options = {}) {
   const audio = state.music.audio;
   if (!audio || !MUSIC_TRACKS.length) return;
@@ -3324,15 +3694,25 @@ function syncMusicPlayer() {
   const trackName = document.getElementById("music-track-name");
   const playButton = document.getElementById("music-play-button");
   const toggleButton = document.getElementById("music-toggle-button");
+  const collapseButton = document.getElementById("music-collapse-button");
   const volumeControl = document.getElementById("music-volume-control");
   const audio = state.music.audio;
   const track = MUSIC_TRACKS[state.save.musicTrackIndex] || MUSIC_TRACKS[0];
   const isPlaying = Boolean(audio && !audio.paused && !audio.ended);
+  const collapsed = Boolean(state.music.collapsed);
   if (trackName && track) trackName.textContent = track.name;
   if (playButton) playButton.textContent = isPlaying ? "Pausar" : "Play";
-  if (toggleButton) toggleButton.setAttribute("aria-label", isPlaying ? "Pausar musica" : "Tocar musica");
+  if (toggleButton) toggleButton.setAttribute("aria-label", collapsed ? "Expandir player de musicas" : isPlaying ? "Pausar musica" : "Tocar musica");
+  if (collapseButton) {
+    collapseButton.setAttribute("aria-label", collapsed ? "Expandir player de musicas" : "Recolher player de musicas");
+    collapseButton.setAttribute("aria-expanded", String(!collapsed));
+  }
   if (volumeControl && audio) volumeControl.value = String(audio.volume);
   if (player) player.classList.toggle("is-playing", isPlaying);
+  if (player) {
+    player.classList.toggle("is-collapsed", collapsed);
+    decorateImageButtons(player);
+  }
 }
 
 function setupHolographicArtMotion() {
@@ -3798,6 +4178,11 @@ function activeTournamentBattle() {
 
 function activeRankedBattle() {
   return Boolean(state.pendingRanked || (state.battle && state.battle.ranked && !state.battle.over));
+}
+
+function activeSavedCompetitive() {
+  const match = state.save.activeCompetitive;
+  return match && !match.resolved ? match : null;
 }
 
 function activeLockedBattle() {
@@ -4315,6 +4700,8 @@ function menuViewContext() {
     MISSIONS,
     MISSION_PERIOD_ORDER,
     MISSION_PERIOD_LABELS,
+    ECONOMY_REWARD_RULES,
+    COMPETITIVE_MATCHMAKING_TIMEOUT_MS,
     LEGENDARY_BOOST_TAZZOS,
     LEGENDARY_BOOST_MAX_TAZZOS,
     LEGENDARY_BOOST_MULTIPLIER,
@@ -4354,9 +4741,13 @@ function menuViewContext() {
     rankedChance,
     rankedOpponentForCurrentRank,
     isCurrentTutorialStep,
+    activeSavedCompetitive,
     activeTournamentBattle,
     activeRankedBattle,
     claimMission,
+    claimableMissions,
+    claimReadyMissions,
+    dailyEconomyStats,
     tradeValue
   };
 }
@@ -5129,6 +5520,66 @@ function starterPack() {
   return PACKS.find((pack) => pack.id === STARTER_PACK_ID) || PACKS[0];
 }
 
+function starterRoleInfo(label) {
+  return {
+    Atacante: {
+      title: "Atacante",
+      subtitle: "Finaliza as jogadas e pressiona o rival."
+    },
+    Meia: {
+      title: "Meia",
+      subtitle: "Liga o time, abre espaco e ajuda no controle."
+    },
+    Zagueiro: {
+      title: "Zagueiro",
+      subtitle: "Segura a arena e protege o goleiro."
+    },
+    Goleiro: {
+      title: "Goleiro",
+      subtitle: "Guarda o gol e libera uma habilidade especial."
+    },
+    Lendario: {
+      title: "Lendario",
+      subtitle: "Carta rara para voce ajustar o time depois."
+    }
+  }[label] || {
+    title: label || "Tazzo",
+    subtitle: "Novo reforco para a colecao."
+  };
+}
+
+function starterRolePromiseList() {
+  return ["Atacante", "Meia", "Zagueiro", "Goleiro", "Lendario"].map((label, index) => {
+    const info = starterRoleInfo(label);
+    return `
+      <li>
+        <span>${index + 1}</span>
+        <strong>${info.title}</strong>
+        <small>${info.subtitle}</small>
+      </li>
+    `;
+  }).join("");
+}
+
+function starterLineupCard(pull, index) {
+  const monster = MONSTER_BY_ID[pull.monsterId];
+  if (!monster) return "";
+  const info = starterRoleInfo(pull.roleLabel);
+  const inLineup = index < 4;
+  const meta = inLineup ? "Escalado" : "No album";
+  return `
+    <button class="starter-lineup-card${inLineup ? " is-lineup" : " is-bonus"}" type="button" data-monster-view="${monster.id}">
+      <span class="starter-role-badge">${info.title}</span>
+      ${renderMonsterArt(monster, "starter-lineup-art", { revealHolographic: true })}
+      <span class="starter-lineup-copy">
+        <strong>${monster.name}</strong>
+        <small>${monster.rarity} - ${info.subtitle}</small>
+      </span>
+      <span class="chip">${meta}</span>
+    </button>
+  `;
+}
+
 function starterCanShow() {
   return !state.save.starterOnboardingComplete && (!canUseServerSave() || hasOnlineProfile());
 }
@@ -5186,34 +5637,35 @@ function renderStarterOnboarding() {
 
 function starterIntroTemplate() {
   const pack = starterPack();
-  const loadingText = state.starter.loading ? "Abrindo..." : "Abrir salgadinho";
+  const loadingText = state.starter.loading ? "Abrindo..." : "Abrir meu primeiro salgadinho";
   const disabled = state.starter.loading ? "disabled" : "";
   return `
-    <section class="pack-results-overlay" role="dialog" aria-modal="true" aria-labelledby="starter-title">
-      <div class="pack-results-dialog">
+    <section class="pack-results-overlay starter-onboarding-overlay" role="dialog" aria-modal="true" aria-labelledby="starter-title">
+      <div class="pack-results-dialog starter-dialog">
         <div class="pack-results-head">
           <div>
             <span class="eyebrow">Boas-vindas ao recreio</span>
             <h2 id="starter-title">Abra seu primeiro salgadinho recheado</h2>
           </div>
-          <div class="pack-results-actions">
-            <button class="viewer-close" type="button" data-starter-open ${disabled}>${loadingText}</button>
+          <div class="pack-results-actions starter-actions">
+            <button class="primary-button starter-main-action" type="button" data-starter-open data-image-label="Abrir" ${disabled}>${loadingText}</button>
           </div>
         </div>
-        <div class="pack-results-grid">
-          <article class="pack-card">
+        <div class="starter-intro-layout">
+          <article class="pack-card starter-pack-card">
             <img class="pack-card-art" src="${pack.image}" alt="Pacote ${pack.name}">
             <h2>${pack.name}</h2>
-            <p>Ele sempre vem com 1 atacante, 1 meia, 1 zagueiro, 1 goleiro ate Epico e 1 Lendario aleatorio.</p>
+            <p>Seu primeiro pacote monta a base inteira: campo, goleiro e um Lendario surpresa.</p>
             <div class="pack-meta">
               <span class="chip">5x</span>
               <span class="chip">Time inicial</span>
             </div>
           </article>
-          <article class="panel">
+          <article class="starter-explainer">
             <span class="eyebrow">Sem extras escondidos</span>
             <h2>Seu inventario comeca daqui</h2>
-            <p class="evolution-note">Depois da abertura, apenas esses cinco tazzos entram no album. O trio de campo e o goleiro ja ficam escalados para a primeira partida.</p>
+            <p>Depois da abertura, apenas esses cinco tazzos entram no album. O atacante, meia, zagueiro e goleiro ja ficam escalados para a primeira partida.</p>
+            <ol class="starter-role-list">${starterRolePromiseList()}</ol>
             ${state.starter.message ? `<p class="profile-message is-error">${state.starter.message}</p>` : ""}
           </article>
         </div>
@@ -5246,25 +5698,27 @@ function starterOpeningTemplate() {
 
 function starterResultsTemplate() {
   const pullsHtml = state.starter.reveal.map((pull, index) => renderPullCard({ ...pull, revealed: true }, index)).join("");
+  const lineupHtml = state.starter.reveal.map((pull, index) => starterLineupCard(pull, index)).join("");
   const summary = state.starter.reveal.map((pull) => {
     const monster = MONSTER_BY_ID[pull.monsterId];
     return monster ? `<span class="chip">${pull.roleLabel}: ${monster.name}</span>` : "";
   }).join("");
   return `
-    <section class="pack-results-overlay" role="dialog" aria-modal="true" aria-labelledby="starter-results-title">
-      <div class="pack-results-dialog">
+    <section class="pack-results-overlay starter-onboarding-overlay" role="dialog" aria-modal="true" aria-labelledby="starter-results-title">
+      <div class="pack-results-dialog starter-dialog">
         <div class="pack-results-head">
           <div>
             <span class="eyebrow">Time inicial pronto</span>
             <h2 id="starter-results-title">Tazzos do primeiro salgadinho</h2>
           </div>
-          <div class="pack-results-actions">
-            <button class="viewer-close" type="button" data-starter-continue>Comecar</button>
+          <div class="pack-results-actions starter-actions">
+            <button class="primary-button starter-main-action" type="button" data-starter-continue data-image-label="Continuar">Comecar batalha</button>
           </div>
         </div>
-        <p class="evolution-note">Esses cinco tazzos sao todo o seu inventario inicial. O atacante, meia, zagueiro e goleiro ja foram escalados; o Lendario fica no album para voce ajustar o time quando quiser.</p>
+        <p class="starter-result-note">Esses cinco tazzos sao todo o seu inventario inicial. Os quatro primeiros ja foram escalados; o Lendario fica pronto para voce testar na colecao.</p>
         <div class="pack-meta">${summary}</div>
-        <div class="pack-results-grid">${pullsHtml}</div>
+        <div class="starter-lineup-grid">${lineupHtml}</div>
+        <div class="pack-results-grid starter-disc-grid">${pullsHtml}</div>
       </div>
     </section>
   `;
@@ -5340,14 +5794,21 @@ function openStarterPackLocally() {
 }
 
 function applyStarterPackToSave(save) {
-  const starter = drawStarterPackPulls(save.collection || {});
-  const collection = { ...(save.collection || {}) };
+  const hasExistingProgress = hasLegacyStarterProgress(save);
+  const starterSourceCollection = hasExistingProgress ? save.collection || {} : {};
+  const starter = drawStarterPackPulls(starterSourceCollection);
+  const collection = hasExistingProgress ? { ...(save.collection || {}) } : {};
   starter.pulls.forEach((pull) => {
     collection[pull.monsterId] = (collection[pull.monsterId] || 0) + 1;
   });
   save.collection = collection;
   save.team = starter.team;
   save.goalkeeper = starter.goalkeeper;
+  if (!hasExistingProgress) {
+    save.upgrades = {};
+    save.wishlist = {};
+    save.activeCompetitive = null;
+  }
   save.starterOnboardingComplete = true;
   save.starterPackOpenedAt = new Date().toISOString();
   save.starterPackCards = starter.pulls.map((pull) => pull.monsterId);
@@ -5742,12 +6203,67 @@ function tutorialCompetitiveLoadout() {
   };
 }
 
+function needsTutorialCompetitiveLoadout() {
+  return state.save.team.length !== 3 || !state.save.goalkeeper || teamCost() > 10;
+}
+
 function competitiveBattleOptions(stepId) {
   if (!isCurrentTutorialStep(stepId)) return {};
   return {
-    ...(teamCost() > 10 ? { ...tutorialCompetitiveLoadout(), preservePlayerLoadout: true } : {}),
+    ...(needsTutorialCompetitiveLoadout() ? { ...tutorialCompetitiveLoadout(), preservePlayerLoadout: true } : {}),
     tutorialCompetitiveStep: stepId
   };
+}
+
+function resumeSavedCompetitiveBattle(match = activeSavedCompetitive()) {
+  if (!match) return false;
+  if (activeLockedBattle()) {
+    state.battleSceneOpen = Boolean(state.battle);
+    switchTab("battle");
+    return true;
+  }
+
+  if (match.type === "tournament") {
+    const tournament = TOURNAMENTS.find((item) => item.id === match.tournamentId) || TOURNAMENTS[0];
+    const opponent = TOURNAMENT_OPPONENTS[tournament.id] || Object.values(TOURNAMENT_OPPONENTS)[0];
+    if (!tournament || !opponent) return false;
+    state.competitiveLog.unshift(`Torneio ${tournament.name} retomado contra ${match.opponent || opponent.name}.`);
+    switchTab("battle");
+    newBattle({
+      enemyTeam: opponent.team,
+      enemyGoalkeeper: opponent.goalkeeper,
+      enemyName: match.opponent || opponent.name,
+      mode: "tournament",
+      matchTime: BATTLE_MODES.tournament.matchTime,
+      actionTime: BATTLE_MODES.tournament.actionTime,
+      playerPositions: selectedFormationPositions(),
+      tournamentId: tournament.id,
+      competitiveMatchId: match.id,
+      matchmaking: match.matchmaking || null,
+      logIntro: `Torneio ${tournament.name}: partida retomada contra ${match.opponent || opponent.name}.`
+    });
+    return true;
+  }
+
+  if (match.type === "ranked") {
+    const opponent = rankedOpponentForCurrentRank();
+    state.competitiveLog.unshift(`Ranqueada ${match.rank || currentRank().name} retomada contra ${match.opponent || opponent.name}.`);
+    switchTab("battle");
+    newBattle({
+      enemyTeam: opponent.team,
+      enemyGoalkeeper: opponent.goalkeeper,
+      enemyName: match.opponent || opponent.name,
+      mode: "ranked",
+      matchTime: BATTLE_MODES.ranked.matchTime,
+      actionTime: BATTLE_MODES.ranked.actionTime,
+      playerPositions: selectedFormationPositions(),
+      ranked: { rank: match.rank || currentRank().name, opponent: match.opponent || opponent.name, matchId: match.id, matchmaking: match.matchmaking || null },
+      logIntro: `Ranqueada ${match.rank || currentRank().name}: partida retomada contra ${match.opponent || opponent.name}.`
+    });
+    return true;
+  }
+
+  return false;
 }
 
 function teamPower() {
@@ -5765,7 +6281,22 @@ function rankedChance(extraDifficulty = 0) {
 }
 
 async function runRankedMatch() {
-  if (!requireOnlineProfile()) return;
+  if (isCurrentTutorialStep("ranked")) {
+    runRankedMatchLocally();
+    return;
+  }
+
+  const savedCompetitive = activeSavedCompetitive();
+  if (savedCompetitive?.type === "ranked") {
+    resumeSavedCompetitiveBattle(savedCompetitive);
+    return;
+  }
+  if (savedCompetitive) {
+    state.competitiveLog.unshift("Finalize sua partida competitiva ativa antes de iniciar ranqueada.");
+    renderCompetitive();
+    return;
+  }
+  if (state.server.enabled && !requireOnlineProfile()) return;
   if (state.server.enabled) {
     await runRankedMatchOnServer();
     return;
@@ -5838,6 +6369,8 @@ async function runRankedMatchOnServer() {
     });
   } catch (error) {
     finishMatchmakingSearch();
+    if (activeSavedCompetitive()?.type === "ranked" && resumeSavedCompetitiveBattle(activeSavedCompetitive())) return;
+    state.competitiveLog.unshift(error.message || "Nao foi possivel iniciar a ranqueada.");
     renderAll();
   }
 }
@@ -5910,7 +6443,22 @@ async function resolveRankedBattleOnServer(outcome, reason = "") {
 }
 
 async function runTournament(tournamentId) {
-  if (!requireOnlineProfile()) return;
+  if (isCurrentTutorialStep("tournament")) {
+    runTournamentLocally(tournamentId);
+    return;
+  }
+
+  const savedCompetitive = activeSavedCompetitive();
+  if (savedCompetitive?.type === "tournament") {
+    resumeSavedCompetitiveBattle(savedCompetitive);
+    return;
+  }
+  if (savedCompetitive) {
+    state.competitiveLog.unshift("Finalize sua partida competitiva ativa antes de entrar em torneio.");
+    renderCompetitive();
+    return;
+  }
+  if (state.server.enabled && !requireOnlineProfile()) return;
   if (state.server.enabled) {
     await runTournamentOnServer(tournamentId);
     return;
@@ -5990,6 +6538,8 @@ async function runTournamentOnServer(tournamentId) {
     });
   } catch (error) {
     finishMatchmakingSearch();
+    if (activeSavedCompetitive()?.type === "tournament" && resumeSavedCompetitiveBattle(activeSavedCompetitive())) return;
+    state.competitiveLog.unshift(error.message || "Nao foi possivel iniciar o torneio.");
     renderAll();
   }
 }
@@ -6430,34 +6980,88 @@ function challengeFriend(friendId) {
 
 async function claimMission(id) {
   if (!requireOnlineProfile()) return;
+  const mission = MISSIONS.find((item) => item.id === id);
+  if (!mission) return;
+  let claimed = false;
   if (state.server.enabled) {
-    await claimMissionOnServer(id);
-    return;
+    claimed = await claimMissionOnServer(id);
+  } else {
+    claimed = claimMissionLocally(id);
   }
-  claimMissionLocally(id);
+  if (claimed) {
+    showRewardCelebration({
+      title: "Missao resgatada",
+      message: mission.title,
+      rewards: missionRewardLines([mission])
+    });
+  }
+}
+
+function claimableMissions() {
+  return MISSIONS.filter((mission) => {
+    const status = missionStatus(mission);
+    return !status.claimed && status.progress >= mission.target;
+  });
+}
+
+async function claimReadyMissions() {
+  if (state.missionClaimPending) return;
+  const ready = claimableMissions();
+  if (!ready.length) return;
+  if (!requireOnlineProfile()) return;
+
+  state.missionClaimPending = true;
+  renderMissions();
+  const claimed = [];
+  try {
+    for (const mission of ready) {
+      if (state.server.enabled) {
+        const ok = await claimMissionOnServer(mission.id);
+        if (ok) claimed.push(mission);
+      } else {
+        const ok = claimMissionLocally(mission.id);
+        if (ok) claimed.push(mission);
+      }
+    }
+  } catch (error) {
+    // The mission list can become stale after sync; refresh the UI either way.
+  } finally {
+    state.missionClaimPending = false;
+    renderAll();
+  }
+  if (claimed.length) {
+    showRewardCelebration({
+      title: claimed.length === 1 ? "Missao resgatada" : "Missoes resgatadas",
+      message: claimed.length === 1 ? claimed[0].title : `${claimed.length} recompensas foram para sua conta.`,
+      rewards: missionRewardLines(claimed)
+    });
+  }
 }
 
 function claimMissionLocally(id) {
   const mission = MISSIONS.find((item) => item.id === id);
-  if (!mission) return;
+  if (!mission) return false;
   if (!state.save.missions[id]) {
     state.save.missions[id] = { progress: 0, claimed: false };
   }
   const status = missionStatus(mission);
-  if (status.claimed || status.progress < mission.target) return;
+  if (status.claimed || status.progress < mission.target) return false;
   state.save.missions[id].claimed = true;
   state.save.merreis += mission.reward;
   state.save.fragments += Number(mission.fragments) || 0;
   saveGame();
   renderAll();
+  return true;
 }
 
 async function claimMissionOnServer(id) {
   try {
     await postServerMutation(SERVER_CLAIM_MISSION_ENDPOINT, { missionId: id }, "Resgatando");
     renderAll();
+    return true;
   } catch (error) {
     renderAll();
+    return false;
   }
 }
 
@@ -6488,6 +7092,11 @@ function claimTutorialReward() {
   state.save.fragments += 25;
   saveGame();
   renderAll();
+  showRewardCelebration({
+    title: "Tutorial concluido",
+    message: "Recompensa de boas-vindas resgatada.",
+    rewards: ["500 Merreis", "25 fragmentos"]
+  });
 }
 
 function resetSave() {
@@ -6498,6 +7107,8 @@ function resetSave() {
   state.pendingTournament = null;
   state.pendingRanked = null;
   state.tutorialResult = null;
+  clearRewardCelebrationTimers();
+  state.rewardCelebration = null;
   clearPackOpeningTimers();
   state.packOpening = null;
   state.packPurchasePending = false;
@@ -6506,6 +7117,9 @@ function resetSave() {
   state.competitiveLog = [];
   state.shopMessage = "Itens sem vantagem direta";
   state.selectedTrade = { offer: "", wish: "" };
+  state.social.notices = [];
+  state.social.notifiedTradeKeys = [];
+  state.social.noticeHydratedFor = "";
   clearTurnTimer();
   clearMatchTimer();
   state.battle = null;

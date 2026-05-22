@@ -261,10 +261,7 @@ function chooseAction(action) {
     return;
   }
   if (action === "keeper") {
-    if (useKeeperAbility("player")) {
-      if (completeTutorialActionScenario("keeper")) return;
-      renderBattle();
-    }
+    queuePlayerKeeperAbility();
     return;
   }
   if (action === "pass") {
@@ -727,20 +724,43 @@ function queueAiPass(piece) {
   }, AI_ACTION_WINDUP_MS);
 }
 
+function queuePlayerKeeperAbility() {
+  const piece = activePiece();
+  if (!piece || piece.side !== "player" || !canUseKeeperAbility(piece.side)) return;
+  const keeper = battleGoalkeeper(piece.side);
+  const keeperMonster = MONSTER_BY_ID[keeper?.monsterId];
+  if (!keeperMonster) return;
+  const animation = keeperAbilityAnimation(piece, "windup", `${keeperMonster.name} vai ativar a habilidade.`);
+  state.battle.animation = animation;
+  state.battle.status = animation.text;
+  renderAll();
+
+  window.setTimeout(() => {
+    if (!state.battle || state.battle.over || state.battle.animation !== animation) return;
+    const currentPiece = state.battle.pieces.find((item) => item.id === piece.id && item.hp > 0);
+    if (!currentPiece || currentPiece.side !== "player" || activePiece()?.id !== piece.id) return;
+    const resolvedAnimation = {
+      ...animation,
+      stage: "resolve",
+      text: keeperAbilityResolvedText(keeperMonster)
+    };
+    state.battle.animation = resolvedAnimation;
+    state.battle.status = resolvedAnimation.text;
+    const used = useKeeperAbility(currentPiece.side);
+    if (used && completeTutorialActionScenario("keeper")) {
+      scheduleBattleAnimationClear(resolvedAnimation);
+      return;
+    }
+    if (used && !state.battle.over) renderAll();
+    scheduleBattleAnimationClear(resolvedAnimation);
+  }, AI_ACTION_WINDUP_MS);
+}
+
 function queueAiKeeperAbility(piece) {
   const keeper = battleGoalkeeper(piece.side);
   const keeperMonster = MONSTER_BY_ID[keeper?.monsterId];
   if (!keeperMonster) return;
-  const animation = {
-    side: "cpu",
-    stage: "windup",
-    actorId: piece.id,
-    targetId: null,
-    action: "keeper",
-    from: { x: piece.x, y: piece.y },
-    to: { x: piece.x, y: piece.y },
-    text: `${state.battle.enemyName}: ${keeperMonster.name} vai ativar a habilidade.`
-  };
+  const animation = keeperAbilityAnimation(piece, "windup", `${state.battle.enemyName}: ${keeperMonster.name} vai ativar a habilidade.`);
   state.battle.animation = animation;
   state.battle.status = animation.text;
   renderAll();
@@ -752,7 +772,7 @@ function queueAiKeeperAbility(piece) {
     const resolvedAnimation = {
       ...animation,
       stage: "resolve",
-      text: `${keeperMonster.name} ativou ${keeperAbilityText(keeperMonster).replace("Habilidade: ", "").toLowerCase()}.`
+      text: keeperAbilityResolvedText(keeperMonster)
     };
     state.battle.animation = resolvedAnimation;
     state.battle.status = resolvedAnimation.text;
@@ -763,6 +783,25 @@ function queueAiKeeperAbility(piece) {
     }
     scheduleBattleAnimationClear(resolvedAnimation);
   }, AI_ACTION_WINDUP_MS);
+}
+
+function keeperAbilityAnimation(piece, stage, text) {
+  const keeper = battleGoalkeeper(piece.side);
+  return {
+    side: piece.side,
+    stage,
+    actorId: piece.id,
+    targetId: null,
+    keeperMonsterId: keeper?.monsterId || "",
+    action: "keeper",
+    from: { x: piece.x, y: piece.y },
+    to: { x: piece.x, y: piece.y },
+    text
+  };
+}
+
+function keeperAbilityResolvedText(keeperMonster) {
+  return `${keeperMonster.name} ativou ${keeperAbilityText(keeperMonster).replace("Habilidade: ", "").toLowerCase()}.`;
 }
 
 function scheduleBattleAnimationClear(animation) {
