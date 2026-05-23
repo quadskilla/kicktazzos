@@ -13,6 +13,7 @@ const {
   PACKS,
   MISSIONS,
   ECONOMY_REWARD_RULES,
+  SOCIAL_SHARE_REWARDS,
   FRIENDS,
   BATTLE_MODES,
   BATTLE_FORMATIONS,
@@ -36,6 +37,9 @@ const SERVER_SHOP_ENDPOINT = "/api/shop";
 const SERVER_SHOP_CONFIG_ENDPOINT = "/api/shop/config";
 const SERVER_UPGRADE_ENDPOINT = "/api/upgrade";
 const SERVER_CLAIM_MISSION_ENDPOINT = "/api/claim-mission";
+const SERVER_SHARE_LINK_ENDPOINT = "/api/share-link";
+const SERVER_SHARE_VISIT_ENDPOINT = "/api/share-visit";
+const SERVER_SHARE_REWARD_ENDPOINT = "/api/share-reward";
 const SERVER_TRAINING_AI_RESOLVE_ENDPOINT = "/api/training-ai/resolve";
 const SERVER_TRADE_ENDPOINT = "/api/trade";
 const SERVER_FRIEND_GIFT_ENDPOINT = "/api/friend-gift";
@@ -45,11 +49,16 @@ const SERVER_FRIEND_RESPOND_ENDPOINT = "/api/friends/respond";
 const SERVER_FRIEND_MESSAGE_ENDPOINT = "/api/friends/message";
 const SERVER_SOCIAL_TRADE_CREATE_ENDPOINT = "/api/social/trades/create";
 const SERVER_SOCIAL_TRADE_RESPOND_ENDPOINT = "/api/social/trades/respond";
+const SERVER_TAZZO_CLASH_CREATE_ENDPOINT = "/api/social/tazzo-clash/create";
+const SERVER_TAZZO_CLASH_RESPOND_ENDPOINT = "/api/social/tazzo-clash/respond";
+const SERVER_TAZZO_CLASH_PICK_ENDPOINT = "/api/social/tazzo-clash/pick";
+const SERVER_TAZZO_CLASH_HIT_ENDPOINT = "/api/social/tazzo-clash/hit";
 const SERVER_RANKED_START_ENDPOINT = "/api/ranked/start";
 const SERVER_TOURNAMENT_START_ENDPOINT = "/api/tournament/start";
 const SERVER_COMPETITIVE_RESOLVE_ENDPOINT = "/api/competitive/resolve";
 const SERVER_SAVE_DEBOUNCE_MS = 450;
 const ONLINE_WS_RECONNECT_MS = 2200;
+const PUBLIC_GAME_SHARE_URL = "https://www.tazzostrike.com.br/";
 const TODAY_KEY = new Date().toISOString().slice(0, 10);
 const MISSION_PERIODS = ["daily", "weekly", "monthly"];
 const MISSION_PERIOD_LABELS = {
@@ -90,8 +99,10 @@ const REWARD_GIFT_SHAKE_MS = 720;
 const REWARD_CELEBRATION_TTL_MS = 4400;
 const SOCIAL_NOTICE_TTL_MS = 7200;
 const SOCIAL_NOTICE_STORAGE_PREFIX = "tazzomon-social-notices-v1";
+const TAZZO_CLASH_PERFECT_SCORE = 0.88;
 const ENABLE_PLAYER_EDIT = false;
 const PLAYER_TABS = new Set([
+  "home",
   "battle",
   "online",
   "competitive",
@@ -191,7 +202,7 @@ const startupLocalSave = loadSave();
 
 const state = {
   save: startupLocalSave,
-  currentTab: "battle",
+  currentTab: "home",
   selectedSlot: 0,
   collectionFilters: { type: "all", rarity: "all", owned: "all" },
   selectedTrade: { offer: "", wish: "" },
@@ -217,6 +228,9 @@ const state = {
   },
   tutorialResult: null,
   missionClaimPending: false,
+  shareRewardPending: "",
+  shareRewardMessage: "",
+  incomingShareHandled: false,
   rewardCelebration: null,
   rewardCelebrationTimers: [],
   tradeLog: [],
@@ -228,6 +242,7 @@ const state = {
     outgoingInvites: [],
     messages: [],
     trades: [],
+    clashes: [],
     loading: false,
     loadedAt: 0,
     error: "",
@@ -237,6 +252,10 @@ const state = {
     draftMessage: "",
     tradeFriendId: "",
     tradeDraft: { offerIds: [], requestIds: [] },
+    clashFriendId: "",
+    clashDraft: { offerIds: [], requestIds: [] },
+    clashPickDrafts: {},
+    clashAnimation: null,
     notices: [],
     notifiedTradeKeys: [],
     noticeHydratedFor: ""
@@ -326,8 +345,11 @@ function defaultSave() {
     onlineDraws: 0,
     activeCompetitive: null,
     cosmetics: {},
+    equippedCosmetics: {},
     selectedCosmetic: null,
     friendGifts: {},
+    shareValidations: {},
+    shareRewards: {},
     wishlist: {},
     musicTrackIndex: 0,
     musicVolume: 0.55,
@@ -355,6 +377,129 @@ function cloneSave(save) {
   } catch (error) {
     return defaultSave();
   }
+}
+
+function cosmeticItem(itemOrId) {
+  if (!itemOrId) return null;
+  if (typeof itemOrId === "object") return itemOrId;
+  return SHOP_ITEMS.find((item) => item.id === itemOrId) || null;
+}
+
+function cosmeticSlot(itemOrId) {
+  const item = cosmeticItem(itemOrId);
+  return item?.cosmeticSlot || "profile";
+}
+
+function cosmeticSlotLabel(itemOrId) {
+  const item = cosmeticItem(itemOrId);
+  return item?.slotLabel || {
+    team: "Time",
+    album: "Album",
+    pack: "Pacotinho",
+    profile: "Perfil"
+  }[cosmeticSlot(item)] || "Perfil";
+}
+
+function sanitizeEquippedCosmetics(equipped = {}, cosmetics = {}, legacySelected = null) {
+  const next = {};
+  const source = equipped && typeof equipped === "object" && !Array.isArray(equipped) ? equipped : {};
+  Object.entries(source).forEach(([slot, itemId]) => {
+    const item = cosmeticItem(itemId);
+    if (item && item.type !== "merreis" && cosmeticSlot(item) === slot && cosmetics?.[item.id]) {
+      next[slot] = item.id;
+    }
+  });
+
+  const legacyItem = cosmeticItem(legacySelected);
+  if (legacyItem && legacyItem.type !== "merreis" && cosmetics?.[legacyItem.id]) {
+    const slot = cosmeticSlot(legacyItem);
+    if (!next[slot]) next[slot] = legacyItem.id;
+  }
+  return next;
+}
+
+function sanitizeShareRewards(rewards = {}) {
+  if (!rewards || typeof rewards !== "object" || Array.isArray(rewards)) return {};
+  const validIds = new Set(SOCIAL_SHARE_REWARDS.map((item) => item.id));
+  return Object.fromEntries(
+    Object.entries(rewards)
+      .map(([id, claimedAt]) => {
+        const value = claimedAt && typeof claimedAt === "object" && !Array.isArray(claimedAt)
+          ? claimedAt.claimedAt || claimedAt.validatedAt || claimedAt.createdAt
+          : claimedAt;
+        return [id, value];
+      })
+      .filter(([id, claimedAt]) => validIds.has(id) && claimedAt)
+      .map(([id, claimedAt]) => [id, String(claimedAt).slice(0, 64)])
+  );
+}
+
+function sanitizeShareValidations(validations = {}) {
+  if (!validations || typeof validations !== "object" || Array.isArray(validations)) return {};
+  const validIds = new Set(SOCIAL_SHARE_REWARDS.map((item) => item.id));
+  return Object.fromEntries(
+    Object.entries(validations).map(([id, raw]) => {
+      const record = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+      return [id, {
+        requestedAt: String(record.requestedAt || "").slice(0, 64),
+        validatedAt: String(record.validatedAt || "").slice(0, 64),
+        visitorPlayerId: String(record.visitorPlayerId || "").slice(0, 64)
+      }];
+    }).filter(([id, record]) => (
+      validIds.has(id)
+      && (record.requestedAt || record.validatedAt || record.visitorPlayerId)
+    ))
+  );
+}
+
+function equipCosmetic(itemId) {
+  const item = cosmeticItem(itemId);
+  if (!item || item.type === "merreis" || !state.save.cosmetics?.[item.id]) return false;
+  const equipped = sanitizeEquippedCosmetics(state.save.equippedCosmetics, state.save.cosmetics, state.save.selectedCosmetic);
+  equipped[cosmeticSlot(item)] = item.id;
+  state.save.equippedCosmetics = equipped;
+  state.save.selectedCosmetic = item.id;
+  return true;
+}
+
+function isCosmeticEquipped(itemId) {
+  const item = cosmeticItem(itemId);
+  if (!item || item.type === "merreis") return false;
+  const equipped = sanitizeEquippedCosmetics(state.save.equippedCosmetics, state.save.cosmetics, state.save.selectedCosmetic);
+  return equipped[cosmeticSlot(item)] === item.id;
+}
+
+function normalizeFieldCosmetics(cosmetics = {}) {
+  if (!cosmetics || typeof cosmetics !== "object" || Array.isArray(cosmetics)) return {};
+  const normalized = {};
+  Object.entries(cosmetics).forEach(([slot, itemId]) => {
+    const item = cosmeticItem(itemId);
+    if (item && item.type !== "merreis" && cosmeticSlot(item) === slot) {
+      normalized[slot] = item.id;
+    }
+  });
+  return normalized;
+}
+
+function activeFieldCosmeticsForSave(save = state.save) {
+  return sanitizeEquippedCosmetics(save.equippedCosmetics, save.cosmetics, save.selectedCosmetic);
+}
+
+function fieldCosmeticsForSide(side) {
+  const onlineCosmetics = state.battle?.online?.cosmetics?.[side];
+  if (onlineCosmetics) return normalizeFieldCosmetics(onlineCosmetics);
+  return side === "player" ? activeFieldCosmeticsForSave() : {};
+}
+
+function fieldCosmeticsForPiece(piece) {
+  return normalizeFieldCosmetics(piece?.cosmetics || fieldCosmeticsForSide(piece?.side));
+}
+
+function fieldCosmeticClasses(cosmetics = {}) {
+  const normalized = normalizeFieldCosmetics(cosmetics);
+  return Object.values(normalized)
+    .map((itemId) => `field-cosmetic-${itemId}`)
+    .join(" ");
 }
 
 function hasLegacyStarterProgress(save = {}) {
@@ -388,6 +533,8 @@ function normalizeSave(rawSave) {
       step.id,
       Boolean((save.tutorial || fresh.tutorial)[step.id])
     ]));
+    const cosmetics = { ...fresh.cosmetics, ...(save.cosmetics || {}) };
+    const equippedCosmetics = sanitizeEquippedCosmetics(save.equippedCosmetics || fresh.equippedCosmetics, cosmetics, save.selectedCosmetic);
     const merged = {
       ...fresh,
       ...save,
@@ -397,8 +544,12 @@ function normalizeSave(rawSave) {
       starterPackOpenedAt: save.starterPackOpenedAt || fresh.starterPackOpenedAt,
       upgrades: { ...fresh.upgrades, ...(save.upgrades || {}) },
       packPity: sanitizePackPity(save.packPity || fresh.packPity),
-      cosmetics: { ...fresh.cosmetics, ...(save.cosmetics || {}) },
+      cosmetics,
+      equippedCosmetics,
+      selectedCosmetic: Object.values(equippedCosmetics)[0] || (cosmetics?.[save.selectedCosmetic] ? save.selectedCosmetic : fresh.selectedCosmetic),
       friendGifts: { ...fresh.friendGifts, ...(save.friendGifts || {}) },
+      shareValidations: sanitizeShareValidations(save.shareValidations || fresh.shareValidations),
+      shareRewards: sanitizeShareRewards(save.shareRewards || fresh.shareRewards),
       wishlist: sanitizeWishlist({ ...fresh.wishlist, ...(save.wishlist || {}) }),
       customTazzos,
       tutorial,
@@ -559,6 +710,160 @@ function dailyEconomyStats() {
       percent: Math.round((rankedEarned / rankedRule.dailyMerreisCap) * 100)
     }
   };
+}
+
+function socialShareRewardById(id) {
+  return SOCIAL_SHARE_REWARDS.find((item) => item.id === id) || null;
+}
+
+function shareRewardClaimed(id) {
+  return Boolean(state.save.shareRewards?.[id]);
+}
+
+function shareRewardValidated(id) {
+  return Boolean(state.save.shareValidations?.[id]?.validatedAt);
+}
+
+function shareRewardRequested(id) {
+  return Boolean(state.save.shareValidations?.[id]?.requestedAt);
+}
+
+function baseGameShareUrl() {
+  if (["localhost", "127.0.0.1"].includes(window.location.hostname)) {
+    return `${window.location.origin}/`;
+  }
+  if (/tazzostrike\.com\.br$/i.test(window.location.hostname)) {
+    return `${window.location.origin}/`;
+  }
+  return PUBLIC_GAME_SHARE_URL;
+}
+
+function gameShareUrl(network = {}) {
+  const url = new URL(baseGameShareUrl());
+  if (network.id && state.server.playerId) {
+    url.searchParams.set("ref", state.server.playerId);
+    url.searchParams.set("share", network.id);
+  }
+  return url.toString();
+}
+
+function gameShareText(network = {}) {
+  const suffix = network.id === "discord" ? "entra no meu time por aqui" : "vem montar seu time comigo";
+  return `Tazzo Strike ta no ar: ${suffix}!`;
+}
+
+function socialShareHref(network) {
+  const url = gameShareUrl(network);
+  const text = gameShareText(network);
+  const encodedUrl = encodeURIComponent(url);
+  const encodedText = encodeURIComponent(text);
+  const encodedTextWithUrl = encodeURIComponent(`${text} ${url}`);
+  if (network.id === "twitter") return `https://twitter.com/intent/tweet?text=${encodedText}&url=${encodedUrl}`;
+  if (network.id === "whatsapp") return `https://wa.me/?text=${encodedTextWithUrl}`;
+  if (network.id === "telegram") return `https://t.me/share/url?url=${encodedUrl}&text=${encodedText}`;
+  if (network.id === "facebook") return `https://www.facebook.com/sharer/sharer.php?u=${encodedUrl}`;
+  if (network.id === "reddit") return `https://www.reddit.com/submit?url=${encodedUrl}&title=${encodedText}`;
+  return url;
+}
+
+function copyShareTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).catch(() => {});
+    return;
+  }
+  const input = document.createElement("textarea");
+  input.value = text;
+  input.setAttribute("readonly", "true");
+  input.style.position = "fixed";
+  input.style.left = "-9999px";
+  document.body.appendChild(input);
+  input.select();
+  try {
+    document.execCommand("copy");
+  } catch (error) {
+    // Copy is a convenience for Discord; the reward flow still opens the target.
+  }
+  input.remove();
+}
+
+function openSocialShare(network) {
+  const url = gameShareUrl(network);
+  const text = `${gameShareText(network)} ${url}`;
+  if (network.id === "discord") {
+    copyShareTextToClipboard(text);
+    window.open("https://discord.com/channels/@me", "_blank", "noopener,noreferrer");
+    return;
+  }
+  window.open(socialShareHref(network), "_blank", "noopener,noreferrer");
+}
+
+function incomingShareVisit() {
+  const params = new URLSearchParams(window.location.search);
+  const ownerPlayerId = params.get("ref") || params.get("shareRef") || "";
+  const networkId = params.get("share") || params.get("shareNet") || "";
+  if (!ownerPlayerId || !socialShareRewardById(networkId)) return null;
+  return { ownerPlayerId, networkId };
+}
+
+async function registerIncomingShareVisit() {
+  const visit = incomingShareVisit();
+  if (!visit || state.incomingShareHandled || !canUseServerSave()) return;
+  state.incomingShareHandled = true;
+  try {
+    await fetch(SERVER_SHARE_VISIT_ENDPOINT, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(visit)
+    });
+    const url = new URL(window.location.href);
+    url.searchParams.delete("ref");
+    url.searchParams.delete("share");
+    url.searchParams.delete("shareRef");
+    url.searchParams.delete("shareNet");
+    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+  } catch (error) {
+    // Share visits are best-effort; the player should not be blocked by tracking.
+  }
+}
+
+async function shareGameForReward(networkId) {
+  const network = socialShareRewardById(networkId);
+  if (!network || state.shareRewardPending) return;
+  if (shareRewardClaimed(network.id)) {
+    state.shareRewardMessage = `${network.name} ja foi resgatado.`;
+    renderMissions();
+    return;
+  }
+  if (!requireOnlineProfile("Entre em uma conta para resgatar recompensas de compartilhamento.")) return;
+
+  state.shareRewardPending = network.id;
+  state.shareRewardMessage = shareRewardValidated(network.id)
+    ? `Validado no ${network.name}. Resgatando...`
+    : `Abrindo ${network.name}...`;
+  renderMissions();
+
+  try {
+    if (shareRewardValidated(network.id)) {
+      const payload = await postServerMutation(SERVER_SHARE_REWARD_ENDPOINT, { networkId: network.id }, "Resgatando");
+      const reward = Number(payload.network?.reward || network.reward) || 0;
+      state.shareRewardMessage = `${network.name} resgatado: +${formatNumber(reward)} Merreis.`;
+      showRewardCelebration({
+        title: "Compartilhamento validado",
+        message: `Uma visita pelo seu link liberou a recompensa.`,
+        rewards: [`${formatNumber(reward)} Merreis`]
+      });
+    } else {
+      openSocialShare(network);
+      await postServerMutation(SERVER_SHARE_LINK_ENDPOINT, { networkId: network.id }, "Compartilhando");
+      state.shareRewardMessage = `Link do ${network.name} copiado/aberto. A recompensa libera quando alguem abrir seu convite.`;
+    }
+  } catch (error) {
+    state.shareRewardMessage = error.message || "Nao foi possivel resgatar essa rede agora.";
+  } finally {
+    state.shareRewardPending = "";
+    renderAll();
+  }
 }
 
 function resetExpiredMissions(currentMissions, freshMissions, savedMissionCycles) {
@@ -753,32 +1058,100 @@ function hasHolographicArt(monster) {
   return Boolean(monsterHoloImage(monster));
 }
 
+function escapeHtmlAttribute(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function cssImageUrl(value) {
+  const url = String(value || "")
+    .replace(/\\/g, "/")
+    .replace(/"/g, "%22")
+    .replace(/'/g, "%27")
+    .replace(/\(/g, "%28")
+    .replace(/\)/g, "%29");
+  return `url("${url}")`;
+}
+
+function shouldRenderRarityGloss(monster, options = {}) {
+  const revealPremiumGloss = options.revealPremiumGloss !== undefined
+    ? options.revealPremiumGloss !== false
+    : options.revealHolographic !== false;
+  return Boolean(revealPremiumGloss && monster?.image && isAtLeastRarity(monster.rarity, "Epico"));
+}
+
+function rarityGlossClass(monster, options = {}) {
+  return shouldRenderRarityGloss(monster, options) ? " rarity-gloss-art" : "";
+}
+
+function rarityGlossStyleAttr(monster, options = {}) {
+  if (!shouldRenderRarityGloss(monster, options)) return "";
+  return ` style="--tazzo-gloss-mask: ${escapeHtmlAttribute(cssImageUrl(monster.image))};"`;
+}
+
+function rarityGlossLayer(monster, options = {}) {
+  return shouldRenderRarityGloss(monster, options) ? `<span class="rarity-gloss-sweep" aria-hidden="true"></span>` : "";
+}
+
 function renderMonsterArt(monster, className, options = {}) {
   const loadingAttr = options.loading ? ` loading="${options.loading}"` : "";
   const revealHolographic = options.revealHolographic !== false;
+  const glossOptions = { ...options, revealPremiumGloss: options.revealPremiumGloss ?? revealHolographic };
+  const glossClass = rarityGlossClass(monster, glossOptions);
+  const glossStyle = rarityGlossStyleAttr(monster, glossOptions);
+  const glossLayer = rarityGlossLayer(monster, glossOptions);
+  const monsterName = escapeHtmlAttribute(monster.name);
   if (!revealHolographic || !hasHolographicArt(monster)) {
-    return `<img class="${className}"${loadingAttr} src="${monster.image}" alt="${monster.name}">`;
+    if (!glossLayer) {
+      return `<img class="${className}"${loadingAttr} src="${monster.image}" alt="${monsterName}">`;
+    }
+
+    return `
+      <span class="${className}${glossClass}"${glossStyle} role="img" aria-label="${monsterName}">
+        <img class="rarity-gloss-image"${loadingAttr} src="${monster.image}" alt="">
+        ${glossLayer}
+      </span>
+    `;
   }
 
   return `
-    <span class="holo-art ${className}" data-holo-art role="img" aria-label="${monster.name}">
+    <span class="holo-art ${className}${glossClass}"${glossStyle} data-holo-art role="img" aria-label="${monsterName}">
       <img class="holo-art-layer holo-art-base"${loadingAttr} src="${monster.image}" alt="">
       <img class="holo-art-layer holo-art-alt"${loadingAttr} src="${monsterHoloImage(monster)}" alt="">
       <span class="holo-art-foil" aria-hidden="true"></span>
+      ${glossLayer}
     </span>
   `;
 }
 
 function renderViewerFrontArt(monster, revealHolographic = true) {
+  const glossOptions = { revealHolographic, revealPremiumGloss: revealHolographic };
+  const glossClass = rarityGlossClass(monster, glossOptions);
+  const glossStyle = rarityGlossStyleAttr(monster, glossOptions);
+  const glossLayer = rarityGlossLayer(monster, glossOptions);
+  const monsterName = escapeHtmlAttribute(monster.name);
   if (!revealHolographic || !hasHolographicArt(monster)) {
-    return `<img class="viewer-face viewer-face-front" src="${monster.image}" alt="${monster.name}">`;
+    if (!glossLayer) {
+      return `<img class="viewer-face viewer-face-front" src="${monster.image}" alt="${monsterName}">`;
+    }
+
+    return `
+      <div class="viewer-face viewer-face-front${glossClass}"${glossStyle} role="img" aria-label="${monsterName}">
+        <img class="rarity-gloss-image" src="${monster.image}" alt="">
+        ${glossLayer}
+      </div>
+    `;
   }
 
   return `
-    <div class="viewer-face viewer-face-front holo-art holo-art-viewer" data-holo-art role="img" aria-label="${monster.name}">
+    <div class="viewer-face viewer-face-front holo-art holo-art-viewer${glossClass}"${glossStyle} data-holo-art role="img" aria-label="${monsterName}">
       <img class="holo-art-layer holo-art-base" src="${monster.image}" alt="">
       <img class="holo-art-layer holo-art-alt" src="${monsterHoloImage(monster)}" alt="">
       <span class="holo-art-foil" aria-hidden="true"></span>
+      ${glossLayer}
     </div>
   `;
 }
@@ -966,6 +1339,7 @@ async function loadServerSave() {
     state.server.loading = false;
     state.server.playerId = payload.playerId || "";
     applyProfile(payload.profile);
+    registerIncomingShareVisit();
     connectOnlineSocket();
     refreshOnlineLobbies({ force: true });
 
@@ -1096,7 +1470,7 @@ async function postServerMutation(endpoint, body, statusLabel) {
     state.save = normalizeSave(payload.save);
     persistLocalSave();
   }
-  if (payload.friends || payload.incomingInvites || payload.outgoingInvites || payload.trades) {
+  if (payload.friends || payload.incomingInvites || payload.outgoingInvites || payload.trades || payload.clashes) {
     applySocialPayload(payload);
   }
   if (!response.ok) {
@@ -1115,16 +1489,21 @@ function applySocialPayload(payload = {}, options = {}) {
   if (Array.isArray(payload.trades)) {
     applySocialTradeNotices(payload.trades, options);
   }
+  if (Array.isArray(payload.clashes)) {
+    applyTazzoClashNotices(payload.clashes, options);
+  }
   state.social.friends = Array.isArray(payload.friends) ? payload.friends : state.social.friends;
   state.social.incomingInvites = Array.isArray(payload.incomingInvites) ? payload.incomingInvites : state.social.incomingInvites;
   state.social.outgoingInvites = Array.isArray(payload.outgoingInvites) ? payload.outgoingInvites : state.social.outgoingInvites;
   state.social.messages = Array.isArray(payload.messages) ? payload.messages : state.social.messages;
   state.social.trades = Array.isArray(payload.trades) ? payload.trades : state.social.trades;
+  state.social.clashes = Array.isArray(payload.clashes) ? payload.clashes : state.social.clashes;
   state.social.loadedAt = Date.now();
   state.social.loading = false;
   state.social.error = "";
   if (!state.social.selectedFriendId && state.social.friends[0]) state.social.selectedFriendId = state.social.friends[0].playerId;
   if (!state.social.tradeFriendId && state.social.friends[0]) state.social.tradeFriendId = state.social.friends[0].playerId;
+  if (!state.social.clashFriendId && state.social.friends[0]) state.social.clashFriendId = state.social.friends[0].playerId;
 }
 
 function socialNoticeStorageKey() {
@@ -1221,6 +1600,84 @@ function socialTradeNoticeCandidates(trade, playerId) {
   return [];
 }
 
+function applyTazzoClashNotices(clashes = [], options = {}) {
+  const playerId = state.server.playerId;
+  if (!playerId) return;
+  const { storageKey, keys } = hydrateSocialNoticeKeys();
+  const candidates = clashes.flatMap((clash) => tazzoClashNoticeCandidates(clash, playerId));
+  const silentInitial = Boolean(options.silentInitial && !state.social.loadedAt);
+  if (silentInitial) {
+    candidates.forEach((candidate) => keys.add(candidate.key));
+    state.social.notifiedTradeKeys = [...keys];
+    writeSocialNoticeKeys(storageKey, keys);
+    return;
+  }
+
+  candidates.forEach((candidate) => {
+    if (keys.has(candidate.key)) return;
+    keys.add(candidate.key);
+    enqueueSocialNotice(candidate);
+  });
+  state.social.notifiedTradeKeys = [...keys];
+  writeSocialNoticeKeys(storageKey, keys);
+}
+
+function tazzoClashNoticeCandidates(clash, playerId) {
+  if (!clash?.id) return [];
+  const status = String(clash.status || "");
+  const fromYou = clash.fromPlayerId === playerId;
+  const toYou = clash.toPlayerId === playerId;
+  if (!fromYou && !toYou) return [];
+  const friend = fromYou ? clash.to : clash.from;
+  const friendName = friend?.name || "um amigo";
+  const stamp = clash.resolvedAt || clash.updatedAt || clash.createdAt || "";
+  if (status === "pending" && toYou) {
+    return [{
+      key: `clash:${clash.id}:offered:${clash.createdAt || stamp}`,
+      kind: "clash",
+      targetTab: "online",
+      title: "Convite para bater tazzos",
+      body: `${friendName} chamou voce para um duelo de tazzos.`,
+      clashId: clash.id
+    }];
+  }
+  if (status === "active" && clash.currentTurnPlayerId === playerId) {
+    return [{
+      key: `clash:${clash.id}:turn:${stamp}`,
+      kind: "clash-turn",
+      targetTab: "online",
+      title: "Sua vez de bater",
+      body: `O duelo com ${friendName} esta esperando sua batida.`,
+      clashId: clash.id
+    }];
+  }
+  if (status === "selecting") {
+    const yourReady = fromYou ? clash.fromReady : clash.toReady;
+    if (!yourReady) {
+      return [{
+        key: `clash:${clash.id}:pick:${stamp}`,
+        kind: "clash",
+        targetTab: "online",
+        title: "Escolha seus tazzos",
+        body: `O duelo com ${friendName} foi aceito. Coloque seus tazzos na mesa.`,
+        clashId: clash.id
+      }];
+    }
+  }
+  if (status === "finished") {
+    const youWon = clash.winnerPlayerId === playerId;
+    return [{
+      key: `clash:${clash.id}:finished:${stamp}`,
+      kind: youWon ? "accepted" : "clash",
+      targetTab: "online",
+      title: youWon ? "Duelo vencido" : "Duelo finalizado",
+      body: `O bater tazzos com ${friendName} terminou.`,
+      clashId: clash.id
+    }];
+  }
+  return [];
+}
+
 function enqueueSocialNotice(notice) {
   const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   state.social.notices = [{ ...notice, id }, ...state.social.notices.filter((item) => item.key !== notice.key)].slice(0, 4);
@@ -1278,8 +1735,9 @@ function handleSocialNoticeClick(event) {
   const openButton = event.target.closest("[data-social-notice-open]");
   if (openButton) {
     const id = openButton.dataset.socialNoticeOpen;
+    const notice = state.social.notices.find((item) => item.id === id);
     dismissSocialNotice(id);
-    switchTab("trade");
+    switchTab(notice?.targetTab || "trade");
     refreshSocial({ force: true });
     return;
   }
@@ -1386,11 +1844,15 @@ async function refreshSocial(options = {}) {
   if (state.social.loading) return;
   const freshEnough = Date.now() - state.social.loadedAt < 5000;
   if (!options.force && freshEnough) return;
+  const preserveClashPick = isEditingTazzoClashPick();
   state.social.loading = true;
   state.social.error = "";
   if (state.currentTab === "friends" || state.currentTab === "trade") {
     renderFriends();
     renderTrade();
+  }
+  if (state.currentTab === "online" && !preserveClashPick) {
+    renderOnline();
   }
   try {
     const response = await fetch(SERVER_SOCIAL_ENDPOINT, {
@@ -1411,6 +1873,10 @@ async function refreshSocial(options = {}) {
   if (state.currentTab === "friends" || state.currentTab === "trade") {
     renderFriends();
     renderTrade();
+  }
+  if (state.currentTab === "online") {
+    if (preserveClashPick || isEditingTazzoClashPick()) refreshVisibleTazzoClashSelectionUi();
+    else renderOnline();
   }
 }
 
@@ -1506,13 +1972,20 @@ function connectOnlineSocket() {
         renderFriends();
         renderTrade();
       }
+      if (state.currentTab === "online") {
+        if (isEditingTazzoClashPick()) refreshVisibleTazzoClashSelectionUi();
+        else renderOnline();
+      }
       return;
     }
     if (payload.type !== "online:update") return;
     state.online.socketStatus = "online";
     applyOnlineLobbyPayload(payload);
     state.online.error = "";
-    if (state.currentTab === "online") renderOnline();
+    if (state.currentTab === "online") {
+      if (isEditingTazzoClashPick()) refreshVisibleTazzoClashSelectionUi();
+      else renderOnline();
+    }
   });
 
   nextSocket.addEventListener("close", () => {
@@ -1635,6 +2108,10 @@ function syncOpenOnlineBattleFromLobby(lobby) {
   state.battle.online.sequence = match.sequence || 0;
   state.battle.online.actionDeadlineAt = match.actionDeadlineAt || null;
   state.battle.online.absence = match.absence || null;
+  state.battle.online.cosmetics = {
+    player: normalizeFieldCosmetics(match.playerCosmetics),
+    cpu: normalizeFieldCosmetics(match.enemyCosmetics)
+  };
   if (!appliedSnapshot && !state.battle.online.logStarted) {
     state.battle.log = [
       `Online ${lobby.id}: partida ${match.id.slice(0, 8)} contra ${match.opponentName}.`,
@@ -1664,7 +2141,10 @@ async function refreshOnlineLobbies(options = {}) {
     state.online.error = "Servidor online indisponivel.";
     state.online.currentLobby = null;
     state.online.lobbies = [];
-    if (state.currentTab === "online") renderOnline();
+    if (state.currentTab === "online") {
+      if (isEditingTazzoClashPick()) refreshVisibleTazzoClashSelectionUi();
+      else renderOnline();
+    }
     return;
   }
   if (state.online.socketStatus === "online" && !options.force) return;
@@ -1673,7 +2153,7 @@ async function refreshOnlineLobbies(options = {}) {
   if (!options.force && now - state.online.loadedAt < 4000) return;
   state.online.loading = true;
   state.online.error = "";
-  if (state.currentTab === "online") renderOnline();
+  if (state.currentTab === "online" && !isEditingTazzoClashPick()) renderOnline();
   try {
     const response = await fetch(SERVER_LOBBIES_ENDPOINT, {
       credentials: "same-origin",
@@ -1688,7 +2168,10 @@ async function refreshOnlineLobbies(options = {}) {
     return null;
   } finally {
     state.online.loading = false;
-    if (state.currentTab === "online") renderOnline();
+    if (state.currentTab === "online") {
+      if (isEditingTazzoClashPick()) refreshVisibleTazzoClashSelectionUi();
+      else renderOnline();
+    }
   }
 }
 
@@ -1892,11 +2375,12 @@ function walletInfoDetails(kind) {
 
 function switchTab(tabName) {
   const previousTab = state.currentTab;
-  state.currentTab = PLAYER_TABS.has(tabName) ? tabName : "battle";
+  state.currentTab = PLAYER_TABS.has(tabName) ? tabName : "home";
   if (tabName === "collection") progressTutorial("collection");
+  if (state.currentTab === "trade" && isCurrentTutorialStep("trade")) progressTutorial("trade");
   if (state.currentTab === "competitive") refreshLeaderboard({ force: true });
   if (state.currentTab === "online") refreshOnlineLobbies({ force: true });
-  if (state.currentTab === "friends" || state.currentTab === "trade") refreshSocial({ force: true });
+  if (state.currentTab === "friends" || state.currentTab === "trade" || state.currentTab === "online") refreshSocial({ force: true });
   document.querySelectorAll(".tab-button").forEach((tab) => {
     tab.classList.toggle("is-active", tab.dataset.tab === state.currentTab);
   });
@@ -1933,6 +2417,7 @@ const IMAGE_BUTTON_SELECTOR = [
   ".online-code-form button",
   ".online-current-actions button",
   ".online-lobby-list button",
+  ".tazzo-clash-panel button",
   ".opening-copy button",
   ".pack-results-actions button",
   ".starter-actions button",
@@ -2113,6 +2598,7 @@ function buttonImageVariant(button) {
   if (button.classList.contains("is-active") || button.closest(".slot-picker") && button.classList.contains("is-active")) return "dark";
   if (button.matches(".ghost-button, .secondary-button, .online-code-form button")) return "paper";
   if (button.matches("[data-result-action='battle-menu'], [data-result-action='online-leave']")) return "red";
+  if (button.dataset.clashDecline) return "red";
   if (button.closest(".action-grid") && button.classList.contains("is-active")) return "red";
   if (button.closest(".action-grid")) return "dark";
   if (button.closest(".friend-actions") && button.matches(":last-child")) return "dark";
@@ -2178,6 +2664,7 @@ function buttonImageAsset(button, label) {
     if (button.dataset.lobbyAction === "open-battle") return COMBAT_BUTTON_ART.enter;
     if (button.dataset.lobbyAction === "rematch") return COMBAT_BUTTON_ART.rematch;
   }
+  if (button.dataset.clashCreate || button.dataset.clashPickSubmit || button.dataset.clashHit) return COMBAT_BUTTON_ART.start;
   if (button.dataset.tournament && normalizedLabel.includes("entrar")) return COMBAT_BUTTON_ART.enter;
   return "";
 }
@@ -2222,6 +2709,11 @@ function buttonImageIcon(button, label) {
       rematch: "rematch"
     }[button.dataset.lobbyAction] || "";
   }
+  if (button.dataset.clashCreate) return "battle";
+  if (button.dataset.clashAccept) return "check";
+  if (button.dataset.clashDecline) return "exit";
+  if (button.dataset.clashPickSubmit) return "cards";
+  if (button.dataset.clashHit) return "flip";
   if (button.matches(".tab-button")) return {
     Batalha: "battle",
     Online: "online",
@@ -2580,6 +3072,11 @@ function setupFilters() {
 }
 
 function setupActions() {
+  document.getElementById("view-home")?.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-home-jump]");
+    if (!button || button.disabled) return;
+    switchTab(button.dataset.homeJump);
+  });
   document.getElementById("new-battle-button").addEventListener("click", startConfiguredBattle);
   document.getElementById("battle-setup-menu").addEventListener("click", handleBattleSetupClick);
   document.getElementById("back-to-battle-menu-button").addEventListener("click", () => {
@@ -2611,6 +3108,8 @@ function setupActions() {
   document.getElementById("online-code-input").addEventListener("input", handleOnlineCodeInput);
   document.getElementById("online-current-card").addEventListener("click", handleOnlineLobbyClick);
   document.getElementById("online-lobby-list").addEventListener("click", handleOnlineLobbyClick);
+  document.getElementById("tazzo-clash-panel")?.addEventListener("click", handleTazzoClashClick);
+  document.getElementById("tazzo-clash-panel")?.addEventListener("change", handleTazzoClashChange);
   document.getElementById("tutorial-panel").addEventListener("click", handleTutorialControls);
   document.getElementById("tutorial-coach").addEventListener("click", handleTutorialControls);
   document.getElementById("tutorial-popover").addEventListener("click", handleTutorialControls);
@@ -2724,6 +3223,189 @@ function handleOnlineCodeSubmit(event) {
   event.preventDefault();
   const input = document.getElementById("online-code-input");
   joinOnlineLobby(input?.value || state.online.joinCode, { source: "code" });
+}
+
+function handleTazzoClashChange(event) {
+  if (event.target.id === "tazzo-clash-friend") {
+    state.social.clashFriendId = event.target.value;
+    state.social.clashDraft = { offerIds: [], requestIds: [] };
+    renderOnline();
+    return;
+  }
+  if (event.target.dataset.clashPick) {
+    updateTazzoClashPickDraft(event.target.dataset.clashPick, selectedValues(event.target));
+  }
+}
+
+function handleTazzoClashClick(event) {
+  const createButton = event.target.closest("button[data-clash-create]");
+  if (createButton && !createButton.disabled) {
+    createTazzoClash();
+    return;
+  }
+  const acceptButton = event.target.closest("button[data-clash-accept]");
+  if (acceptButton && !acceptButton.disabled) {
+    respondTazzoClash(acceptButton.dataset.clashAccept, true);
+    return;
+  }
+  const declineButton = event.target.closest("button[data-clash-decline]");
+  if (declineButton && !declineButton.disabled) {
+    respondTazzoClash(declineButton.dataset.clashDecline, false);
+    return;
+  }
+  const pickButton = event.target.closest("button[data-clash-pick-submit]");
+  if (pickButton && !pickButton.disabled) {
+    submitTazzoClashPick(pickButton.dataset.clashPickSubmit);
+    return;
+  }
+  const hitButton = event.target.closest("button[data-clash-hit]");
+  if (hitButton && !hitButton.disabled) {
+    hitTazzoClash(hitButton.dataset.clashHit, tazzoClashTimingScore(hitButton));
+  }
+}
+
+function updateTazzoClashPickDraft(duelId, ids) {
+  state.social.clashPickDrafts[duelId] = ids.filter((id) => MONSTER_BY_ID[id]).slice(0, 3);
+  refreshTazzoClashSelectionUi(duelId);
+}
+
+function isEditingTazzoClashPick() {
+  return Boolean(document.activeElement?.matches?.("[data-clash-pick]"));
+}
+
+function refreshVisibleTazzoClashSelectionUi() {
+  const select = document.activeElement?.matches?.("[data-clash-pick]")
+    ? document.activeElement
+    : document.querySelector("[data-clash-pick]");
+  const duelId = select?.dataset?.clashPick;
+  if (duelId) refreshTazzoClashSelectionUi(duelId);
+}
+
+function refreshTazzoClashSelectionUi(duelId) {
+  const clash = state.social.clashes.find((item) => item.id === duelId);
+  const card = document.querySelector(`[data-clash-duel-card="${CSS.escape(duelId)}"]`);
+  if (!clash || !card) return;
+  const playerId = state.server.playerId;
+  const fromYou = clash.fromPlayerId === playerId;
+  const friendIds = fromYou ? clash.requestedIds || [] : clash.offeredIds || [];
+  const draftIds = state.social.clashPickDrafts[duelId] || [];
+  const draftValue = tazzoClashValue(draftIds);
+  const friendValue = tazzoClashValue(friendIds);
+  const balanced = Boolean(friendIds.length && draftValue === friendValue);
+  const statusText = !friendIds.length
+    ? "Aguardando a escolha do amigo."
+    : balanced
+    ? "Valores iguais. Ao confirmar, a mesa comeca."
+    : `Valores ainda diferentes: ${draftValue} x ${friendValue}.`;
+  const balance = card.querySelector("[data-clash-balance]");
+  balance?.classList.toggle("is-balanced", balanced);
+  balance?.classList.toggle("is-warning", !balanced);
+  const yourValue = card.querySelector("[data-clash-your-value]");
+  const friendValueNode = card.querySelector("[data-clash-friend-value]");
+  const status = card.querySelector("[data-clash-pick-status]");
+  if (yourValue) yourValue.textContent = String(draftValue);
+  if (friendValueNode) friendValueNode.textContent = String(friendValue);
+  if (status) status.textContent = statusText;
+  const submit = card.querySelector("[data-clash-pick-submit]");
+  if (submit) submit.disabled = !draftIds.length;
+}
+
+function tazzoClashTimingScore(button) {
+  const card = button.closest(".tazzo-clash-duel");
+  const meter = card?.querySelector("[data-clash-meter]");
+  const thumb = meter?.querySelector(".clash-meter-thumb");
+  const zone = meter?.querySelector(".clash-meter-zone");
+  if (!meter || !thumb || !zone) return 0;
+  const meterRect = meter.getBoundingClientRect();
+  const thumbRect = thumb.getBoundingClientRect();
+  const zoneRect = zone.getBoundingClientRect();
+  if (!meterRect.width || !thumbRect.width || !zoneRect.width) return 0;
+  const thumbCenter = thumbRect.left + thumbRect.width / 2;
+  const zoneCenter = zoneRect.left + zoneRect.width / 2;
+  const distance = Math.abs(thumbCenter - zoneCenter);
+  const maxDistance = meterRect.width / 2;
+  return clamp(1 - distance / maxDistance, 0, 1);
+}
+
+async function createTazzoClash() {
+  if (!requireOnlineProfile("Entre em uma conta para bater tazzos com amigos.")) return;
+  const friendPlayerId = state.social.clashFriendId;
+  if (!friendPlayerId) return;
+  try {
+    await postServerMutation(SERVER_TAZZO_CLASH_CREATE_ENDPOINT, {
+      friendPlayerId
+    }, "Convidando");
+    state.social.message = "Convite para bater tazzos enviado.";
+    state.social.error = "";
+  } catch (error) {
+    state.social.error = error.message || "Convite nao enviado.";
+  }
+  renderAll();
+}
+
+async function respondTazzoClash(duelId, accept) {
+  if (!requireOnlineProfile()) return;
+  try {
+    await postServerMutation(SERVER_TAZZO_CLASH_RESPOND_ENDPOINT, { duelId, accept }, accept ? "Aceitando duelo" : "Recusando duelo");
+    state.social.message = accept ? "Duelo aceito. Agora escolham os tazzos." : "Duelo recusado.";
+    state.social.error = "";
+  } catch (error) {
+    state.social.error = error.message || "Nao foi possivel responder ao duelo.";
+  }
+  renderAll();
+}
+
+async function submitTazzoClashPick(duelId) {
+  if (!requireOnlineProfile()) return;
+  const monsterIds = state.social.clashPickDrafts[duelId] || [];
+  if (!monsterIds.length) {
+    state.social.error = "Escolha de 1 a 3 tazzos para colocar na mesa.";
+    renderOnline();
+    return;
+  }
+  try {
+    const payload = await postServerMutation(SERVER_TAZZO_CLASH_PICK_ENDPOINT, {
+      duelId,
+      monsterIds
+    }, "Escolhendo tazzos");
+    const result = payload?.clashResult || {};
+    state.social.message = result.status === "active"
+      ? "Apostas equilibradas. Cara ou coroa definiu a primeira batida."
+      : `Escolha enviada (${result.offerValue || 0} x ${result.requestValue || 0}).`;
+    state.social.error = "";
+  } catch (error) {
+    state.social.error = error.message || "Escolha nao enviada.";
+  }
+  renderAll();
+}
+
+async function hitTazzoClash(duelId, timingScore = 0) {
+  if (!requireOnlineProfile()) return;
+  try {
+    const payload = await postServerMutation(SERVER_TAZZO_CLASH_HIT_ENDPOINT, {
+      duelId,
+      timingScore
+    }, timingScore >= TAZZO_CLASH_PERFECT_SCORE ? "Batida perfeita" : "Batendo");
+    const result = payload?.clashResult || {};
+    state.social.clashAnimation = {
+      duelId,
+      at: Date.now(),
+      flippedKeys: result.flippedKeys || [],
+      perfect: Boolean(result.perfect)
+    };
+    state.social.message = result.flippedKeys?.length
+      ? `${result.flippedKeys.length} tazzo(s) viraram${result.perfect ? " com timing perfeito" : ""}.`
+      : "Nenhum tazzo virou nessa batida.";
+    state.social.error = "";
+    window.setTimeout(() => {
+      if (state.social.clashAnimation?.duelId !== duelId) return;
+      state.social.clashAnimation = null;
+      if (state.currentTab === "online") renderOnline();
+    }, 1200);
+  } catch (error) {
+    state.social.error = error.message || "Batida recusada.";
+  }
+  renderAll();
 }
 
 async function createOnlineLobby() {
@@ -2933,7 +3615,8 @@ function applyOnlineBattleSnapshot(snapshot, options = {}) {
     shot: Math.max(0, Number(piece.shot) || 0),
     dribble: Math.max(0, Number(piece.dribble) || 0),
     speed: Math.max(0, Number(piece.speed) || 0),
-    acted: Boolean(piece.acted)
+    acted: Boolean(piece.acted),
+    cosmetics: normalizeFieldCosmetics(piece.cosmetics)
   }));
   state.battle.effects = {
     player: cloneOnlineEffects(snapshot.effects?.player),
@@ -3154,6 +3837,10 @@ function openOnlineBattle() {
     actionDeadlineAt: match.actionDeadlineAt || null,
     turnKey: "",
     absence: match.absence || null,
+    cosmetics: {
+      player: normalizeFieldCosmetics(match.playerCosmetics),
+      cpu: normalizeFieldCosmetics(match.enemyCosmetics)
+    },
     stateSequence: -1,
     lastActionSequence: 0,
     keeperFeedbackSequence: 0,
@@ -3715,21 +4402,36 @@ function syncMusicPlayer() {
   }
 }
 
+function holographicArtFromPointerTarget(target) {
+  const directArt = target.closest?.("[data-holo-art]");
+  if (directArt) return directArt;
+  const revealedPullCard = target.closest?.(".pull-card:not(.is-hidden):not(.is-flipping)");
+  return revealedPullCard?.querySelector("[data-holo-art]") || null;
+}
+
+function canUseHolographicPointerMotion(art) {
+  if (!art || art.closest("[data-viewer-tilt]")) return false;
+  const pullCard = art.closest(".pull-card");
+  return !pullCard || (!pullCard.classList.contains("is-hidden") && !pullCard.classList.contains("is-flipping"));
+}
+
 function setupHolographicArtMotion() {
   document.addEventListener("pointermove", (event) => {
-    const art = event.target.closest?.("[data-holo-art]");
-    if (!art || art.closest("[data-viewer-tilt], .pull-card")) return;
+    const art = holographicArtFromPointerTarget(event.target);
+    if (!canUseHolographicPointerMotion(art)) return;
     const rect = art.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
     const x = clamp((event.clientX - rect.left) / rect.width, 0, 1);
     const y = clamp((event.clientY - rect.top) / rect.height, 0, 1);
-    updateHolographicArt(art, x, y, 8);
+    updateHolographicArt(art, x, y, art.closest(".pull-card") ? 0 : 8);
   });
 
   document.addEventListener("pointerout", (event) => {
-    const art = event.target.closest?.("[data-holo-art]");
-    if (!art || art.closest("[data-viewer-tilt], .pull-card")) return;
+    const art = holographicArtFromPointerTarget(event.target);
+    if (!canUseHolographicPointerMotion(art)) return;
     if (event.relatedTarget && art.contains(event.relatedTarget)) return;
+    const pullCard = art.closest(".pull-card");
+    if (event.relatedTarget && pullCard?.contains(event.relatedTarget)) return;
     resetHolographicArt(art);
   });
 }
@@ -4447,6 +5149,7 @@ function renderAll() {
   applySelectedCosmetic();
   applyTutorialState();
   renderWallet();
+  renderHome();
   renderBattle();
   renderPacks();
   renderCollection();
@@ -4467,14 +5170,15 @@ function renderAll() {
 }
 
 function applySelectedCosmetic() {
-  const selected = state.save.selectedCosmetic;
-  const isOwned = selected && state.save.cosmetics[selected];
-  const exists = SHOP_ITEMS.some((item) => item.id === selected);
-  if (isOwned && exists) {
-    document.body.dataset.cosmetic = selected;
-    return;
-  }
-  delete document.body.dataset.cosmetic;
+  ["cosmetic", "cosmeticTeam", "cosmeticAlbum", "cosmeticPack", "cosmeticProfile"].forEach((key) => {
+    delete document.body.dataset[key];
+  });
+  const equipped = sanitizeEquippedCosmetics(state.save.equippedCosmetics, state.save.cosmetics, state.save.selectedCosmetic);
+  state.save.equippedCosmetics = equipped;
+  Object.entries(equipped).forEach(([slot, itemId]) => {
+    const datasetKey = `cosmetic${slot.charAt(0).toUpperCase()}${slot.slice(1)}`;
+    document.body.dataset[datasetKey] = itemId;
+  });
 }
 
 function completedTutorialCount() {
@@ -4585,8 +5289,8 @@ function tutorialResultText(stepId) {
       body: "Voce venceu ao derrubar o rival ou superar os criterios do tempo. Vivos, vitalidade e dano decidem partidas apertadas."
     },
     trade: {
-      title: "Troca concluida",
-      body: "Um repetido saiu da colecao e um tazzo faltante entrou. Trocas aceleram bastante o album."
+      title: "Trocas apresentadas",
+      body: "A mesa de trocas mostra amigos, oferta, pedido e desejo. Ela fica disponivel quando voce tiver amigos jogando, mas nao trava seu progresso."
     },
     tournament: {
       title: "Torneio iniciado",
@@ -4681,6 +5385,100 @@ function renderWallet() {
   refreshWalletInfoContent();
 }
 
+function homeCollectionProgress() {
+  const visibleMonsters = visibleCollectionMonsters();
+  const owned = visibleMonsters.filter((monster) => state.save.collection[monster.id] > 0).length;
+  return { owned, total: visibleMonsters.length };
+}
+
+function renderHome() {
+  const bannerGrid = document.getElementById("home-banner-grid");
+  const summaryGrid = document.getElementById("home-summary-grid");
+  if (!bannerGrid || !summaryGrid) return;
+
+  const collection = homeCollectionProgress();
+  const rank = currentRank();
+  const next = nextRank();
+  const tutorialDone = completedTutorialCount();
+  const tutorialTotal = TUTORIAL_STEPS.length;
+  const activeCompetitive = activeSavedCompetitive();
+  const profileName = state.server.profile?.name || "Visitante";
+  const starterReady = Boolean(state.save.starterOnboardingComplete);
+
+  const banners = [
+    {
+      tab: starterReady ? "packs" : "packs",
+      art: "assets/icones/abrir_salgadinhos.png",
+      eyebrow: starterReady ? "Pacotinhos" : "Boas-vindas",
+      title: starterReady ? "Salgadinhos no recreio" : "Abra seu primeiro recheado",
+      body: starterReady
+        ? "Revele tazzos, junte fragmentos e procure raridades para fortalecer o album."
+        : "O time inicial vem de um salgadinho especial com atacante, meia, zagueiro, goleiro e lendario.",
+      cta: starterReady ? "Abrir pacotinhos" : "Comecar"
+    },
+    {
+      tab: "shop",
+      art: "assets/icones/banner_loja.png",
+      eyebrow: "Promocoes",
+      title: "Merreis e cosmeticos",
+      body: "Veja pacotes de Merreis e itens visuais para deixar seu time mais reconhecivel em campo.",
+      cta: "Ver loja"
+    },
+    {
+      tab: activeCompetitive ? "battle" : "competitive",
+      art: "assets/icones/banner_torneios.png",
+      eyebrow: "Competitivo",
+      title: activeCompetitive ? "Partida ativa" : "Liga e torneios",
+      body: activeCompetitive
+        ? "Existe uma partida competitiva esperando resolucao na arena."
+        : "Suba no ranking, entre em torneios e proteja seu piso de divisao.",
+      cta: activeCompetitive ? "Continuar batalha" : "Ver torneios"
+    },
+    {
+      tab: "trade",
+      art: "assets/icones/banner_troca.png",
+      eyebrow: "Trocas",
+      title: "Mesa de propostas",
+      body: "Conheca ofertas, lista de desejo e valores antes de depender de amigos online.",
+      cta: "Ver trocas"
+    }
+  ];
+
+  bannerGrid.innerHTML = banners.map(homeBannerTemplate).join("");
+  summaryGrid.innerHTML = [
+    homeSummaryTemplate("Jogador", profileName, state.server.profile ? "Perfil online" : "Entre para salvar online", "home"),
+    homeSummaryTemplate("Album", `${collection.owned}/${collection.total}`, `${formatNumber(state.save.fragments)} fragmentos`, "collection"),
+    homeSummaryTemplate("Time", `${state.save.team.length}/3`, `Custo ${teamCost()} - poder ${Math.round(teamPower())}`, "battle"),
+    homeSummaryTemplate("Liga", rank.name, next ? `${Math.max(0, next.min - state.save.trophies)} pontos ate ${next.name}` : "Topo atual", "competitive"),
+    homeSummaryTemplate("Tutorial", `${tutorialDone}/${tutorialTotal}`, state.save.tutorialRewardClaimed ? "Recompensa recebida" : "Recompensa pendente", "missions"),
+    homeSummaryTemplate("Carteira", `${formatNumber(state.save.merreis)} Merreis`, `${formatNumber(state.save.fragments)} fragmentos`, "shop")
+  ].join("");
+}
+
+function homeBannerTemplate(card) {
+  return `
+    <article class="home-banner-card">
+      <img src="${card.art}" alt="">
+      <div>
+        <span class="eyebrow">${card.eyebrow}</span>
+        <h2>${card.title}</h2>
+        <p>${card.body}</p>
+      </div>
+      <button type="button" data-home-jump="${card.tab}">${card.cta}</button>
+    </article>
+  `;
+}
+
+function homeSummaryTemplate(label, value, meta, tab) {
+  return `
+    <button class="home-summary-card" type="button" data-home-jump="${tab}">
+      <span>${label}</span>
+      <strong>${value}</strong>
+      <small>${meta}</small>
+    </button>
+  `;
+}
+
 function menuViews() {
   if (!window.TazzoMenuViews) {
     throw new Error("Modulo de menus nao carregado.");
@@ -4701,6 +5499,7 @@ function menuViewContext() {
     MISSION_PERIOD_ORDER,
     MISSION_PERIOD_LABELS,
     ECONOMY_REWARD_RULES,
+    SOCIAL_SHARE_REWARDS,
     COMPETITIVE_MATCHMAKING_TIMEOUT_MS,
     LEGENDARY_BOOST_TAZZOS,
     LEGENDARY_BOOST_MAX_TAZZOS,
@@ -4709,6 +5508,9 @@ function menuViewContext() {
     hasOnlineProfile,
     formatNumber,
     clamp,
+    cosmeticSlot,
+    cosmeticSlotLabel,
+    isCosmeticEquipped,
     missionPeriod,
     isPackBusy,
     legendaryBoostMultiplier,
@@ -4748,6 +5550,10 @@ function menuViewContext() {
     claimableMissions,
     claimReadyMissions,
     dailyEconomyStats,
+    shareRewardClaimed,
+    shareRewardValidated,
+    shareRewardRequested,
+    shareGameForReward,
     tradeValue
   };
 }
@@ -5238,6 +6044,275 @@ function renderOnline() {
     .filter(Boolean)
     .map((monster) => smallRow(monster, `Custo ${monster.cost}`))
     .join("");
+
+  renderTazzoClashPanel();
+  decorateImageButtons(document.getElementById("view-online"));
+}
+
+function renderTazzoClashPanel() {
+  const panel = document.getElementById("tazzo-clash-panel");
+  if (!panel) return;
+  const social = state.social;
+  const friend = tazzoClashSelectedFriend();
+  const canInvite = Boolean(hasOnlineProfile() && friend);
+  const activeClashes = [...(social.clashes || [])].sort(tazzoClashSort);
+  const runningCount = activeClashes.filter((clash) => clash.status === "active" || clash.status === "selecting").length;
+
+  panel.innerHTML = `
+    <div class="panel-heading">
+      <div>
+        <span class="eyebrow">Novo modo</span>
+        <h2>Bater tazzos</h2>
+      </div>
+      <span class="chip">${runningCount} em andamento</span>
+    </div>
+    <p class="tazzo-clash-note">Primeiro convide um amigo. Se ele aceitar, cada um escolhe ate 3 tazzos para bater na mesa.</p>
+    ${!hasOnlineProfile() ? `<p class="profile-message is-error">Entre em uma conta para duelar com amigos.</p>` : ""}
+    <div class="tazzo-clash-builder">
+      <div class="tazzo-clash-invite-row">
+        <label>
+          Amigo
+          <select id="tazzo-clash-friend" ${social.friends.length ? "" : "disabled"}>
+            ${social.friends.length
+              ? social.friends.map((item) => `<option value="${escapeHtmlAttribute(item.playerId)}" ${item.playerId === social.clashFriendId ? "selected" : ""}>${escapeHtmlAttribute(item.name)}</option>`).join("")
+              : `<option value="">Sem amigos</option>`}
+          </select>
+        </label>
+        <button type="button" data-clash-create="true" ${canInvite ? "" : "disabled"}>Convidar duelo</button>
+      </div>
+      ${social.error ? `<p class="profile-message is-error">${escapeHtmlAttribute(social.error)}</p>` : ""}
+      ${social.message ? `<p class="profile-message is-success">${escapeHtmlAttribute(social.message)}</p>` : ""}
+    </div>
+    <div class="tazzo-clash-duel-list">
+      ${activeClashes.length ? activeClashes.map(renderTazzoClashDuel).join("") : `<p class="tazzo-clash-empty">Nenhum duelo ainda. Escolha um amigo e envie o convite.</p>`}
+    </div>
+  `;
+}
+
+function tazzoClashSelectedFriend() {
+  const social = state.social;
+  const selected = social.friends.find((friend) => friend.playerId === social.clashFriendId) || social.friends[0] || null;
+  if (selected && social.clashFriendId !== selected.playerId) social.clashFriendId = selected.playerId;
+  return selected;
+}
+
+function tazzoClashOwnedMonsters() {
+  return sortedMonsters(MONSTERS).filter((monster) => (state.save.collection[monster.id] || 0) > 0);
+}
+
+function tazzoClashFriendMonsters(friend) {
+  return (friend?.collection || [])
+    .map((item) => ({
+      monster: MONSTER_BY_ID[item.monsterId],
+      count: Math.max(0, Math.floor(Number(item.count) || 0))
+    }))
+    .filter((item) => item.monster && item.count > 0)
+    .sort((a, b) => a.monster.number - b.monster.number);
+}
+
+function tazzoClashOption(monster, selected, count) {
+  return `<option value="${escapeHtmlAttribute(monster.id)}" ${selected ? "selected" : ""}>${escapeHtmlAttribute(monster.name)} - ${escapeHtmlAttribute(monster.rarity)} (${tradeValue(monster.id)} pts) x${formatNumber(count)}</option>`;
+}
+
+function tazzoClashValue(ids = []) {
+  return ids.reduce((sum, id) => sum + tradeValue(id), 0);
+}
+
+function tazzoClashSort(a, b) {
+  const order = { active: 0, selecting: 1, pending: 2, finished: 3, declined: 4, cancelled: 5 };
+  return (order[a.status] ?? 9) - (order[b.status] ?? 9)
+    || String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
+}
+
+function renderTazzoClashDuel(clash) {
+  const playerId = state.server.playerId;
+  const fromYou = clash.fromPlayerId === playerId;
+  const incoming = clash.toPlayerId === playerId && clash.status === "pending";
+  const friend = fromYou ? clash.to : clash.from;
+  const friendName = cleanText(friend?.name, "Amigo", 24);
+  const isYourTurn = clash.status === "active" && clash.currentTurnPlayerId === playerId;
+  const startedName = clash.startedByPlayerId === playerId ? "Voce" : clash.startedByPlayerId ? friendName : "Aguardando";
+  const animation = state.social.clashAnimation?.duelId === clash.id && Date.now() - state.social.clashAnimation.at < 1200
+    ? state.social.clashAnimation
+    : null;
+  const latestLog = Array.isArray(clash.log) ? clash.log.slice(-3).reverse() : [];
+  const scoreYou = clash.scores?.[playerId] || 0;
+  const scoreFriend = clash.scores?.[friend?.playerId] || 0;
+  const yourPickIds = fromYou ? clash.offeredIds || [] : clash.requestedIds || [];
+  const friendPickIds = fromYou ? clash.requestedIds || [] : clash.offeredIds || [];
+  const yourPickValue = tazzoClashValue(yourPickIds);
+  const friendPickValue = tazzoClashValue(friendPickIds);
+  const resultText = clash.status === "finished"
+    ? clash.winnerPlayerId
+      ? clash.winnerPlayerId === playerId ? "Voce venceu a mesa." : `${friendName} venceu a mesa.`
+      : "Duelo empatado."
+    : statusLabelTazzoClash(clash.status);
+
+  return `
+    <article class="tazzo-clash-duel is-${escapeHtmlAttribute(clash.status)}${isYourTurn ? " is-your-turn" : ""}${animation ? " is-impact" : ""}" data-clash-duel-card="${escapeHtmlAttribute(clash.id)}">
+      <div class="tazzo-clash-duel-head">
+        <div>
+          <span class="eyebrow">${fromYou ? "Seu convite" : "Convite recebido"}</span>
+          <strong>${fromYou ? `Contra ${escapeHtmlAttribute(friendName)}` : `${escapeHtmlAttribute(friendName)} chamou voce`}</strong>
+        </div>
+        <span class="chip">${escapeHtmlAttribute(resultText)}</span>
+      </div>
+      <div class="tazzo-clash-score">
+        ${clash.status === "selecting" ? `
+          <span>Sua escolha <strong>${yourPickValue}</strong></span>
+          <span>${escapeHtmlAttribute(friendName)} <strong>${friendPickValue}</strong></span>
+          <span>${clash.valuesBalanced ? "Valores iguais" : "Escolhendo apostas"}</span>
+        ` : `
+          <span>Voce <strong>${scoreYou}</strong></span>
+          <span>${escapeHtmlAttribute(friendName)} <strong>${scoreFriend}</strong></span>
+          <span>Cara ou coroa: <strong>${escapeHtmlAttribute(startedName)}</strong></span>
+        `}
+      </div>
+      ${renderTazzoClashBoard(clash, animation)}
+      ${clash.status === "pending" ? `
+        <div class="tazzo-clash-pending">
+          <span>Sem apostas ainda</span>
+          ${incoming ? `
+            <div class="tazzo-clash-actions">
+              <button type="button" data-clash-accept="${escapeHtmlAttribute(clash.id)}">Aceitar duelo</button>
+              <button type="button" data-clash-decline="${escapeHtmlAttribute(clash.id)}">Recusar duelo</button>
+            </div>
+          ` : `<span>Aguardando ${escapeHtmlAttribute(friendName)} aceitar.</span>`}
+        </div>
+      ` : ""}
+      ${clash.status === "selecting" ? renderTazzoClashSelection(clash, friendName) : ""}
+      ${isYourTurn ? renderTazzoClashMeter(clash.id) : clash.status === "active" ? `<p class="tazzo-clash-turn">Aguardando a batida de ${escapeHtmlAttribute(friendName)}.</p>` : ""}
+      ${latestLog.length ? `<div class="tazzo-clash-log">${latestLog.map((item) => `<span>${escapeHtmlAttribute(item.message || "")}</span>`).join("")}</div>` : ""}
+    </article>
+  `;
+}
+
+function renderTazzoClashSelection(clash, friendName) {
+  const playerId = state.server.playerId;
+  const fromYou = clash.fromPlayerId === playerId;
+  const yourIds = fromYou ? clash.offeredIds || [] : clash.requestedIds || [];
+  const friendIds = fromYou ? clash.requestedIds || [] : clash.offeredIds || [];
+  const draftIds = tazzoClashDraftForDuel(clash, yourIds);
+  const owned = tazzoClashOwnedMonsters();
+  const draftValue = tazzoClashValue(draftIds);
+  const friendValue = tazzoClashValue(friendIds);
+  const canSubmit = Boolean(draftIds.length && draftIds.length <= 3);
+  const balanceClass = friendIds.length && draftValue === friendValue ? "is-balanced" : "is-warning";
+  const statusText = !friendIds.length
+    ? `${friendName} ainda esta escolhendo.`
+    : draftValue === friendValue
+    ? "Valores iguais. Ao confirmar, a mesa comeca."
+    : `Valores ainda diferentes: ${draftValue} x ${friendValue}.`;
+  return `
+    <div class="tazzo-clash-selection">
+      <div class="tazzo-clash-select-grid">
+        <label>
+          Seus tazzos para bater
+          <select data-clash-pick="${escapeHtmlAttribute(clash.id)}" multiple size="5" ${owned.length ? "" : "disabled"}>
+            ${owned.length ? owned.map((monster) => tazzoClashOption(monster, draftIds.includes(monster.id), state.save.collection[monster.id])).join("") : `<option value="">Sem tazzos</option>`}
+          </select>
+        </label>
+        <section class="tazzo-clash-side-preview">
+          <span>${escapeHtmlAttribute(friendName)} colocou</span>
+          ${friendIds.length ? renderTazzoClashMiniStack(friendIds) : `<p>Aguardando escolha.</p>`}
+        </section>
+      </div>
+      <div class="tazzo-clash-balance ${balanceClass}" data-clash-balance>
+        <span>Sua mesa: <strong data-clash-your-value>${draftValue}</strong> pts</span>
+        <span>Mesa do amigo: <strong data-clash-friend-value>${friendValue}</strong> pts</span>
+        <span data-clash-pick-status>${escapeHtmlAttribute(statusText)}</span>
+      </div>
+      <button type="button" data-clash-pick-submit="${escapeHtmlAttribute(clash.id)}" ${canSubmit ? "" : "disabled"}>${yourIds.length ? "Atualizar escolha" : "Confirmar tazzos"}</button>
+    </div>
+  `;
+}
+
+function tazzoClashDraftForDuel(clash, fallbackIds = []) {
+  if (!Array.isArray(state.social.clashPickDrafts[clash.id])) {
+    state.social.clashPickDrafts[clash.id] = fallbackIds.slice(0, 3);
+  }
+  return state.social.clashPickDrafts[clash.id].filter((id) => MONSTER_BY_ID[id]).slice(0, 3);
+}
+
+function renderTazzoClashMiniStack(ids = []) {
+  return `
+    <div class="tazzo-clash-mini-stack">
+      ${ids.map((id) => {
+        const monster = MONSTER_BY_ID[id];
+        if (!monster) return "";
+        return `
+          <button class="trade-tazzo-tile" type="button" data-monster-view="${escapeHtmlAttribute(monster.id)}">
+            ${renderMonsterArt(monster, "trade-tazzo-art")}
+            <span>
+              <strong>${escapeHtmlAttribute(monster.name)}</strong>
+              <small>${escapeHtmlAttribute(monster.rarity)} - ${tradeValue(monster.id)} pts</small>
+            </span>
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderTazzoClashBoard(clash, animation) {
+  const entries = Array.isArray(clash.entries) ? clash.entries : [];
+  if (!entries.length) return "";
+  const flippedKeys = new Set(animation?.flippedKeys || []);
+  return `
+    <div class="tazzo-clash-board">
+      ${entries.map((entry) => renderTazzoClashEntry(entry, clash, flippedKeys)).join("")}
+    </div>
+  `;
+}
+
+function renderTazzoClashEntry(entry, clash, flippedKeys) {
+  const monster = MONSTER_BY_ID[entry.monsterId];
+  const playerId = state.server.playerId;
+  const friend = clash.fromPlayerId === playerId ? clash.to : clash.from;
+  const ownerName = entry.ownerPlayerId === playerId ? "Seu" : cleanText(friend?.name, "Amigo", 16);
+  const capturedBy = entry.capturedByPlayerId;
+  const capturedName = capturedBy ? capturedBy === playerId ? "voce" : cleanText(friend?.name, "amigo", 16) : "";
+  const isNewFlip = flippedKeys.has(entry.key);
+  if (!monster) return "";
+  return `
+    <button class="tazzo-clash-entry${capturedBy ? " is-flipped" : ""}${isNewFlip ? " is-new-flip" : ""}" type="button" data-monster-view="${escapeHtmlAttribute(monster.id)}">
+      <span class="tazzo-clash-disc">
+        <span class="tazzo-clash-face tazzo-clash-back">
+          <img src="${escapeHtmlAttribute(monsterBackImage(monster))}" alt="">
+        </span>
+        <span class="tazzo-clash-face tazzo-clash-front">
+          ${renderMonsterArt(monster, "tazzo-clash-art", { revealHolographic: Boolean(capturedBy) })}
+        </span>
+      </span>
+      <span class="tazzo-clash-entry-meta">
+        <strong>${escapeHtmlAttribute(monster.name)}</strong>
+        <small>${escapeHtmlAttribute(ownerName)} tazzo${capturedBy ? ` | virou para ${escapeHtmlAttribute(capturedName)}` : ""}</small>
+      </span>
+    </button>
+  `;
+}
+
+function renderTazzoClashMeter(duelId) {
+  return `
+    <div class="tazzo-clash-hitbox">
+      <div class="clash-meter-track" data-clash-meter>
+        <span class="clash-meter-zone"></span>
+        <span class="clash-meter-thumb"></span>
+      </div>
+      <button type="button" data-clash-hit="${escapeHtmlAttribute(duelId)}">Bater agora</button>
+    </div>
+  `;
+}
+
+function statusLabelTazzoClash(status) {
+  return {
+    pending: "Pendente",
+    selecting: "Escolhendo",
+    active: "Na mesa",
+    finished: "Finalizado",
+    declined: "Recusado",
+    cancelled: "Cancelado"
+  }[status] || "Duelo";
 }
 
 function renderOnlineInviteMessage() {
@@ -5844,7 +6919,7 @@ function finishStarterOnboardingView() {
   state.starter.reveal = [];
   state.starter.opening = false;
   state.starter.message = "";
-  switchTab("battle");
+  switchTab("home");
 }
 
 window.openStarterOnboardingPack = openStarterOnboardingPack;
@@ -6663,8 +7738,8 @@ function buyShopItemLocally(itemId) {
   }
 
   if (state.save.cosmetics[item.id]) {
-    state.save.selectedCosmetic = item.id;
-    state.shopMessage = `${item.name} ativado.`;
+    equipCosmetic(item.id);
+    state.shopMessage = `${item.name} equipado em ${cosmeticSlotLabel(item)}.`;
     saveGame();
     renderAll();
     return;
@@ -6673,7 +7748,7 @@ function buyShopItemLocally(itemId) {
   if (state.save.merreis < item.cost) return;
   state.save.merreis -= item.cost;
   state.save.cosmetics[item.id] = true;
-  state.save.selectedCosmetic = item.id;
+  equipCosmetic(item.id);
   state.shopMessage = `${item.name} comprado.`;
   saveGame();
   renderAll();

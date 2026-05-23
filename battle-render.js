@@ -546,9 +546,11 @@ function smallResultMetric(label, value) {
 
 function renderPieceToken(piece) {
   const monster = monsterOf(piece);
+  const cosmetics = typeof fieldCosmeticsForPiece === "function" ? fieldCosmeticsForPiece(piece) : {};
+  const cosmeticClasses = typeof fieldCosmeticClasses === "function" ? fieldCosmeticClasses(cosmetics) : "";
   const token = document.createElement("button");
   token.type = "button";
-  token.className = `tazzo-token ${piece.side}`;
+  token.className = `tazzo-token ${piece.side}${cosmeticClasses ? ` ${cosmeticClasses}` : ""}`;
   if (state.battle.activeId === piece.id) token.classList.add("is-acting");
   if (state.battle.animation?.actorId === piece.id) token.classList.add("is-ai-actor", `is-ai-${state.battle.animation.stage || "windup"}`);
   if (state.battle.animation?.targetId === piece.id) token.classList.add("is-ai-target");
@@ -565,7 +567,11 @@ function renderPieceToken(piece) {
   });
   if (piece.hp <= 0) token.classList.add("ko");
   token.innerHTML = `
+    <span class="field-cosmetic-layer field-cosmetic-base" aria-hidden="true"></span>
+    <span class="field-cosmetic-layer field-cosmetic-ring" aria-hidden="true"></span>
     <img src="${monster.image}" alt="${monster.name}">
+    <span class="field-cosmetic-layer field-cosmetic-slash" aria-hidden="true"></span>
+    <span class="field-cosmetic-layer field-cosmetic-badge" aria-hidden="true"></span>
     <div class="hpbar"><span style="width:${Math.max(0, Math.round((piece.hp / piece.maxHp) * 100))}%"></span></div>
   `;
   return token;

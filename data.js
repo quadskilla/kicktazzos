@@ -167,10 +167,10 @@ const SHOP_ITEMS = [
   { id: "merreis-2000", type: "merreis", name: "Bolso de Merreis", merreis: 2000, priceCents: 499, currency: "BRL", priceLabel: "R$ 4,99", image: "assets/4,99.png", note: "Recarga rapida para abrir pacotinhos e entrar em torneios." },
   { id: "merreis-10000", type: "merreis", name: "Combo Recreio", merreis: 10000, priceCents: 1499, currency: "BRL", priceLabel: "R$ 14,99", image: "assets/14,99.png", note: "Mais folego para comprar pacotinhos e melhorar seu time." },
   { id: "merreis-30000", type: "merreis", name: "Cofre Campeao", merreis: 30000, priceCents: 2499, currency: "BRL", priceLabel: "R$ 24,99", image: "assets/24,99.png", note: "Pacote grande para colecionadores que querem acelerar a liga." },
-  { id: "frame-holo", name: "Moldura Holografica", cost: 380, note: "Realce visual para tazzos do seu time." },
-  { id: "album-crocante", name: "Capa Crocante", cost: 460, note: "Capa cosmetica para o album digital." },
-  { id: "tear-effect", name: "Efeito Rasgo Neon", cost: 520, note: "Efeito cosmetico para abertura de pacotinhos." },
-  { id: "avatar-master", name: "Avatar Mestre", cost: 620, note: "Avatar de perfil para colecionador competitivo." }
+  { id: "frame-holo", type: "cosmetic", cosmeticSlot: "team", slotLabel: "Aro", name: "Aro de Campeao", cost: 380, note: "Aro dourado animado em volta dos seus tazzos no campo, visivel em partidas online." },
+  { id: "album-crocante", type: "cosmetic", cosmeticSlot: "album", slotLabel: "Base", name: "Base de Arquibancada", cost: 460, note: "Base de figurinha de estadio atras dos seus tazzos na arena, tambem vista pelo rival." },
+  { id: "tear-effect", type: "cosmetic", cosmeticSlot: "pack", slotLabel: "Rastro", name: "Rastro de Rasgo", cost: 520, note: "Faixa de energia que corta o tazzo em campo quando ele esta na partida online ou local." },
+  { id: "avatar-master", type: "cosmetic", cosmeticSlot: "profile", slotLabel: "Selo", name: "Selo de Colecionador", cost: 620, note: "Pequeno selo no tazzo em campo para marcar seu time como colecionador veterano." }
 ];
 
 const PACKS = [
@@ -217,6 +217,15 @@ const ECONOMY_REWARD_RULES = Object.freeze({
   trainingAi: { merreis: 25, dailyMatches: 10 },
   rankedWin: { merreis: 50, dailyMerreisCap: 1000 }
 });
+
+const SOCIAL_SHARE_REWARDS = [
+  { id: "discord", name: "Discord", reward: 500, note: "Copie o convite e mande para um servidor ou amigo." },
+  { id: "twitter", name: "X / Twitter", reward: 500, note: "Publique um convite rapido para chamar novos jogadores." },
+  { id: "whatsapp", name: "WhatsApp", reward: 500, note: "Compartilhe com um grupo ou amigo." },
+  { id: "telegram", name: "Telegram", reward: 500, note: "Envie o link para um chat ou canal." },
+  { id: "facebook", name: "Facebook", reward: 500, note: "Compartilhe o jogo no seu feed." },
+  { id: "reddit", name: "Reddit", reward: 500, note: "Abra um post com o link do jogo." }
+];
 
 const FRIENDS = [
   {
@@ -450,12 +459,12 @@ const TUTORIAL_STEPS = [
   },
   {
     id: "trade",
-    title: "Fazer troca",
-    description: "Troque repetidos por tazzos faltantes para acelerar o album.",
-    action: "Abrir trocas",
-    steps: ["Abra Trocas.", "Escolha um repetido para oferecer.", "Escolha um tazzo faltante na lista de desejo e confirme."],
-    tip: "Trocas sao melhores quando voce tem duplicatas. Tazzos unicos devem ficar protegidos.",
-    completes: "Conclui quando uma troca e feita."
+    title: "Conhecer trocas",
+    description: "Veja como as propostas funcionam sem precisar ter amigos jogando agora.",
+    action: "Ver trocas",
+    steps: ["Abra Trocas.", "Veja onde ficam amigos, oferta, pedido e lista de desejo.", "Volte quando tiver amigos ou repetidos suficientes."],
+    tip: "Trocas sao opcionais. Elas ficam melhores quando voce tem duplicatas e amigos ativos.",
+    completes: "Conclui quando voce abre a aba Trocas."
   },
   {
     id: "tournament",
@@ -572,6 +581,7 @@ window.TAZZOMON_DATA = {
   PACKS,
   MISSIONS,
   ECONOMY_REWARD_RULES,
+  SOCIAL_SHARE_REWARDS,
   FRIENDS,
   BATTLE_MODES,
   BATTLE_FORMATIONS,

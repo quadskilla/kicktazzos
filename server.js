@@ -27,6 +27,9 @@ const ONLINE_LOBBY_TTL_MS = 45 * 60 * 1000;
 const ONLINE_PLAYER_IDLE_MS = 8 * 60 * 1000;
 const ONLINE_PLAYER_AWAY_MS = Number(process.env.ONLINE_PLAYER_AWAY_MS) || 15000;
 const ONLINE_FORFEIT_GRACE_MS = Number(process.env.ONLINE_FORFEIT_GRACE_MS) || 60000;
+const TAZZO_CLASH_BASE_CHANCE = 0.5;
+const TAZZO_CLASH_PERFECT_CHANCE = 0.55;
+const TAZZO_CLASH_PERFECT_SCORE = 0.88;
 const ACCOUNT_EVENT_RETENTION = Math.max(50, Math.floor(Number(process.env.ACCOUNT_EVENT_RETENTION) || 500));
 const ACCOUNT_EVENT_DATA_BYTES = 4096;
 const MERCADO_PAGO_ACCESS_TOKEN = String(process.env.MERCADO_PAGO_ACCESS_TOKEN || "").trim();
@@ -117,6 +120,7 @@ const {
   SHOP_ITEMS,
   MISSIONS,
   ECONOMY_REWARD_RULES,
+  SOCIAL_SHARE_REWARDS,
   FRIENDS,
   BATTLE_MODES,
   BATTLE_FORMATIONS,
@@ -352,6 +356,21 @@ async function initializeStorage() {
       updated_at TEXT NOT NULL,
       resolved_at TEXT
     );
+    CREATE TABLE IF NOT EXISTS tazzo_clash_duels (
+      id TEXT PRIMARY KEY,
+      from_player_id TEXT NOT NULL,
+      to_player_id TEXT NOT NULL,
+      offered_json TEXT NOT NULL,
+      requested_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      current_turn_player_id TEXT,
+      started_by_player_id TEXT,
+      flipped_json TEXT NOT NULL,
+      log_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      resolved_at TEXT
+    );
     CREATE INDEX IF NOT EXISTS idx_account_events_player_created ON account_events(player_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_account_events_type_created ON account_events(type, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_payment_orders_player_created ON payment_orders(player_id, created_at DESC);
@@ -362,6 +381,8 @@ async function initializeStorage() {
     CREATE INDEX IF NOT EXISTS idx_friend_messages_pair_created ON friend_messages(from_player_id, to_player_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_social_trade_inbox ON social_trade_offers(to_player_id, status, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_social_trade_outbox ON social_trade_offers(from_player_id, status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_tazzo_clash_inbox ON tazzo_clash_duels(to_player_id, status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_tazzo_clash_outbox ON tazzo_clash_duels(from_player_id, status, updated_at DESC);
   `);
   await migrateJsonStorageToDatabase();
 }
@@ -1506,6 +1527,85 @@ function publicSocialTrade(row, profilesById) {
   };
 }
 
+function publicSocialCollection(save = {}) {
+  return Object.entries(save.collection || {})
+    .filter(([id, count]) => MONSTER_BY_ID[id] && (Number(count) || 0) > 0)
+    .map(([monsterId, count]) => ({ monsterId, count: Math.max(0, Math.floor(Number(count) || 0)) }));
+}
+
+function normalizeTazzoClashCaptures(value) {
+  if (!value || Array.isArray(value) || typeof value !== "object") return {};
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key, playerId]) => key && isValidPlayerId(playerId))
+    .map(([key, playerId]) => [String(key), String(playerId)]));
+}
+
+function tazzoClashEntries(fromPlayerId, toPlayerId, offeredIds = [], requestedIds = [], captures = {}) {
+  return [
+    ...offeredIds.map((monsterId, index) => ({
+      key: `from:${index}:${monsterId}`,
+      side: "from",
+      monsterId,
+      ownerPlayerId: fromPlayerId,
+      capturedByPlayerId: captures[`from:${index}:${monsterId}`] || null
+    })),
+    ...requestedIds.map((monsterId, index) => ({
+      key: `to:${index}:${monsterId}`,
+      side: "to",
+      monsterId,
+      ownerPlayerId: toPlayerId,
+      capturedByPlayerId: captures[`to:${index}:${monsterId}`] || null
+    }))
+  ];
+}
+
+function tazzoClashScores(entries = []) {
+  return entries.reduce((scores, entry) => {
+    if (!entry.capturedByPlayerId) return scores;
+    scores[entry.capturedByPlayerId] = (scores[entry.capturedByPlayerId] || 0) + socialTradeValue([entry.monsterId]);
+    return scores;
+  }, {});
+}
+
+function publicTazzoClash(row, profilesById) {
+  if (!row) return null;
+  const offered = normalizeTradeMonsterIds(jsonFromDb(row.offered_json, []));
+  const requested = normalizeTradeMonsterIds(jsonFromDb(row.requested_json, []));
+  const captures = normalizeTazzoClashCaptures(jsonFromDb(row.flipped_json, {}));
+  const entries = tazzoClashEntries(row.from_player_id, row.to_player_id, offered, requested, captures);
+  const scores = tazzoClashScores(entries);
+  const fromScore = scores[row.from_player_id] || 0;
+  const toScore = scores[row.to_player_id] || 0;
+  const winnerPlayerId = row.status === "finished" && fromScore !== toScore
+    ? fromScore > toScore ? row.from_player_id : row.to_player_id
+    : null;
+  return {
+    id: row.id,
+    fromPlayerId: row.from_player_id,
+    toPlayerId: row.to_player_id,
+    from: publicSocialProfile(profilesById[row.from_player_id]),
+    to: publicSocialProfile(profilesById[row.to_player_id]),
+    offeredIds: offered,
+    requestedIds: requested,
+    entries,
+    value: socialTradeValue(offered),
+    fromValue: socialTradeValue(offered),
+    toValue: socialTradeValue(requested),
+    valuesBalanced: Boolean(offered.length && requested.length && socialTradeValue(offered) === socialTradeValue(requested)),
+    fromReady: offered.length > 0,
+    toReady: requested.length > 0,
+    status: row.status,
+    currentTurnPlayerId: row.current_turn_player_id || null,
+    startedByPlayerId: row.started_by_player_id || null,
+    scores,
+    winnerPlayerId,
+    log: jsonFromDb(row.log_json, []),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    resolvedAt: row.resolved_at || null
+  };
+}
+
 async function socialPayloadForPlayer(playerId) {
   const profile = await requireProfileForPlayer(playerId);
   const record = await readOrCreateSave(playerId);
@@ -1517,11 +1617,17 @@ async function socialPayloadForPlayer(playerId) {
     ORDER BY created_at DESC
   `).all(playerId, playerId);
   const friendIds = friendRows.map((row) => row.player_a === playerId ? row.player_b : row.player_a);
+  const friendCollectionById = new Map();
+  await Promise.all(friendIds.map(async (friendPlayerId) => {
+    const friendRecord = await readOrCreateSave(friendPlayerId);
+    friendCollectionById.set(friendPlayerId, publicSocialCollection(friendRecord.save));
+  }));
   const friends = friendRows.map((row) => {
     const friendPlayerId = row.player_a === playerId ? row.player_b : row.player_a;
     return {
       ...publicSocialProfile(profiles[friendPlayerId]),
-      createdAt: row.created_at
+      createdAt: row.created_at,
+      collection: friendCollectionById.get(friendPlayerId) || []
     };
   }).filter((friend) => friend?.playerId);
 
@@ -1574,6 +1680,14 @@ async function socialPayloadForPlayer(playerId) {
     LIMIT 50
   `).all(playerId, playerId).map((row) => publicSocialTrade(row, profiles)).filter(Boolean);
 
+  const clashes = db().prepare(`
+    SELECT id, from_player_id, to_player_id, offered_json, requested_json, status, current_turn_player_id, started_by_player_id, flipped_json, log_json, created_at, updated_at, resolved_at
+    FROM tazzo_clash_duels
+    WHERE from_player_id = ? OR to_player_id = ?
+    ORDER BY updated_at DESC
+    LIMIT 50
+  `).all(playerId, playerId).map((row) => publicTazzoClash(row, profiles)).filter(Boolean);
+
   return {
     ok: true,
     playerId,
@@ -1584,7 +1698,8 @@ async function socialPayloadForPlayer(playerId) {
     incomingInvites,
     outgoingInvites,
     messages,
-    trades
+    trades,
+    clashes
   };
 }
 
@@ -1791,6 +1906,368 @@ async function respondSocialTrade(playerId, tradeId, accept) {
   return { ...payload, save: resultSave || payload.save };
 }
 
+function tazzoClashLog(message, data = {}) {
+  return {
+    at: new Date().toISOString(),
+    message: safeText(message, "", 180),
+    ...data
+  };
+}
+
+function validateTazzoClashPayload(offeredIds = [], requestedIds = []) {
+  try {
+    return validateSocialTradePayload(offeredIds, requestedIds);
+  } catch (error) {
+    if (error.message) error.message = error.message.replace(/troca/g, "duelo");
+    throw error;
+  }
+}
+
+function validateTazzoClashSide(monsterIds = []) {
+  const ids = normalizeTradeMonsterIds(monsterIds);
+  if (!ids.length) {
+    const error = new Error("Escolha pelo menos um tazzo para bater.");
+    error.status = 400;
+    throw error;
+  }
+  if (ids.length > 3) {
+    const error = new Error("Voce pode colocar no maximo 3 tazzos na mesa.");
+    error.status = 400;
+    throw error;
+  }
+  const value = socialTradeValue(ids);
+  if (!value) {
+    const error = new Error("Escolha tazzos com valor valido.");
+    error.status = 400;
+    throw error;
+  }
+  return { ids, value };
+}
+
+function applyTazzoClashTransfers(fromSave, toSave, entries, fromPlayerId, toPlayerId) {
+  const savesByPlayerId = {
+    [fromPlayerId]: fromSave,
+    [toPlayerId]: toSave
+  };
+  entries.forEach((entry) => {
+    const capturedBy = entry.capturedByPlayerId;
+    if (!capturedBy || capturedBy === entry.ownerPlayerId) return;
+    const ownerSave = savesByPlayerId[entry.ownerPlayerId];
+    const capturerSave = savesByPlayerId[capturedBy];
+    if (!ownerSave || !capturerSave || !MONSTER_BY_ID[entry.monsterId]) return;
+    ownerSave.collection[entry.monsterId] = Math.max(0, (ownerSave.collection[entry.monsterId] || 0) - 1);
+    capturerSave.collection[entry.monsterId] = (capturerSave.collection[entry.monsterId] || 0) + 1;
+  });
+  return {
+    fromSave: normalizeServerSave(fromSave),
+    toSave: normalizeServerSave(toSave)
+  };
+}
+
+async function createTazzoClash(playerId, friendPlayerId) {
+  const profile = await requireProfileForPlayer(playerId);
+  const friendProfile = await profileForPlayer(friendPlayerId);
+  if (!friendProfile || !areFriends(playerId, friendPlayerId)) {
+    const error = new Error("Bater tazzos so pode ser combinado entre amigos.");
+    error.status = 403;
+    throw error;
+  }
+  const now = new Date().toISOString();
+  const id = crypto.randomUUID();
+  const log = [
+    tazzoClashLog(`${safeText(profile.name, "Jogador", 24)} convidou ${safeText(friendProfile.name, "amigo", 24)} para bater tazzos.`)
+  ];
+  db().prepare(`
+    INSERT INTO tazzo_clash_duels (id, from_player_id, to_player_id, offered_json, requested_json, status, current_turn_player_id, started_by_player_id, flipped_json, log_json, created_at, updated_at, resolved_at)
+    VALUES (?, ?, ?, ?, ?, 'pending', NULL, NULL, ?, ?, ?, ?, NULL)
+  `).run(id, playerId, friendPlayerId, JSON.stringify([]), JSON.stringify([]), JSON.stringify({}), JSON.stringify(log), now, now);
+  recordAccountEvent(playerId, "tazzo-clash:create", {
+    to: publicSocialProfile(friendProfile)
+  });
+  recordAccountEvent(friendPlayerId, "tazzo-clash:received", {
+    from: publicSocialProfile(profile)
+  });
+  const payload = await socialPayloadForPlayer(playerId);
+  broadcastSocialUpdateToPlayers([playerId, friendPlayerId]).catch(() => {});
+  return payload;
+}
+
+async function respondTazzoClash(playerId, duelId, accept) {
+  await requireProfileForPlayer(playerId);
+  let resultSave = null;
+  let opponentPlayerId = null;
+  const now = new Date().toISOString();
+  const duel = runInTransaction((database) => {
+    const row = database.prepare(`
+      SELECT id, from_player_id, to_player_id, status, log_json
+      FROM tazzo_clash_duels
+      WHERE id = ? AND status = 'pending'
+    `).get(String(duelId || ""));
+    if (!row || row.to_player_id !== playerId) {
+      const error = new Error("Convite de bater tazzos nao encontrado.");
+      error.status = 404;
+      throw error;
+    }
+    opponentPlayerId = row.from_player_id;
+    const log = jsonFromDb(row.log_json, []);
+    if (!accept) {
+      log.push(tazzoClashLog("Convite recusado."));
+      database.prepare("UPDATE tazzo_clash_duels SET status = 'declined', log_json = ?, updated_at = ?, resolved_at = ? WHERE id = ?")
+        .run(JSON.stringify(log), now, now, row.id);
+      resultSave = saveFromTransaction(database, playerId);
+      return row;
+    }
+    log.push(tazzoClashLog("Convite aceito. Agora cada jogador escolhe ate 3 tazzos para colocar na mesa."));
+    database.prepare(`
+      UPDATE tazzo_clash_duels
+      SET status = 'selecting', offered_json = ?, requested_json = ?, current_turn_player_id = NULL, started_by_player_id = NULL, flipped_json = ?, log_json = ?, updated_at = ?
+      WHERE id = ?
+    `).run(JSON.stringify([]), JSON.stringify([]), JSON.stringify({}), JSON.stringify(log), now, row.id);
+    resultSave = saveFromTransaction(database, playerId);
+    return row;
+  });
+  recordAccountEvent(playerId, accept ? "tazzo-clash:accept" : "tazzo-clash:decline", {
+    duelId: duel.id,
+    friendPlayerId: opponentPlayerId
+  });
+  if (accept) {
+    recordAccountEvent(opponentPlayerId, "tazzo-clash:accepted", {
+      duelId: duel.id,
+      friendPlayerId: playerId
+    });
+  }
+  const payload = await socialPayloadForPlayer(playerId);
+  broadcastSocialUpdateToPlayers([playerId, opponentPlayerId]).catch(() => {});
+  return { ...payload, save: resultSave || payload.save };
+}
+
+async function pickTazzoClash(playerId, duelId, monsterIds) {
+  await requireProfileForPlayer(playerId);
+  let resultSave = null;
+  let otherPlayerId = null;
+  let clashResult = null;
+  const now = new Date().toISOString();
+  const duel = runInTransaction((database) => {
+    const row = database.prepare(`
+      SELECT id, from_player_id, to_player_id, offered_json, requested_json, status, log_json
+      FROM tazzo_clash_duels
+      WHERE id = ?
+    `).get(String(duelId || ""));
+    if (!row || row.status !== "selecting") {
+      const error = new Error("Este duelo ainda nao esta na etapa de escolher tazzos.");
+      error.status = 404;
+      throw error;
+    }
+    if (row.from_player_id !== playerId && row.to_player_id !== playerId) {
+      const error = new Error("Voce nao participa deste duelo.");
+      error.status = 403;
+      throw error;
+    }
+    const side = row.from_player_id === playerId ? "from" : "to";
+    otherPlayerId = side === "from" ? row.to_player_id : row.from_player_id;
+    const pick = validateTazzoClashSide(monsterIds);
+    const playerSave = saveFromTransaction(database, playerId);
+    if (!hasTradeCopies(playerSave, pick.ids)) {
+      const error = new Error("Voce nao tem todos os tazzos escolhidos.");
+      error.status = 400;
+      error.save = playerSave;
+      throw error;
+    }
+
+    let offered = normalizeTradeMonsterIds(jsonFromDb(row.offered_json, []));
+    let requested = normalizeTradeMonsterIds(jsonFromDb(row.requested_json, []));
+    if (side === "from") offered = pick.ids;
+    else requested = pick.ids;
+
+    const offerValue = socialTradeValue(offered);
+    const requestValue = socialTradeValue(requested);
+    const log = jsonFromDb(row.log_json, []);
+    log.push(tazzoClashLog(`${side === "from" ? "Jogador 1" : "Jogador 2"} confirmou ${pick.ids.length} tazzo(s) para a mesa.`, {
+      playerId,
+      value: pick.value
+    }));
+
+    let nextStatus = "selecting";
+    let currentTurnPlayerId = null;
+    let startedByPlayerId = null;
+    if (offered.length && requested.length && offerValue === requestValue) {
+      const fromSave = saveFromTransaction(database, row.from_player_id);
+      const toSave = side === "to" ? playerSave : saveFromTransaction(database, row.to_player_id);
+      if (!hasTradeCopies(fromSave, offered) || !hasTradeCopies(toSave, requested)) {
+        const error = new Error("Algum tazzo escolhido nao esta mais disponivel.");
+        error.status = 409;
+        error.save = playerSave;
+        throw error;
+      }
+      const starter = Math.random() < 0.5 ? row.from_player_id : row.to_player_id;
+      nextStatus = "active";
+      currentTurnPlayerId = starter;
+      startedByPlayerId = starter;
+      log.push(tazzoClashLog("Valores iguais. Cara ou coroa decidiu quem bate primeiro.", {
+        starterPlayerId: starter,
+        value: offerValue
+      }));
+    }
+
+    database.prepare(`
+      UPDATE tazzo_clash_duels
+      SET offered_json = ?, requested_json = ?, status = ?, current_turn_player_id = ?, started_by_player_id = ?, flipped_json = ?, log_json = ?, updated_at = ?
+      WHERE id = ?
+    `).run(
+      JSON.stringify(offered),
+      JSON.stringify(requested),
+      nextStatus,
+      currentTurnPlayerId,
+      startedByPlayerId,
+      JSON.stringify({}),
+      JSON.stringify(log.slice(-60)),
+      now,
+      row.id
+    );
+
+    resultSave = playerSave;
+    clashResult = {
+      duelId: row.id,
+      status: nextStatus,
+      value: offerValue === requestValue ? offerValue : 0,
+      offerValue,
+      requestValue,
+      startedByPlayerId
+    };
+    return row;
+  });
+
+  recordAccountEvent(playerId, "tazzo-clash:pick", {
+    duelId: duel.id,
+    status: clashResult?.status,
+    value: clashResult?.value || 0
+  });
+  if (clashResult?.status === "active") {
+    recordAccountEvent(otherPlayerId, "tazzo-clash:started", {
+      duelId: duel.id,
+      friendPlayerId: playerId
+    });
+  }
+  const payload = await socialPayloadForPlayer(playerId);
+  broadcastSocialUpdateToPlayers([playerId, otherPlayerId]).catch(() => {});
+  return { ...payload, save: resultSave || payload.save, clashResult };
+}
+
+async function hitTazzoClash(playerId, duelId, timingScore) {
+  await requireProfileForPlayer(playerId);
+  let resultSave = null;
+  let otherPlayerId = null;
+  let clashResult = null;
+  const now = new Date().toISOString();
+  const duel = runInTransaction((database) => {
+    const row = database.prepare(`
+      SELECT id, from_player_id, to_player_id, offered_json, requested_json, status, current_turn_player_id, flipped_json, log_json
+      FROM tazzo_clash_duels
+      WHERE id = ?
+    `).get(String(duelId || ""));
+    if (!row || row.status !== "active") {
+      const error = new Error("Duelo de tazzos nao esta ativo.");
+      error.status = 404;
+      throw error;
+    }
+    if (row.current_turn_player_id !== playerId) {
+      const error = new Error("Ainda nao e sua vez de bater.");
+      error.status = 409;
+      throw error;
+    }
+    otherPlayerId = row.from_player_id === playerId ? row.to_player_id : row.from_player_id;
+    const { offered, requested } = validateTazzoClashPayload(jsonFromDb(row.offered_json, []), jsonFromDb(row.requested_json, []));
+    const captures = normalizeTazzoClashCaptures(jsonFromDb(row.flipped_json, {}));
+    const entriesBefore = tazzoClashEntries(row.from_player_id, row.to_player_id, offered, requested, captures);
+    const unflipped = entriesBefore.filter((entry) => !entry.capturedByPlayerId);
+    if (!unflipped.length) {
+      const error = new Error("Todos os tazzos ja foram virados.");
+      error.status = 409;
+      throw error;
+    }
+
+    const score = Math.max(0, Math.min(1, Number(timingScore) || 0));
+    const perfect = score >= TAZZO_CLASH_PERFECT_SCORE;
+    const chance = perfect ? TAZZO_CLASH_PERFECT_CHANCE : TAZZO_CLASH_BASE_CHANCE;
+    const flippedKeys = [];
+    unflipped.forEach((entry) => {
+      if (Math.random() <= chance) {
+        captures[entry.key] = playerId;
+        flippedKeys.push(entry.key);
+      }
+    });
+
+    const entriesAfter = tazzoClashEntries(row.from_player_id, row.to_player_id, offered, requested, captures);
+    const remaining = entriesAfter.filter((entry) => !entry.capturedByPlayerId).length;
+    const log = jsonFromDb(row.log_json, []);
+    log.push(tazzoClashLog(flippedKeys.length
+      ? `${flippedKeys.length} tazzo(s) viraram na batida${perfect ? " perfeita" : ""}.`
+      : `Nenhum tazzo virou${perfect ? ", mesmo com timing perfeito" : ""}.`, {
+      playerId,
+      flippedKeys,
+      perfect,
+      timingScore: score
+    }));
+
+    let nextStatus = "active";
+    let nextTurnPlayerId = otherPlayerId;
+    let resolvedAt = null;
+    if (!remaining) {
+      const fromSave = saveFromTransaction(database, row.from_player_id);
+      const toSave = saveFromTransaction(database, row.to_player_id);
+      if (!hasTradeCopies(fromSave, offered) || !hasTradeCopies(toSave, requested)) {
+        nextStatus = "cancelled";
+        nextTurnPlayerId = null;
+        resolvedAt = now;
+        resultSave = row.from_player_id === playerId ? fromSave : toSave;
+        log.push(tazzoClashLog("Duelo cancelado porque algum tazzo apostado nao estava mais disponivel."));
+      } else {
+        const transferred = applyTazzoClashTransfers(fromSave, toSave, entriesAfter, row.from_player_id, row.to_player_id);
+        progressServerMission(transferred.fromSave, "trade", 1);
+        progressServerMission(transferred.toSave, "trade", 1);
+        writeSaveInTransaction(database, row.from_player_id, transferred.fromSave);
+        writeSaveInTransaction(database, row.to_player_id, transferred.toSave);
+        resultSave = row.from_player_id === playerId ? transferred.fromSave : transferred.toSave;
+        nextStatus = "finished";
+        nextTurnPlayerId = null;
+        resolvedAt = now;
+        log.push(tazzoClashLog("Todos os tazzos viraram. As colecoes foram atualizadas."));
+      }
+    }
+
+    database.prepare(`
+      UPDATE tazzo_clash_duels
+      SET status = ?, current_turn_player_id = ?, flipped_json = ?, log_json = ?, updated_at = ?, resolved_at = ?
+      WHERE id = ?
+    `).run(nextStatus, nextTurnPlayerId, JSON.stringify(captures), JSON.stringify(log.slice(-60)), now, resolvedAt, row.id);
+
+    clashResult = {
+      duelId: row.id,
+      flippedKeys,
+      perfect,
+      timingScore: score,
+      chance,
+      status: nextStatus
+    };
+    return row;
+  });
+
+  recordAccountEvent(playerId, "tazzo-clash:hit", {
+    duelId: duel.id,
+    flipped: clashResult?.flippedKeys?.length || 0,
+    perfect: Boolean(clashResult?.perfect)
+  });
+  if (clashResult?.status === "finished") {
+    recordAccountEvent(otherPlayerId, "tazzo-clash:finished", {
+      duelId: duel.id,
+      friendPlayerId: playerId
+    });
+  }
+  const payload = await socialPayloadForPlayer(playerId);
+  broadcastSocialUpdateToPlayers([playerId, otherPlayerId]).catch(() => {});
+  return { ...payload, save: resultSave || payload.save, clashResult };
+}
+
 function lobbyCode() {
   let code = "";
   do {
@@ -1935,7 +2412,8 @@ function sanitizeOnlineLoadout(save = {}) {
     id,
     clamp(Number(normalized.upgrades?.[id]) || 0, 0, 2)
   ]));
-  return { team, goalkeeper, positions, upgrades };
+  const cosmetics = sanitizeServerEquippedCosmetics(normalized.equippedCosmetics, normalized.cosmetics, normalized.selectedCosmetic);
+  return { team, goalkeeper, positions, upgrades, cosmetics };
 }
 
 async function onlinePlayerLoadout(playerId) {
@@ -2044,9 +2522,11 @@ function publicOnlineMatch(lobby, viewerId) {
     playerTeam: viewerLoadout.team,
     playerGoalkeeper: viewerLoadout.goalkeeper,
     playerPositions: viewerLoadout.positions,
+    playerCosmetics: viewerLoadout.cosmetics || {},
     enemyTeam: opponentLoadout.team,
     enemyGoalkeeper: opponentLoadout.goalkeeper,
     enemyPositions: mirrorPositions(opponentLoadout.positions),
+    enemyCosmetics: opponentLoadout.cosmetics || {},
     matchTime: BATTLE_MODES.friend.matchTime,
     actionTime: onlineActionDurationSeconds(lobby.match),
     createdAt: new Date(lobby.match.createdAt).toISOString(),
@@ -2121,6 +2601,10 @@ function publicOnlineBattleState(lobby, viewerId) {
   if (!state) return null;
   const viewerSlot = onlineSlotForPlayer(lobby, viewerId);
   const opponentSlot = viewerSlot === "home" ? "away" : "home";
+  const cosmeticsForSlot = (slot) => {
+    const participant = onlineMatchEntryForSlot(lobby, slot);
+    return participant?.loadout?.cosmetics || {};
+  };
   return {
     sequence: state.sequence || 0,
     round: state.round,
@@ -2151,7 +2635,8 @@ function publicOnlineBattleState(lobby, viewerId) {
       shot: piece.shot,
       dribble: piece.dribble,
       speed: piece.speed,
-      acted: Boolean(piece.acted)
+      acted: Boolean(piece.acted),
+      cosmetics: piece.cosmetics || cosmeticsForSlot(piece.slot)
     })),
     log: state.log || []
   };
@@ -2334,7 +2819,8 @@ function createOnlineBattlePieces(slot, loadout, positions) {
       shot: stats.shot,
       dribble: stats.dribble,
       speed: stats.speed,
-      acted: false
+      acted: false,
+      cosmetics: loadout.cosmetics || {}
     };
   });
 }
@@ -3772,8 +4258,11 @@ function defaultServerSave() {
     onlineDraws: 0,
     activeCompetitive: null,
     cosmetics: {},
+    equippedCosmetics: {},
     selectedCosmetic: null,
     friendGifts: {},
+    shareValidations: {},
+    shareRewards: {},
     wishlist: {},
     musicTrackIndex: 0,
     musicVolume: 0.55,
@@ -3888,6 +4377,77 @@ function hasLegacyStarterProgress(save = {}) {
     || Math.max(0, Number(save.onlineWins) || 0) > 0;
 }
 
+function shopItemById(itemId) {
+  return SHOP_ITEMS.find((item) => item.id === itemId) || null;
+}
+
+function cosmeticSlotForItem(itemOrId) {
+  const item = typeof itemOrId === "object" ? itemOrId : shopItemById(itemOrId);
+  return item?.cosmeticSlot || "profile";
+}
+
+function sanitizeServerEquippedCosmetics(equipped = {}, cosmetics = {}, legacySelected = null) {
+  const next = {};
+  const source = equipped && typeof equipped === "object" && !Array.isArray(equipped) ? equipped : {};
+  Object.entries(source).forEach(([slot, itemId]) => {
+    const item = shopItemById(String(itemId || ""));
+    if (item && item.type !== "merreis" && cosmeticSlotForItem(item) === slot && cosmetics?.[item.id]) {
+      next[slot] = item.id;
+    }
+  });
+
+  const legacyItem = shopItemById(String(legacySelected || ""));
+  if (legacyItem && legacyItem.type !== "merreis" && cosmetics?.[legacyItem.id]) {
+    const slot = cosmeticSlotForItem(legacyItem);
+    if (!next[slot]) next[slot] = legacyItem.id;
+  }
+  return next;
+}
+
+function sanitizeServerShareRewards(rewards = {}) {
+  if (!rewards || typeof rewards !== "object" || Array.isArray(rewards)) return {};
+  const validIds = new Set(SOCIAL_SHARE_REWARDS.map((item) => item.id));
+  return Object.fromEntries(
+    Object.entries(rewards)
+      .map(([id, claimedAt]) => {
+        const value = claimedAt && typeof claimedAt === "object" && !Array.isArray(claimedAt)
+          ? claimedAt.claimedAt || claimedAt.validatedAt || claimedAt.createdAt
+          : claimedAt;
+        return [id, value];
+      })
+      .filter(([id, claimedAt]) => validIds.has(id) && claimedAt)
+      .map(([id, claimedAt]) => [id, safeText(claimedAt, "", 64) || new Date().toISOString()])
+  );
+}
+
+function sanitizeServerShareValidations(validations = {}) {
+  if (!validations || typeof validations !== "object" || Array.isArray(validations)) return {};
+  const validIds = new Set(SOCIAL_SHARE_REWARDS.map((item) => item.id));
+  return Object.fromEntries(
+    Object.entries(validations).map(([id, raw]) => {
+      const record = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+      return [id, {
+        requestedAt: safeText(record.requestedAt, "", 64),
+        validatedAt: safeText(record.validatedAt, "", 64),
+        visitorPlayerId: safeText(record.visitorPlayerId, "", 64)
+      }];
+    }).filter(([id, record]) => (
+      validIds.has(id)
+      && (record.requestedAt || record.validatedAt || record.visitorPlayerId)
+    ))
+  );
+}
+
+function equipServerCosmetic(save, itemId) {
+  const item = shopItemById(itemId);
+  if (!item || item.type === "merreis" || !save.cosmetics?.[item.id]) return false;
+  const equipped = sanitizeServerEquippedCosmetics(save.equippedCosmetics, save.cosmetics, save.selectedCosmetic);
+  equipped[cosmeticSlotForItem(item)] = item.id;
+  save.equippedCosmetics = equipped;
+  save.selectedCosmetic = item.id;
+  return true;
+}
+
 function normalizeServerSave(rawSave = {}) {
   const fresh = defaultServerSave();
   const save = rawSave && typeof rawSave === "object" ? rawSave : {};
@@ -3913,6 +4473,8 @@ function normalizeServerSave(rawSave = {}) {
     step.id,
     Boolean((save.tutorial || fresh.tutorial)[step.id])
   ]));
+  const cosmetics = save.cosmetics && typeof save.cosmetics === "object" ? save.cosmetics : fresh.cosmetics;
+  const equippedCosmetics = sanitizeServerEquippedCosmetics(save.equippedCosmetics || fresh.equippedCosmetics, cosmetics, save.selectedCosmetic);
 
   const normalized = {
     ...fresh,
@@ -3943,8 +4505,12 @@ function normalizeServerSave(rawSave = {}) {
     dailyEconomy: normalizeDailyEconomyRewards(save.dailyEconomy || save.dailyRewards || {}, savedMissionCycles.daily),
     tutorial,
     upgrades: save.upgrades && typeof save.upgrades === "object" ? save.upgrades : fresh.upgrades,
-    cosmetics: save.cosmetics && typeof save.cosmetics === "object" ? save.cosmetics : fresh.cosmetics,
+    cosmetics,
+    equippedCosmetics,
+    selectedCosmetic: Object.values(equippedCosmetics)[0] || (cosmetics?.[save.selectedCosmetic] ? save.selectedCosmetic : fresh.selectedCosmetic),
     friendGifts: save.friendGifts && typeof save.friendGifts === "object" ? save.friendGifts : fresh.friendGifts,
+    shareValidations: sanitizeServerShareValidations(save.shareValidations || fresh.shareValidations),
+    shareRewards: sanitizeServerShareRewards(save.shareRewards || fresh.shareRewards),
     wishlist: sanitizeServerWishlist(save.wishlist || fresh.wishlist, catalog),
     packPity: sanitizePackPity(save.packPity || fresh.packPity),
     musicTrackIndex: Math.max(0, Math.floor(Number(save.musicTrackIndex ?? fresh.musicTrackIndex)) || 0),
@@ -3986,6 +4552,8 @@ function economicSaveFingerprint(save) {
     activeCompetitive: normalized.activeCompetitive,
     cosmetics: normalized.cosmetics,
     friendGifts: normalized.friendGifts,
+    shareValidations: normalized.shareValidations,
+    shareRewards: normalized.shareRewards,
     dailyEconomy: normalized.dailyEconomy,
     missions: normalized.missions,
     tutorialRewardClaimed: normalized.tutorialRewardClaimed
@@ -4020,6 +4588,8 @@ const PROTECTED_SAVE_FIELDS = [
   "activeCompetitive",
   "cosmetics",
   "friendGifts",
+  "shareValidations",
+  "shareRewards",
   "dailyEconomy",
   "missions",
   "tutorialRewardClaimed",
@@ -4050,8 +4620,15 @@ function mergeClientSafeSave(currentSave, incomingSave = {}) {
   }
   if (Object.prototype.hasOwnProperty.call(incoming, "selectedCosmetic")) {
     const selected = String(incoming.selectedCosmetic || "");
-    const exists = SHOP_ITEMS.some((item) => item.id === selected);
-    next.selectedCosmetic = selected && exists && next.cosmetics?.[selected] ? selected : null;
+    if (selected && next.cosmetics?.[selected]) {
+      equipServerCosmetic(next, selected);
+    } else {
+      next.selectedCosmetic = null;
+    }
+  }
+  if (incoming.equippedCosmetics && typeof incoming.equippedCosmetics === "object" && !Array.isArray(incoming.equippedCosmetics)) {
+    next.equippedCosmetics = sanitizeServerEquippedCosmetics(incoming.equippedCosmetics, next.cosmetics, next.selectedCosmetic);
+    next.selectedCosmetic = Object.values(next.equippedCosmetics)[0] || null;
   }
   if (Object.prototype.hasOwnProperty.call(incoming, "musicTrackIndex")) {
     next.musicTrackIndex = Math.max(0, Math.floor(Number(incoming.musicTrackIndex)) || 0);
@@ -4841,8 +5418,8 @@ async function buyShopItemForPlayer(playerId, itemId, clientRequestId = "") {
 
   let message = "";
   if (alreadyOwned) {
-    save.selectedCosmetic = item.id;
-    message = `${item.name} ativado.`;
+    equipServerCosmetic(save, item.id);
+    message = `${item.name} equipado.`;
   } else {
     if (save.merreis < item.cost) {
       const error = new Error("Merreis insuficientes.");
@@ -4852,7 +5429,7 @@ async function buyShopItemForPlayer(playerId, itemId, clientRequestId = "") {
     }
     save.merreis -= item.cost;
     save.cosmetics[item.id] = true;
-    save.selectedCosmetic = item.id;
+    equipServerCosmetic(save, item.id);
     message = `${item.name} comprado.`;
   }
 
@@ -4953,6 +5530,154 @@ async function claimMissionForPlayer(playerId, missionId) {
     balances: accountEventBalance(save)
   });
   return { save, mission };
+}
+
+function socialShareRewardById(networkId) {
+  return SOCIAL_SHARE_REWARDS.find((item) => item.id === networkId) || null;
+}
+
+function publicShareUrlForRequest(req, ownerPlayerId, networkId) {
+  const configured = configuredPublicBaseUrl();
+  const host = safeText(req?.headers?.host, `${HOST}:${PORT}`, 160);
+  const base = configured || `http://${host}`;
+  const url = new URL("/", base.endsWith("/") ? base : `${base}/`);
+  url.searchParams.set("ref", ownerPlayerId);
+  url.searchParams.set("share", networkId);
+  return url.toString();
+}
+
+async function createShareLinkForPlayer(playerId, networkId, req) {
+  await requireProfileForPlayer(playerId);
+  const network = socialShareRewardById(networkId);
+  if (!network) {
+    const error = new Error("Rede social nao encontrada.");
+    error.status = 404;
+    throw error;
+  }
+
+  const record = await readOrCreateSave(playerId);
+  const save = normalizeServerSave(record.save);
+  save.shareRewards = sanitizeServerShareRewards(save.shareRewards);
+  save.shareValidations = sanitizeServerShareValidations(save.shareValidations);
+  if (save.shareRewards[network.id]) {
+    const error = new Error("Recompensa dessa rede ja foi resgatada.");
+    error.status = 400;
+    error.save = save;
+    throw error;
+  }
+
+  const now = new Date().toISOString();
+  const current = save.shareValidations[network.id] || {};
+  save.shareValidations[network.id] = {
+    ...current,
+    requestedAt: current.requestedAt || now
+  };
+  await writeSave(playerId, save);
+  recordAccountEvent(playerId, "share:link", {
+    network: { id: network.id, name: network.name },
+    shareUrl: publicShareUrlForRequest(req, playerId, network.id)
+  });
+  return {
+    save,
+    network,
+    shareUrl: publicShareUrlForRequest(req, playerId, network.id),
+    validation: save.shareValidations[network.id]
+  };
+}
+
+async function recordShareVisitForPlayer(visitorPlayerId, ownerPlayerId, networkId) {
+  const network = socialShareRewardById(networkId);
+  if (!network) {
+    const error = new Error("Rede social nao encontrada.");
+    error.status = 404;
+    throw error;
+  }
+  if (!isValidPlayerId(ownerPlayerId)) {
+    const error = new Error("Convite invalido.");
+    error.status = 400;
+    throw error;
+  }
+  if (ownerPlayerId === visitorPlayerId) {
+    const error = new Error("Visita propria nao valida recompensa.");
+    error.status = 400;
+    throw error;
+  }
+  const ownerProfile = await profileForPlayer(ownerPlayerId);
+  if (!ownerProfile) {
+    const error = new Error("Jogador do convite nao encontrado.");
+    error.status = 404;
+    throw error;
+  }
+
+  const record = await readOrCreateSave(ownerPlayerId);
+  const save = normalizeServerSave(record.save);
+  save.shareRewards = sanitizeServerShareRewards(save.shareRewards);
+  save.shareValidations = sanitizeServerShareValidations(save.shareValidations);
+  if (save.shareRewards[network.id]) {
+    return { network, ownerPlayerId, alreadyClaimed: true };
+  }
+  const current = save.shareValidations[network.id] || {};
+  if (!current.requestedAt) {
+    const error = new Error("Convite ainda nao foi gerado pelo jogador.");
+    error.status = 400;
+    throw error;
+  }
+  if (current.validatedAt) {
+    return { network, ownerPlayerId, validation: current, alreadyValidated: true };
+  }
+
+  const validation = {
+    ...current,
+    validatedAt: new Date().toISOString(),
+    visitorPlayerId
+  };
+  save.shareValidations[network.id] = validation;
+  await writeSave(ownerPlayerId, save);
+  recordAccountEvent(ownerPlayerId, "share:validated", {
+    network: { id: network.id, name: network.name, reward: network.reward },
+    visitorPlayerId
+  });
+  return { network, ownerPlayerId, validation };
+}
+
+async function claimShareRewardForPlayer(playerId, networkId) {
+  await requireProfileForPlayer(playerId);
+  const network = socialShareRewardById(networkId);
+  if (!network) {
+    const error = new Error("Rede social nao encontrada.");
+    error.status = 404;
+    throw error;
+  }
+
+  const record = await readOrCreateSave(playerId);
+  const save = normalizeServerSave(record.save);
+  save.shareRewards = sanitizeServerShareRewards(save.shareRewards);
+  save.shareValidations = sanitizeServerShareValidations(save.shareValidations);
+  if (save.shareRewards[network.id]) {
+    const error = new Error("Recompensa dessa rede ja foi resgatada.");
+    error.status = 400;
+    error.save = save;
+    throw error;
+  }
+  if (!save.shareValidations[network.id]?.validatedAt) {
+    const error = new Error("A recompensa libera quando alguem diferente abrir seu link.");
+    error.status = 400;
+    error.save = save;
+    throw error;
+  }
+
+  save.shareRewards[network.id] = new Date().toISOString();
+  save.merreis += Number(network.reward) || 0;
+  await writeSave(playerId, save);
+  recordAccountEvent(playerId, "share:claim", {
+    network: {
+      id: network.id,
+      name: network.name,
+      reward: network.reward
+    },
+    balances: accountEventBalance(save)
+  });
+  return { save, network };
 }
 
 async function resolveTrainingAiForPlayer(playerId, payload = {}) {
@@ -5274,6 +5999,37 @@ async function handleApi(req, res, url) {
       playerId,
       profile: publicProfile(profile)
     }, headers);
+    return;
+  }
+
+  if (url.pathname === "/api/share-visit") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const result = await recordShareVisitForPlayer(playerId, payload.ownerPlayerId, payload.networkId);
+      json(res, 200, {
+        ok: true,
+        playerId,
+        ownerPlayerId: result.ownerPlayerId,
+        network: { id: result.network.id, name: result.network.name },
+        validated: Boolean(result.validation?.validatedAt),
+        alreadyValidated: Boolean(result.alreadyValidated),
+        alreadyClaimed: Boolean(result.alreadyClaimed)
+      }, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao validar convite."
+      }, headers);
+    }
     return;
   }
 
@@ -5846,6 +6602,98 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (url.pathname === "/api/social/tazzo-clash/create") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const result = await createTazzoClash(playerId, payload.friendPlayerId);
+      json(res, 200, result, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao criar duelo de tazzos.",
+        save: error.save
+      }, headers);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/social/tazzo-clash/pick") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const result = await pickTazzoClash(playerId, payload.duelId, payload.monsterIds);
+      json(res, 200, result, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao escolher tazzos.",
+        save: error.save
+      }, headers);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/social/tazzo-clash/respond") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const result = await respondTazzoClash(playerId, payload.duelId, Boolean(payload.accept));
+      json(res, 200, result, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao responder duelo de tazzos.",
+        save: error.save
+      }, headers);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/social/tazzo-clash/hit") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const result = await hitTazzoClash(playerId, payload.duelId, payload.timingScore);
+      json(res, 200, result, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao bater tazzos.",
+        save: error.save
+      }, headers);
+    }
+    return;
+  }
+
   if (url.pathname === "/api/trade") {
     if (req.method !== "POST") {
       json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
@@ -6054,6 +6902,74 @@ async function handleApi(req, res, url) {
       json(res, error.status || 500, {
         ok: false,
         error: error.message || "Erro ao resgatar missao.",
+        save: error.save || null
+      }, headers);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/share-link") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const result = await createShareLinkForPlayer(playerId, payload.networkId, req);
+      json(res, 200, {
+        ok: true,
+        playerId,
+        network: {
+          id: result.network.id,
+          name: result.network.name,
+          reward: result.network.reward
+        },
+        shareUrl: result.shareUrl,
+        validation: result.validation,
+        save: result.save
+      }, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao gerar convite.",
+        save: error.save || null
+      }, headers);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/share-reward") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const result = await claimShareRewardForPlayer(playerId, payload.networkId);
+      json(res, 200, {
+        ok: true,
+        playerId,
+        network: {
+          id: result.network.id,
+          name: result.network.name,
+          reward: result.network.reward
+        },
+        save: result.save
+      }, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao resgatar compartilhamento.",
         save: error.save || null
       }, headers);
     }

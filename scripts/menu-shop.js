@@ -17,8 +17,9 @@
     document.getElementById("shop-message").textContent = paymentNotice || ctx.state.shopMessage;
     document.getElementById("shop-grid").innerHTML = ctx.SHOP_ITEMS.map((item) => {
       const merreisPack = item.type === "merreis";
+      const cosmeticSlot = item.cosmeticSlot || "profile";
       const owned = !merreisPack && Boolean(ctx.state.save.cosmetics[item.id]);
-      const active = !merreisPack && ctx.state.save.selectedCosmetic === item.id;
+      const active = !merreisPack && ctx.isCosmeticEquipped(item.id);
       const paymentDisabled = merreisPack && (!payments.checked || !payments.configured || payments.checkoutPending);
       const disabled = paymentDisabled || (!merreisPack && !owned && ctx.state.save.merreis < item.cost);
       const label = merreisPack
@@ -30,17 +31,19 @@
           ? "Comprar Merreis"
           : "Indisponivel"
         : active
-        ? "Ativo"
+        ? "Equipado"
         : owned
-        ? "Ativar"
+        ? "Equipar"
         : "Comprar";
       const price = merreisPack ? item.priceLabel : `${ctx.formatNumber(item.cost)} Merreis`;
-      const tag = merreisPack ? `+${ctx.formatNumber(item.merreis)} Merreis` : owned ? "Obtido" : "Cosmetico";
+      const tag = merreisPack ? `+${ctx.formatNumber(item.merreis)} Merreis` : `${ctx.cosmeticSlotLabel(item)}${owned ? " obtido" : ""}`;
       const artwork = merreisPack && item.image
         ? `<figure class="shop-merreis-art"><img src="${escapeHtml(item.image)}" alt="${escapeHtml(item.name)}"></figure>`
+        : !merreisPack
+        ? `<figure class="shop-cosmetic-preview is-${escapeHtml(cosmeticSlot)}" aria-hidden="true"><span></span></figure>`
         : "";
       return `
-        <article class="shop-card${owned ? " is-owned" : ""}${active ? " is-active" : ""}${merreisPack ? " is-merreis-pack" : ""}">
+        <article class="shop-card${owned ? " is-owned" : ""}${active ? " is-active" : ""}${merreisPack ? " is-merreis-pack" : " is-cosmetic-pack"} is-slot-${escapeHtml(cosmeticSlot)}">
           ${artwork}
           <h2>${item.name}</h2>
           <p>${item.note}</p>
