@@ -25,8 +25,16 @@ function renderBattleShell() {
   const scene = document.getElementById("battle-scene");
   if (!home || !scene) return;
   if (!state.battle) state.battleSceneOpen = false;
+  const focusMode = isBattleFocusMode();
   home.classList.toggle("is-active", !state.battleSceneOpen);
   scene.classList.toggle("is-active", state.battleSceneOpen);
+  scene.classList.toggle("is-battle-focus", focusMode);
+  document.body?.classList.toggle("is-battle-focus", focusMode);
+  document.documentElement?.classList.toggle("is-battle-focus", focusMode);
+}
+
+function isBattleFocusMode() {
+  return Boolean(state.currentTab === "battle" && state.battleSceneOpen && state.battle && !state.battle.over);
 }
 
 function renderBattleHome() {

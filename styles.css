@@ -5189,31 +5189,90 @@ button.image-button:focus-visible {
 }
 
 .tazzo-clash-board {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(80px, 1fr));
-  gap: 10px;
-  padding: 12px;
+  --clash-disc-size: clamp(114px, 14vw, 168px);
+  position: relative;
+  display: block;
+  overflow: hidden;
+  min-height: clamp(280px, 36vw, 430px);
+  padding: 18px;
   background:
-    radial-gradient(circle at 50% 0%, rgba(103, 215, 190, 0.2), transparent 45%),
-    linear-gradient(180deg, rgba(13, 93, 90, 0.72), rgba(6, 45, 54, 0.88));
+    linear-gradient(180deg, rgba(7, 24, 30, 0.08), rgba(7, 24, 30, 0.2)),
+    url("assets/generated-ui/tazzo-clash-school-desk.png") center / cover no-repeat,
+    linear-gradient(180deg, #c37328, #6f3819);
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 8px;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.1),
+    inset 0 24px 52px rgba(255, 225, 138, 0.18),
+    0 18px 36px rgba(2, 8, 16, 0.22);
   perspective: 900px;
+}
+
+.tazzo-clash-board.is-empty {
+  display: grid;
+  place-items: center;
+}
+
+.tazzo-clash-board::before,
+.tazzo-clash-board::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  content: "";
+}
+
+.tazzo-clash-board::before {
+  background:
+    radial-gradient(circle at 50% 45%, rgba(255, 236, 168, 0.2), transparent 38%),
+    linear-gradient(180deg, rgba(6, 28, 35, 0.14), rgba(6, 28, 35, 0.22));
+  mix-blend-mode: soft-light;
+}
+
+.tazzo-clash-board::after {
+  opacity: 0;
+  background:
+    radial-gradient(circle at 50% 48%, rgba(255, 255, 255, 0.46), rgba(255, 235, 162, 0.22) 16%, transparent 34%),
+    radial-gradient(circle at 45% 52%, rgba(255, 255, 255, 0.22), transparent 15%);
+  transform: scale(0.28);
 }
 
 .tazzo-clash-duel.is-impact .tazzo-clash-board {
   animation: clashBoardHit 460ms ease both;
 }
 
+.tazzo-clash-duel.is-impact .tazzo-clash-board::after {
+  animation: clashDeskShockwave 720ms ease-out both;
+}
+
 .tazzo-clash-entry {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: calc(6 + var(--stack-z, 1));
+  display: block;
+  width: var(--clash-disc-size);
+  min-width: var(--clash-disc-size);
   padding: 0;
   color: #ffffff;
   background: transparent;
   border: 0;
   text-align: left;
+  transform: translate(-50%, -50%) translate(var(--stack-x, 0), var(--stack-y, 0)) rotate(var(--stack-rot, 0deg));
+  transform-origin: center;
+  transition: filter 160ms ease, transform 180ms ease;
+}
+
+.tazzo-clash-entry:hover,
+.tazzo-clash-entry:focus-visible {
+  z-index: 90;
+  filter: saturate(1.08) brightness(1.05);
+  transform: translate(-50%, -50%) translate(var(--stack-x, 0), var(--stack-y, 0)) rotate(var(--stack-rot, 0deg)) scale(1.055);
+}
+
+.tazzo-clash-entry.is-new-flip {
+  z-index: 120;
+  pointer-events: none;
+  animation: clashTazzoLeaveTable 1380ms cubic-bezier(0.18, 0.78, 0.26, 1) both;
 }
 
 .tazzo-clash-disc {
@@ -5221,6 +5280,9 @@ button.image-button:focus-visible {
   display: block;
   width: 100%;
   aspect-ratio: 1;
+  border-radius: 50%;
+  filter: drop-shadow(0 12px 14px rgba(2, 8, 16, 0.34));
+  transform-origin: 50% 58%;
   transform-style: preserve-3d;
   transition: transform 560ms cubic-bezier(0.18, 0.78, 0.26, 1);
 }
@@ -5229,8 +5291,45 @@ button.image-button:focus-visible {
   transform: rotateY(180deg);
 }
 
+.tazzo-clash-entry.is-hit-spinning .tazzo-clash-disc {
+  animation: clashTazzoStrikeSpin 1060ms cubic-bezier(0.16, 0.84, 0.24, 1) both;
+}
+
 .tazzo-clash-entry.is-new-flip .tazzo-clash-disc {
-  animation: clashDiscPop 700ms ease both;
+  animation: clashTazzoStrikeFlip 1240ms cubic-bezier(0.16, 0.84, 0.24, 1) both;
+}
+
+.tazzo-clash-entry.is-new-flip .tazzo-clash-back,
+.tazzo-clash-entry.is-new-flip .tazzo-clash-front {
+  -webkit-backface-visibility: visible;
+  backface-visibility: visible;
+  transform: none;
+}
+
+.tazzo-clash-entry.is-new-flip .tazzo-clash-back {
+  animation: clashBackFaceSwap 1240ms steps(1, end) both;
+}
+
+.tazzo-clash-entry.is-new-flip .tazzo-clash-front {
+  animation: clashFrontFaceSwap 1240ms steps(1, end) both;
+}
+
+.tazzo-clash-entry:nth-child(2n).is-hit-spinning .tazzo-clash-disc {
+  animation-delay: 28ms;
+}
+
+.tazzo-clash-entry:nth-child(2n).is-new-flip .tazzo-clash-back,
+.tazzo-clash-entry:nth-child(2n).is-new-flip .tazzo-clash-front {
+  animation-delay: 28ms;
+}
+
+.tazzo-clash-entry:nth-child(3n).is-hit-spinning .tazzo-clash-disc {
+  animation-delay: 54ms;
+}
+
+.tazzo-clash-entry:nth-child(3n).is-new-flip .tazzo-clash-back,
+.tazzo-clash-entry:nth-child(3n).is-new-flip .tazzo-clash-front {
+  animation-delay: 54ms;
 }
 
 .tazzo-clash-face {
@@ -5238,15 +5337,27 @@ button.image-button:focus-visible {
   inset: 0;
   display: grid;
   place-items: center;
+  overflow: hidden;
+  background: transparent;
+  border-radius: 50%;
+  -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
+  clip-path: circle(49.3% at 50% 50%);
+}
+
+.tazzo-clash-back {
+  transform: translateZ(0.8px);
 }
 
 .tazzo-clash-face img,
 .tazzo-clash-art {
   width: 100%;
   height: 100%;
-  object-fit: contain;
-  filter: drop-shadow(0 8px 12px rgba(2, 8, 16, 0.32));
+  overflow: hidden;
+  object-fit: cover;
+  background: transparent;
+  border-radius: 50%;
+  clip-path: circle(49.3% at 50% 50%);
 }
 
 .tazzo-clash-art.holo-art {
@@ -5254,18 +5365,48 @@ button.image-button:focus-visible {
   border-radius: 50%;
 }
 
-.tazzo-clash-art .holo-art-layer {
-  object-fit: contain;
+.tazzo-clash-art .holo-art-layer,
+.tazzo-clash-art .rarity-gloss-image {
+  object-fit: cover;
+  background: transparent;
+  border-radius: 50%;
+  clip-path: circle(49.3% at 50% 50%);
+}
+
+.tazzo-clash-art .holo-art-foil,
+.tazzo-clash-art::after,
+.tazzo-clash-art .rarity-gloss-sweep {
+  border-radius: 50%;
+  clip-path: circle(49.3% at 50% 50%);
 }
 
 .tazzo-clash-front {
-  transform: rotateY(180deg);
+  transform: rotateY(180deg) translateZ(0.8px);
 }
 
 .tazzo-clash-entry-meta {
-  display: grid;
-  gap: 1px;
-  min-width: 0;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.tazzo-clash-empty {
+  position: relative;
+  z-index: 1;
+  max-width: 260px;
+  margin: 0;
+  padding: 10px 12px;
+  color: #fff8db;
+  font-size: 0.86rem;
+  font-weight: 900;
+  text-align: center;
+  background: rgba(5, 23, 27, 0.62);
+  border: 1px solid rgba(255, 233, 151, 0.26);
+  border-radius: 8px;
+  box-shadow: 0 12px 24px rgba(2, 8, 16, 0.22);
 }
 
 .tazzo-clash-entry-meta strong,
@@ -5354,10 +5495,142 @@ button.image-button:focus-visible {
   100% { transform: translateY(0) rotate(0deg); }
 }
 
-@keyframes clashDiscPop {
-  0% { filter: brightness(1); }
-  42% { filter: brightness(1.28) saturate(1.16); }
-  100% { filter: brightness(1); }
+@keyframes clashDeskShockwave {
+  0% { opacity: 0; transform: scale(0.22); }
+  18% { opacity: 0.76; transform: scale(0.56); }
+  100% { opacity: 0; transform: scale(1.45); }
+}
+
+@keyframes clashTazzoLeaveTable {
+  0%,
+  58% {
+    opacity: 1;
+    transform: translate(-50%, -50%) translate(var(--stack-x, 0), var(--stack-y, 0)) rotate(var(--stack-rot, 0deg)) scale(1);
+  }
+  78% {
+    opacity: 0.98;
+    transform: translate(-50%, -50%) translate(var(--mid-exit-x, 80px), var(--mid-exit-y, -36px)) rotate(var(--mid-exit-rot, 20deg)) scale(1.02);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) translate(var(--exit-x, 190px), var(--exit-y, -84px)) rotate(var(--exit-rot, 38deg)) scale(0.8);
+  }
+}
+
+@keyframes clashTazzoStrikeSpin {
+  0% {
+    filter: brightness(1);
+    transform: translate3d(0, 0, 0) rotateY(0deg) rotateZ(0deg) scale(1);
+  }
+  8% {
+    filter: brightness(0.94) saturate(1.04);
+    transform: translate3d(0, 9px, -6px) rotateY(0deg) rotateZ(-4deg) scaleX(1.04) scaleY(0.9);
+  }
+  18% {
+    filter: brightness(1.3) saturate(1.16);
+    transform: translate3d(4px, -18px, 30px) rotateY(250deg) rotateZ(150deg) scale(1.07);
+  }
+  42% {
+    filter: brightness(1.08) saturate(1.08);
+    transform: translate3d(-8px, -28px, 46px) rotateY(640deg) rotateZ(360deg) scale(0.99);
+  }
+  70% {
+    filter: brightness(1.2) saturate(1.12);
+    transform: translate3d(4px, -10px, 18px) rotateY(960deg) rotateZ(560deg) scale(1.03);
+  }
+  88% {
+    filter: brightness(1.06) saturate(1.05);
+    transform: translate3d(-1px, 4px, 4px) rotateY(1180deg) rotateZ(690deg) scaleX(1.02) scaleY(0.95);
+  }
+  100% {
+    filter: brightness(1);
+    transform: translate3d(0, 0, 0) rotateY(1440deg) rotateZ(720deg) scale(1);
+  }
+}
+
+@keyframes clashTazzoStrikeFlip {
+  0% {
+    filter: brightness(1);
+    transform: translate3d(0, 0, 0) rotateZ(0deg) scaleX(1) scaleY(1);
+  }
+  7% {
+    filter: brightness(0.92) saturate(1.04);
+    transform: translate3d(0, 10px, -8px) rotateZ(4deg) scaleX(1.05) scaleY(0.88);
+  }
+  15% {
+    filter: brightness(1.34) saturate(1.2);
+    transform: translate3d(-5px, -24px, 36px) rotateZ(72deg) scaleX(0.12) scaleY(1.08);
+  }
+  24% {
+    filter: brightness(1.28) saturate(1.18);
+    transform: translate3d(-7px, -40px, 58px) rotateZ(138deg) scaleX(1) scaleY(1.08);
+  }
+  36% {
+    filter: brightness(1.12) saturate(1.12);
+    transform: translate3d(8px, -46px, 66px) rotateZ(278deg) scaleX(0.1) scaleY(1);
+  }
+  51% {
+    filter: brightness(1.24) saturate(1.18);
+    transform: translate3d(-4px, -36px, 52px) rotateZ(432deg) scaleX(1.04) scaleY(1.05);
+  }
+  67% {
+    filter: brightness(1.12) saturate(1.12);
+    transform: translate3d(6px, -18px, 26px) rotateZ(586deg) scaleX(0.12) scaleY(1.02);
+  }
+  84% {
+    filter: brightness(1.16) saturate(1.12);
+    transform: translate3d(2px, 5px, 7px) rotateZ(682deg) scaleX(1.02) scaleY(0.94);
+  }
+  100% {
+    filter: brightness(1);
+    transform: translate3d(0, 0, 0) rotateZ(720deg) scaleX(1) scaleY(1);
+  }
+}
+
+@keyframes clashBackFaceSwap {
+  0%,
+  14% {
+    opacity: 1;
+    visibility: visible;
+  }
+  15%,
+  34% {
+    opacity: 0;
+    visibility: hidden;
+  }
+  35%,
+  49% {
+    opacity: 1;
+    visibility: visible;
+  }
+  50%,
+  100% {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+@keyframes clashFrontFaceSwap {
+  0%,
+  14% {
+    opacity: 0;
+    visibility: hidden;
+  }
+  15%,
+  34% {
+    opacity: 1;
+    visibility: visible;
+  }
+  35%,
+  49% {
+    opacity: 0;
+    visibility: hidden;
+  }
+  50%,
+  100% {
+    opacity: 1;
+    visibility: visible;
+  }
 }
 
 .competitive-grid {
@@ -7847,7 +8120,8 @@ button.generated-text-button.image-button:disabled {
   }
 
   .tazzo-clash-board {
-    grid-template-columns: repeat(3, minmax(84px, 1fr));
+    --clash-disc-size: clamp(100px, 18vw, 150px);
+    min-height: 320px;
   }
 
   .tutorial-coach {
@@ -8210,7 +8484,8 @@ button.generated-text-button.image-button:disabled {
   }
 
   .tazzo-clash-board {
-    grid-template-columns: repeat(2, minmax(96px, 1fr));
+    --clash-disc-size: clamp(86px, 30vw, 122px);
+    min-height: 260px;
   }
 
   .tutorial-popover {
@@ -8814,5 +9089,220 @@ button.generated-text-button.image-button:disabled {
   .pack-results-grid .pull-card {
     flex-basis: min(152px, calc(50vw - 18px));
     width: min(152px, calc(50vw - 18px));
+  }
+}
+
+html.is-battle-focus,
+body.is-battle-focus {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body.is-battle-focus .topbar,
+body.is-battle-focus .music-player,
+body.is-battle-focus .wallet-popover,
+body.is-battle-focus .tutorial-coach,
+body.is-battle-focus .tutorial-popover,
+body.is-battle-focus .tutorial-active-card {
+  display: none !important;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+}
+
+body.is-battle-focus .app-shell,
+body.is-battle-focus .content,
+body.is-battle-focus #view-battle {
+  width: 100%;
+  max-width: none;
+  height: 100dvh;
+  min-height: 0;
+  max-height: 100dvh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body.is-battle-focus .view:not(#view-battle),
+body.is-battle-focus #battle-home,
+body.is-battle-focus .team-panel,
+body.is-battle-focus .battle-head,
+body.is-battle-focus .command-panel > .panel-heading,
+body.is-battle-focus .command-panel > h2,
+body.is-battle-focus .active-card,
+body.is-battle-focus .tactical-panel,
+body.is-battle-focus .arena-status,
+body.is-battle-focus .battle-score,
+body.is-battle-focus .battle-log {
+  display: none !important;
+}
+
+body.is-battle-focus #battle-scene.is-active {
+  --battle-action-space: clamp(180px, 27dvh, 270px);
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  box-sizing: border-box;
+  display: block;
+  width: 100vw;
+  height: 100dvh;
+  padding: clamp(8px, 1.4vmin, 18px);
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(120, 231, 255, 0.18), transparent 36%),
+    linear-gradient(180deg, rgba(3, 18, 30, 0.96), rgba(7, 35, 38, 0.98));
+}
+
+body.is-battle-focus .battle-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: clamp(10px, 1.5vmin, 18px);
+  align-items: stretch;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+body.is-battle-focus .arena-panel,
+body.is-battle-focus .command-panel {
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+body.is-battle-focus .arena-panel {
+  display: grid;
+  grid-row: 1;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+body.is-battle-focus .arena-wrap {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  margin: 0;
+  overflow: hidden;
+  place-items: center;
+}
+
+body.is-battle-focus .arena {
+  width: min(100%, 1380px, max(220px, calc((100dvh - var(--battle-action-space) - 36px) * 1.4)));
+  max-width: min(1380px, 100%);
+  height: auto;
+  max-height: 100%;
+  aspect-ratio: 7 / 5;
+  gap: clamp(3px, 0.75vmin, 8px);
+  padding: clamp(5px, 0.95vmin, 12px);
+  border-width: clamp(2px, 0.45vmin, 4px);
+  border-radius: clamp(8px, 1.2vmin, 16px);
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.28), 0 18px 42px rgba(0, 0, 0, 0.38);
+}
+
+body.is-battle-focus .command-panel {
+  display: grid;
+  grid-row: 2;
+  align-content: center;
+  justify-items: center;
+}
+
+body.is-battle-focus .action-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(112px, 1fr));
+  gap: clamp(8px, 1.2vmin, 14px);
+  width: min(980px, 100%);
+  margin: 0 auto;
+}
+
+body.is-battle-focus .action-grid .wide {
+  grid-column: auto;
+}
+
+body.is-battle-focus .action-grid button,
+body.is-battle-focus .action-grid button.image-button,
+body.is-battle-focus .action-grid button.image-button.has-button-icon,
+body.is-battle-focus .action-grid button.combat-art-button.image-button,
+body.is-battle-focus .action-grid button.combat-art-button.image-button.has-button-icon {
+  min-width: 0;
+  min-height: clamp(92px, 11dvh, 130px);
+  background-position: center !important;
+  background-repeat: no-repeat !important;
+  background-size: contain !important;
+}
+
+@media (max-width: 760px) {
+  body.is-battle-focus #battle-scene.is-active {
+    --battle-action-space: clamp(300px, 42dvh, 380px);
+    padding: clamp(6px, 1.8vmin, 12px);
+  }
+
+  body.is-battle-focus .battle-layout {
+    gap: 8px;
+  }
+
+  body.is-battle-focus .arena {
+    width: min(100%, max(190px, calc(140dvh - 360px)));
+  }
+
+  body.is-battle-focus .action-grid {
+    grid-template-columns: repeat(2, minmax(118px, 1fr));
+    gap: 7px;
+    width: min(520px, 100%);
+  }
+
+  body.is-battle-focus .action-grid button,
+  body.is-battle-focus .action-grid button.image-button,
+  body.is-battle-focus .action-grid button.image-button.has-button-icon,
+  body.is-battle-focus .action-grid button.combat-art-button.image-button,
+  body.is-battle-focus .action-grid button.combat-art-button.image-button.has-button-icon {
+    min-height: clamp(72px, 9.4dvh, 94px);
+  }
+}
+
+@media (max-height: 620px) and (orientation: landscape) {
+  body.is-battle-focus #battle-scene.is-active {
+    padding: 6px;
+  }
+
+  body.is-battle-focus .battle-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(190px, 27vw);
+    grid-template-rows: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  body.is-battle-focus .arena-panel {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  body.is-battle-focus .command-panel {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  body.is-battle-focus .arena {
+    width: min(100%, max(180px, calc(140dvh - 20px)));
+  }
+
+  body.is-battle-focus .action-grid {
+    grid-template-columns: 1fr;
+    gap: 5px;
+    width: 100%;
+  }
+
+  body.is-battle-focus .action-grid button,
+  body.is-battle-focus .action-grid button.image-button,
+  body.is-battle-focus .action-grid button.image-button.has-button-icon,
+  body.is-battle-focus .action-grid button.combat-art-button.image-button,
+  body.is-battle-focus .action-grid button.combat-art-button.image-button.has-button-icon {
+    min-height: clamp(38px, 9.4dvh, 60px);
   }
 }

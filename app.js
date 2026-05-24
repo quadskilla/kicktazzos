@@ -100,6 +100,7 @@ const REWARD_CELEBRATION_TTL_MS = 4400;
 const SOCIAL_NOTICE_TTL_MS = 7200;
 const SOCIAL_NOTICE_STORAGE_PREFIX = "tazzomon-social-notices-v1";
 const TAZZO_CLASH_PERFECT_SCORE = 0.88;
+const TAZZO_CLASH_HIT_ANIMATION_MS = 1600;
 const ENABLE_PLAYER_EDIT = false;
 const PLAYER_TABS = new Set([
   "home",
@@ -131,6 +132,45 @@ const MUSIC_TRACKS = [
   { file: "Maracanã Pulse.mp3", name: "Maracanã Pulse" },
   { file: "Moonlit Alley.mp3", name: "Moonlit Alley" }
 ];
+const SFX_NAMES = Object.freeze([
+  "ui-click", "ui-back", "ui-confirm", "ui-error", "ui-disabled", "tab-switch", "modal-open", "modal-close", "wallet-pop",
+  "pack-buy", "pack-rustle", "pack-tear", "pack-open", "snack-burst", "card-flip", "card-zoom",
+  "reveal-common", "reveal-uncommon", "reveal-rare", "reveal-epic", "reveal-legendary", "reveal-mystic", "fragment-pop",
+  "battle-start", "turn-start", "action-select", "target-select", "move-slide", "retreat-slide", "swap", "dribble-hit",
+  "shot-kick", "pressure-push", "collision", "wall-bump", "ko", "pass-turn", "keeper-charge", "keeper-activate",
+  "battle-win", "battle-lose", "battle-draw", "timer-warning",
+  "tazzo-clash-invite", "tazzo-clash-accept", "tazzo-clash-coin", "tazzo-clash-hit", "tazzo-clash-perfect",
+  "tazzo-clash-flip", "tazzo-clash-miss", "tazzo-clash-win", "tazzo-clash-lose",
+  "coins", "purchase", "upgrade", "favorite-on", "favorite-off", "team-slot", "goalkeeper-set", "mission-claim",
+  "reward-shake", "reward-open", "friend-invite", "friend-message", "trade-offer", "trade-accept", "trade-decline",
+  "online-lobby", "matchmaking", "notification"
+]);
+const SFX_FILES = Object.freeze(Object.fromEntries(SFX_NAMES.map((name) => [name, `assets/sfx/${name}.wav`])));
+const SFX_VOLUME = Object.freeze({
+  "battle-start": 0.86,
+  "battle-win": 0.9,
+  "battle-lose": 0.72,
+  "reveal-legendary": 0.9,
+  "reveal-mystic": 0.92,
+  "tazzo-clash-hit": 0.88,
+  "tazzo-clash-perfect": 0.94,
+  collision: 0.82,
+  "wall-bump": 0.78,
+  ko: 0.82,
+  "reward-open": 0.9,
+  "ui-click": 0.82,
+  "tab-switch": 0.82
+});
+const SFX_COOLDOWN_MS = Object.freeze({
+  "ui-click": 45,
+  "tab-switch": 90,
+  "action-select": 70,
+  "target-select": 80,
+  "turn-start": 220,
+  "timer-warning": 900,
+  notification: 260
+});
+const DEFAULT_SFX_VOLUME = 1;
 
 function normalizeLobbyCode(value) {
   return String(value || "")
@@ -288,6 +328,15 @@ const state = {
   battle: null,
   battleSceneOpen: false,
   music: { audio: null, isPlaying: false, autoplayArmed: false, collapsed: false },
+  sfx: {
+    cache: new Map(),
+    buffers: new Map(),
+    loading: new Map(),
+    active: new Set(),
+    context: null,
+    lastPlayed: {},
+    unlocked: false
+  },
   server: {
     enabled: false,
     loading: false,
@@ -353,6 +402,7 @@ function defaultSave() {
     wishlist: {},
     musicTrackIndex: 0,
     musicVolume: 0.55,
+    sfxVolume: DEFAULT_SFX_VOLUME,
     tutorial: Object.fromEntries(TUTORIAL_STEPS.map((step) => [step.id, false])),
     tutorialRewardClaimed: false,
     missionDate: TODAY_KEY,
@@ -562,6 +612,8 @@ function normalizeSave(rawSave) {
     merged.musicTrackIndex = clamp(Math.floor(Number(merged.musicTrackIndex)) || 0, 0, Math.max(0, MUSIC_TRACKS.length - 1));
     merged.musicVolume = clamp(Number(merged.musicVolume), 0, 1);
     if (!Number.isFinite(merged.musicVolume)) merged.musicVolume = fresh.musicVolume;
+    merged.sfxVolume = clamp(Number(merged.sfxVolume), 0, 1);
+    if (!Number.isFinite(merged.sfxVolume)) merged.sfxVolume = fresh.sfxVolume;
     merged.trophies = Math.max(0, Math.floor(Number(merged.trophies)) || 0);
     merged.rankFloor = Math.max(0, Math.floor(Number(merged.rankFloor)) || 0, currentRankForPoints(merged.trophies).min);
     merged.trophies = Math.max(merged.rankFloor, merged.trophies);
@@ -789,6 +841,7 @@ function copyShareTextToClipboard(text) {
 function openSocialShare(network) {
   const url = gameShareUrl(network);
   const text = `${gameShareText(network)} ${url}`;
+  playSfx("friend-invite");
   if (network.id === "discord") {
     copyShareTextToClipboard(text);
     window.open("https://discord.com/channels/@me", "_blank", "noopener,noreferrer");
@@ -1761,10 +1814,13 @@ function showRewardCelebration(details = {}) {
     rewards: Array.isArray(details.rewards) ? details.rewards.filter(Boolean) : []
   };
   renderRewardCelebration();
+  playSfx("reward-shake");
   state.rewardCelebrationTimers.push(window.setTimeout(() => {
     if (!state.rewardCelebration) return;
     state.rewardCelebration.stage = "open";
     renderRewardCelebration();
+    playSfx("reward-open");
+    if (state.rewardCelebration.rewards.length) playSfx("coins", { volume: 0.72, pitch: 0.04 });
   }, REWARD_GIFT_SHAKE_MS));
   state.rewardCelebrationTimers.push(window.setTimeout(hideRewardCelebration, REWARD_CELEBRATION_TTL_MS));
 }
@@ -2255,6 +2311,7 @@ function setup() {
   setupEntryGateActions();
   setupProfileActions();
   setupFirebaseAuth();
+  setupSoundEffects();
   setupMusicPlayer();
   setupOnlineLobbyRealtime();
   setupSocialRealtime();
@@ -2455,6 +2512,7 @@ const BUTTON_LABEL_ART = {
   "adicionar tazzo": "assets/icones/botao_adicionar_tazzo.png",
   "ativo": "assets/icones/botao_ativo.png",
   "ativar": "assets/icones/botao_ativar.png",
+  "bater agora": "assets/icones/botao_bater_agora.png",
   "comprar": "assets/icones/botao_comprar.png",
   "comprar merreis": "assets/icones/botao_comprar_merreis.png",
   "continuar": "assets/icones/botao_continuar.png",
@@ -2664,7 +2722,8 @@ function buttonImageAsset(button, label) {
     if (button.dataset.lobbyAction === "open-battle") return COMBAT_BUTTON_ART.enter;
     if (button.dataset.lobbyAction === "rematch") return COMBAT_BUTTON_ART.rematch;
   }
-  if (button.dataset.clashCreate || button.dataset.clashPickSubmit || button.dataset.clashHit) return COMBAT_BUTTON_ART.start;
+  if (button.dataset.clashHit) return BUTTON_LABEL_ART["bater agora"];
+  if (button.dataset.clashCreate || button.dataset.clashPickSubmit) return "";
   if (button.dataset.tournament && normalizedLabel.includes("entrar")) return COMBAT_BUTTON_ART.enter;
   return "";
 }
@@ -3337,6 +3396,7 @@ async function createTazzoClash() {
     }, "Convidando");
     state.social.message = "Convite para bater tazzos enviado.";
     state.social.error = "";
+    playSfx("tazzo-clash-invite");
   } catch (error) {
     state.social.error = error.message || "Convite nao enviado.";
   }
@@ -3349,6 +3409,7 @@ async function respondTazzoClash(duelId, accept) {
     await postServerMutation(SERVER_TAZZO_CLASH_RESPOND_ENDPOINT, { duelId, accept }, accept ? "Aceitando duelo" : "Recusando duelo");
     state.social.message = accept ? "Duelo aceito. Agora escolham os tazzos." : "Duelo recusado.";
     state.social.error = "";
+    playSfx(accept ? "tazzo-clash-accept" : "trade-decline");
   } catch (error) {
     state.social.error = error.message || "Nao foi possivel responder ao duelo.";
   }
@@ -3373,6 +3434,7 @@ async function submitTazzoClashPick(duelId) {
       ? "Apostas equilibradas. Cara ou coroa definiu a primeira batida."
       : `Escolha enviada (${result.offerValue || 0} x ${result.requestValue || 0}).`;
     state.social.error = "";
+    playSfx(result.status === "active" ? "tazzo-clash-coin" : "ui-confirm", { pitch: 0.03 });
   } catch (error) {
     state.social.error = error.message || "Escolha nao enviada.";
   }
@@ -3397,11 +3459,15 @@ async function hitTazzoClash(duelId, timingScore = 0) {
       ? `${result.flippedKeys.length} tazzo(s) viraram${result.perfect ? " com timing perfeito" : ""}.`
       : "Nenhum tazzo virou nessa batida.";
     state.social.error = "";
+    playSfx(result.perfect ? "tazzo-clash-perfect" : "tazzo-clash-hit", { pitch: 0.04 });
+    window.setTimeout(() => {
+      playSfx(result.flippedKeys?.length ? "tazzo-clash-flip" : "tazzo-clash-miss", { pitch: 0.04 });
+    }, 280);
     window.setTimeout(() => {
       if (state.social.clashAnimation?.duelId !== duelId) return;
       state.social.clashAnimation = null;
       if (state.currentTab === "online") renderOnline();
-    }, 1200);
+    }, TAZZO_CLASH_HIT_ANIMATION_MS);
   } catch (error) {
     state.social.error = error.message || "Batida recusada.";
   }
@@ -3413,6 +3479,7 @@ async function createOnlineLobby() {
   if (payload?.currentLobby?.id) {
     state.online.inviteMessage = `Sala ${payload.currentLobby.id} criada. Copie o convite para chamar alguem.`;
     state.online.inviteMessageType = "success";
+    playSfx("online-lobby");
     renderOnline();
   }
   return payload;
@@ -3436,6 +3503,7 @@ async function joinOnlineLobby(lobbyId, options = {}) {
     state.online.inviteMessage = state.online.error || "Nao foi possivel entrar nessa sala.";
     state.online.inviteMessageType = "error";
   }
+  if (payload?.currentLobby?.id === code) playSfx("online-lobby");
   renderOnline();
   return payload;
 }
@@ -3469,6 +3537,7 @@ async function copyOnlineInvite() {
     ? `Convite da sala ${lobby.id} copiado.`
     : `Convite da sala ${lobby.id}: ${invite}`;
   state.online.inviteMessageType = copied ? "success" : "info";
+  playSfx("ui-confirm");
   renderOnline();
 }
 
@@ -3681,6 +3750,7 @@ function applyOnlineBattleEvent(event) {
 
   if (event.action === "pass" || event.action === "keeper") {
     if (event.action === "keeper") showOnlineKeeperFeedback(event);
+    playBattleActionSfx(event.action, { volume: event.isYours ? 0.86 : 0.68 });
     logBattle(event.message || `${event.actorName || "Jogador"} passou.`);
     return true;
   }
@@ -3729,6 +3799,7 @@ function showOnlineKeeperFeedback(event) {
   if (typeof scheduleBattleAnimationClear === "function") {
     scheduleBattleAnimationClear(animation);
   }
+  playSfx("keeper-activate", { volume: event.isYours ? 0.9 : 0.72 });
 }
 
 async function sendOnlineBattleAction(action, target = null) {
@@ -3745,6 +3816,7 @@ async function sendOnlineBattleAction(action, target = null) {
   state.battle.pendingAction = null;
   state.battle.validTargets = [];
   state.battle.status = state.battle.online.message;
+  playBattleActionSfx(action);
   renderBattle();
 
   const payload = {
@@ -3795,6 +3867,7 @@ function handleOnlineBattleAction(action) {
 
   state.battle.pendingAction = state.battle.pendingAction === action ? null : action;
   state.battle.validTargets = state.battle.pendingAction ? validTargetsFor(activePiece(), state.battle.pendingAction) : [];
+  playSfx(state.battle.pendingAction ? "action-select" : "ui-back");
   state.battle.status = state.battle.pendingAction
     ? state.battle.validTargets.length
       ? `${actionName(action)}: escolha o alvo online.`
@@ -3810,6 +3883,7 @@ function handleOnlineBattleTarget(x, y) {
   if (!state.battle.online.isYourTurn || !isPlayerTurn() || !state.battle.pendingAction) return;
   const target = state.battle.validTargets.find((item) => item.x === x && item.y === y);
   if (!target) return;
+  playSfx("target-select");
   sendOnlineBattleAction(target.action, { x: target.x, y: target.y });
 }
 
@@ -4262,6 +4336,220 @@ async function logoutProfile() {
   renderAll();
 }
 
+function setupSoundEffects() {
+  SFX_NAMES.forEach((name) => preloadSfx(name));
+  document.addEventListener("pointerdown", unlockSoundEffects, { once: true, capture: true });
+  document.addEventListener("keydown", unlockSoundEffects, { once: true, capture: true });
+  document.addEventListener("click", handleGlobalSfxClick, true);
+}
+
+function audioConstructor() {
+  if (typeof Audio !== "undefined") return Audio;
+  if (typeof window !== "undefined" && typeof window.Audio !== "undefined") return window.Audio;
+  return null;
+}
+
+function preloadSfx(name) {
+  const AudioCtor = audioConstructor();
+  if (state.sfx.cache.has(name) || !SFX_FILES[name] || !AudioCtor) return null;
+  const audio = new AudioCtor(SFX_FILES[name]);
+  audio.preload = "auto";
+  state.sfx.cache.set(name, audio);
+  return audio;
+}
+
+function sfxContext() {
+  if (state.sfx.context) return state.sfx.context;
+  if (typeof window === "undefined") return null;
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextCtor) return null;
+  try {
+    state.sfx.context = new AudioContextCtor();
+  } catch (error) {
+    state.sfx.context = null;
+  }
+  return state.sfx.context;
+}
+
+function sfxMasterVolume() {
+  const volume = Number(state.save?.sfxVolume);
+  return Number.isFinite(volume) ? clamp(volume, 0, 1) : DEFAULT_SFX_VOLUME;
+}
+
+function sfxPlaybackRate(options = {}) {
+  return clamp(options.rate || (options.pitch ? 1 + (Math.random() * 2 - 1) * options.pitch : 1), 0.72, 1.35);
+}
+
+function decodeSfx(name) {
+  if (!SFX_FILES[name] || typeof fetch !== "function") return Promise.resolve(null);
+  const context = sfxContext();
+  if (!context) return Promise.resolve(null);
+  if (state.sfx.buffers.has(name)) return Promise.resolve(state.sfx.buffers.get(name));
+  if (state.sfx.loading.has(name)) return state.sfx.loading.get(name);
+
+  const request = fetch(SFX_FILES[name])
+    .then((response) => {
+      if (!response.ok) throw new Error(`SFX ${name} HTTP ${response.status}`);
+      return response.arrayBuffer();
+    })
+    .then((arrayBuffer) => context.decodeAudioData(arrayBuffer))
+    .then((buffer) => {
+      state.sfx.buffers.set(name, buffer);
+      state.sfx.loading.delete(name);
+      return buffer;
+    })
+    .catch(() => {
+      state.sfx.loading.delete(name);
+      return null;
+    });
+  state.sfx.loading.set(name, request);
+  return request;
+}
+
+function unlockSoundEffects() {
+  state.sfx.unlocked = true;
+  const context = sfxContext();
+  if (context?.state === "suspended") context.resume().catch(() => {});
+  decodeSfx("ui-click").catch(() => {});
+  const audio = preloadSfx("ui-click");
+  if (!audio) return;
+  audio.muted = true;
+  audio.play()
+    .then(() => {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+    })
+    .catch(() => {
+      audio.muted = false;
+    });
+}
+
+function playSfx(name, options = {}) {
+  if (!SFX_FILES[name]) return;
+  const now = Date.now();
+  const cooldown = options.cooldown ?? SFX_COOLDOWN_MS[name] ?? 0;
+  if (cooldown && now - (state.sfx.lastPlayed[name] || 0) < cooldown) return;
+  state.sfx.lastPlayed[name] = now;
+  const baseVolume = SFX_VOLUME[name] ?? 0.88;
+  const volume = clamp(baseVolume * sfxMasterVolume() * (options.volume ?? 1), 0, 1);
+  if (!volume) return;
+  const rate = sfxPlaybackRate(options);
+  const context = sfxContext();
+  if (context) {
+    if (context.state === "suspended") context.resume().catch(() => {});
+    const buffer = state.sfx.buffers.get(name);
+    if (buffer) {
+      playSfxBuffer(buffer, volume, rate);
+      return;
+    }
+    decodeSfx(name).then((decoded) => {
+      if (decoded) {
+        playSfxBuffer(decoded, volume, rate);
+      } else {
+        playSfxElement(name, volume, rate);
+      }
+    });
+    return;
+  }
+  playSfxElement(name, volume, rate);
+}
+
+function playSfxBuffer(buffer, volume, rate) {
+  const context = state.sfx.context;
+  if (!context || !buffer) return;
+  try {
+    const source = context.createBufferSource();
+    const gain = context.createGain();
+    source.buffer = buffer;
+    source.playbackRate.value = rate;
+    gain.gain.value = volume;
+    source.connect(gain);
+    gain.connect(context.destination);
+    state.sfx.active.add(source);
+    source.onended = () => state.sfx.active.delete(source);
+    source.start(0);
+  } catch (error) {}
+}
+
+function playSfxElement(name, volume, rate) {
+  const AudioCtor = audioConstructor();
+  if (!AudioCtor) return;
+  const source = preloadSfx(name);
+  const audio = source?.cloneNode ? source.cloneNode() : new AudioCtor(SFX_FILES[name]);
+  if (!audio.src) audio.src = SFX_FILES[name];
+  audio.preload = "auto";
+  audio.volume = volume;
+  audio.playbackRate = rate;
+  state.sfx.active.add(audio);
+  const cleanup = () => state.sfx.active.delete(audio);
+  audio.addEventListener("ended", cleanup, { once: true });
+  audio.addEventListener("error", cleanup, { once: true });
+  audio.play().catch(cleanup);
+}
+
+function handleGlobalSfxClick(event) {
+  const button = event.target.closest?.("button");
+  if (!button) return;
+  const sound = buttonSfx(button);
+  if (sound) playSfx(sound);
+}
+
+function buttonSfx(button) {
+  if (button.disabled) return "ui-disabled";
+  if (button.matches(".tab-button")) return "tab-switch";
+  if (button.matches(".wallet-info-button")) return "wallet-pop";
+  if (button.matches(".viewer-close") || button.dataset.closePackResults || button.dataset.rewardClose) return "ui-back";
+  if (button.dataset.startBattle) return "battle-start";
+  if (button.dataset.openBattleScene || button.dataset.openOnlineBattle) return "modal-open";
+  if (button.dataset.pack) return "pack-buy";
+  if (button.dataset.shop) return "purchase";
+  if (button.dataset.tournament) return "matchmaking";
+  if (button.dataset.claim || button.dataset.claimReady || button.dataset.tutorialReward) return "mission-claim";
+  if (button.dataset.shareReward) return "friend-invite";
+  if (button.dataset.friendAccept || button.dataset.tradeAccept) return "trade-accept";
+  if (button.dataset.friendDecline || button.dataset.tradeDecline) return "trade-decline";
+  if (button.dataset.lobbyAction || button.dataset.joinLobby) return "online-lobby";
+  if (button.dataset.clashCreate) return "tazzo-clash-invite";
+  if (button.dataset.clashRespond === "accept") return "tazzo-clash-accept";
+  if (button.dataset.clashRespond === "decline") return "trade-decline";
+  if (button.dataset.clashPickSubmit) return "tazzo-clash-coin";
+  if (button.dataset.clashHit) return "tazzo-clash-hit";
+  if (button.dataset.team || button.dataset.slot) return "team-slot";
+  if (button.dataset.goalkeeper) return "goalkeeper-set";
+  if (button.dataset.upgrade) return "upgrade";
+  if (button.dataset.action || button.dataset.reveal) return "";
+  return "ui-click";
+}
+
+function revealSfxForRarity(rarity) {
+  const normalized = normalizeRarity(rarity, "Comum");
+  if (normalized === "Mistico" || normalized === "Mistico Secreto") return "reveal-mystic";
+  if (normalized === "Lendario") return "reveal-legendary";
+  if (normalized === "Epico") return "reveal-epic";
+  if (normalized === "Raro") return "reveal-rare";
+  if (normalized === "Incomum") return "reveal-uncommon";
+  return "reveal-common";
+}
+
+function battleActionSfx(action) {
+  return {
+    move: "move-slide",
+    retreat: "retreat-slide",
+    swap: "swap",
+    dribble: "dribble-hit",
+    shot: "shot-kick",
+    pressure: "pressure-push",
+    pass: "pass-turn",
+    keeper: "keeper-charge"
+  }[action] || "action-select";
+}
+
+function playBattleActionSfx(action, options = {}) {
+  const sound = battleActionSfx(action);
+  if (sound) playSfx(sound, { pitch: 0.04, ...options });
+}
+
 function setupMusicPlayer() {
   const player = document.getElementById("music-player");
   const audio = document.getElementById("music-audio");
@@ -4535,6 +4823,7 @@ function openTazzoViewer(monsterId) {
   const monster = MONSTER_BY_ID[monsterId];
   const viewer = document.getElementById("tazzo-viewer");
   if (!monster || !viewer) return;
+  playSfx("card-zoom", { pitch: 0.03 });
   const copies = state.save.collection[monster.id] || 0;
   const stats = monsterStats(monster);
   const keeper = isGoalkeeper(monster);
@@ -5607,6 +5896,7 @@ function revealPullBatch(indexes) {
   });
   if (!readyIndexes.length) return;
 
+  playSfx("card-flip", { pitch: 0.05 });
   readyIndexes.forEach((index) => {
     state.packReveal[index].flipping = true;
   });
@@ -5620,6 +5910,14 @@ function revealPullBatch(indexes) {
       current.justRevealed = true;
     });
     updatePullCards(readyIndexes);
+    const revealedMonsters = readyIndexes
+      .map((index) => MONSTER_BY_ID[state.packReveal[index]?.monsterId])
+      .filter(Boolean);
+    const bestRevealed = revealedMonsters.sort((a, b) => rarityIndex(b.rarity) - rarityIndex(a.rarity))[0];
+    if (bestRevealed) playSfx(revealSfxForRarity(bestRevealed.rarity), { pitch: 0.03 });
+    if (readyIndexes.some((index) => Number(state.packReveal[index]?.fragments) > 0)) {
+      window.setTimeout(() => playSfx("fragment-pop", { volume: 0.82, pitch: 0.04 }), 160);
+    }
     triggerPremiumRevealEffect(readyIndexes);
     setTimeout(() => {
       readyIndexes.forEach((index) => {
@@ -5663,6 +5961,7 @@ function triggerPremiumRevealEffect(indexes) {
   `;
   burst.append(createSnackExplosion());
   overlay.append(burst);
+  playSfx("snack-burst", { volume: 0.76, pitch: 0.03 });
   setTimeout(() => burst.remove(), 3000);
 }
 
@@ -6055,8 +6354,11 @@ function renderTazzoClashPanel() {
   const social = state.social;
   const friend = tazzoClashSelectedFriend();
   const canInvite = Boolean(hasOnlineProfile() && friend);
-  const activeClashes = [...(social.clashes || [])].sort(tazzoClashSort);
-  const runningCount = activeClashes.filter((clash) => clash.status === "active" || clash.status === "selecting").length;
+  const sortedClashes = [...(social.clashes || [])].sort(tazzoClashSort);
+  const liveClashes = sortedClashes.filter((clash) => ["pending", "selecting", "active"].includes(clash.status));
+  const latestHistoryClash = sortedClashes.find((clash) => !["pending", "selecting", "active"].includes(clash.status));
+  const visibleClashes = latestHistoryClash ? [...liveClashes, latestHistoryClash] : liveClashes;
+  const runningCount = liveClashes.filter((clash) => clash.status === "active" || clash.status === "selecting").length;
 
   panel.innerHTML = `
     <div class="panel-heading">
@@ -6084,7 +6386,7 @@ function renderTazzoClashPanel() {
       ${social.message ? `<p class="profile-message is-success">${escapeHtmlAttribute(social.message)}</p>` : ""}
     </div>
     <div class="tazzo-clash-duel-list">
-      ${activeClashes.length ? activeClashes.map(renderTazzoClashDuel).join("") : `<p class="tazzo-clash-empty">Nenhum duelo ainda. Escolha um amigo e envie o convite.</p>`}
+      ${visibleClashes.length ? visibleClashes.map(renderTazzoClashDuel).join("") : `<p class="tazzo-clash-empty">Nenhum duelo ainda. Escolha um amigo e envie o convite.</p>`}
     </div>
   `;
 }
@@ -6132,10 +6434,10 @@ function renderTazzoClashDuel(clash) {
   const friendName = cleanText(friend?.name, "Amigo", 24);
   const isYourTurn = clash.status === "active" && clash.currentTurnPlayerId === playerId;
   const startedName = clash.startedByPlayerId === playerId ? "Voce" : clash.startedByPlayerId ? friendName : "Aguardando";
-  const animation = state.social.clashAnimation?.duelId === clash.id && Date.now() - state.social.clashAnimation.at < 1200
+  const animation = state.social.clashAnimation?.duelId === clash.id && Date.now() - state.social.clashAnimation.at < TAZZO_CLASH_HIT_ANIMATION_MS
     ? state.social.clashAnimation
     : null;
-  const latestLog = Array.isArray(clash.log) ? clash.log.slice(-3).reverse() : [];
+  const latestLog = Array.isArray(clash.log) ? clash.log.slice(-1).reverse() : [];
   const scoreYou = clash.scores?.[playerId] || 0;
   const scoreFriend = clash.scores?.[friend?.playerId] || 0;
   const yourPickIds = fromYou ? clash.offeredIds || [] : clash.requestedIds || [];
@@ -6258,14 +6560,58 @@ function renderTazzoClashBoard(clash, animation) {
   const entries = Array.isArray(clash.entries) ? clash.entries : [];
   if (!entries.length) return "";
   const flippedKeys = new Set(animation?.flippedKeys || []);
+  const visibleEntries = entries.filter((entry) => !entry.capturedByPlayerId || flippedKeys.has(entry.key));
+  if (!visibleEntries.length) {
+    return `
+      <div class="tazzo-clash-board is-empty">
+        <p class="tazzo-clash-empty">Mesa limpa. Todos os tazzos ja sairam da pilha.</p>
+      </div>
+    `;
+  }
   return `
     <div class="tazzo-clash-board">
-      ${entries.map((entry) => renderTazzoClashEntry(entry, clash, flippedKeys)).join("")}
+      ${visibleEntries.map((entry) => renderTazzoClashEntry(
+        entry,
+        clash,
+        flippedKeys,
+        Boolean(animation),
+        Math.max(0, entries.findIndex((item) => item.key === entry.key)),
+        visibleEntries.length
+      )).join("")}
     </div>
   `;
 }
 
-function renderTazzoClashEntry(entry, clash, flippedKeys) {
+function tazzoClashStackStyle(index, total) {
+  const offsets = [
+    { x: -10, y: 8, rot: -7 },
+    { x: 15, y: -7, rot: 8 },
+    { x: 0, y: 0, rot: -2 },
+    { x: -22, y: -12, rot: 11 },
+    { x: 24, y: 13, rot: -12 },
+    { x: 8, y: 20, rot: 5 }
+  ];
+  const offset = offsets[index % offsets.length];
+  const spread = total >= 5 ? 1 : total >= 3 ? 0.82 : 0.58;
+  const side = index % 2 === 0 ? 1 : -1;
+  const exitX = side * (190 + index * 12);
+  const exitY = -84 + (index % 3) * 44;
+  const exitRot = offset.rot + side * (42 + index * 7);
+  return [
+    `--stack-x: ${Math.round(offset.x * spread)}px`,
+    `--stack-y: ${Math.round(offset.y * spread)}px`,
+    `--stack-rot: ${offset.rot}deg`,
+    `--stack-z: ${index + 1}`,
+    `--mid-exit-x: ${Math.round(exitX * 0.42)}px`,
+    `--mid-exit-y: ${Math.round(exitY * 0.42)}px`,
+    `--mid-exit-rot: ${Math.round(exitRot * 0.52)}deg`,
+    `--exit-x: ${exitX}px`,
+    `--exit-y: ${exitY}px`,
+    `--exit-rot: ${exitRot}deg`
+  ].join("; ");
+}
+
+function renderTazzoClashEntry(entry, clash, flippedKeys, isHitAnimating = false, stackIndex = 0, stackTotal = 1) {
   const monster = MONSTER_BY_ID[entry.monsterId];
   const playerId = state.server.playerId;
   const friend = clash.fromPlayerId === playerId ? clash.to : clash.from;
@@ -6273,15 +6619,19 @@ function renderTazzoClashEntry(entry, clash, flippedKeys) {
   const capturedBy = entry.capturedByPlayerId;
   const capturedName = capturedBy ? capturedBy === playerId ? "voce" : cleanText(friend?.name, "amigo", 16) : "";
   const isNewFlip = flippedKeys.has(entry.key);
+  const shouldSpin = isHitAnimating && (isNewFlip || !capturedBy);
   if (!monster) return "";
+  const ariaLabel = capturedBy
+    ? `${monster.name}, tazzo de ${ownerName}, virou para ${capturedName}`
+    : `${monster.name}, tazzo de ${ownerName} na pilha`;
   return `
-    <button class="tazzo-clash-entry${capturedBy ? " is-flipped" : ""}${isNewFlip ? " is-new-flip" : ""}" type="button" data-monster-view="${escapeHtmlAttribute(monster.id)}">
+    <button class="tazzo-clash-entry${capturedBy ? " is-flipped" : ""}${isNewFlip ? " is-new-flip" : ""}${shouldSpin ? " is-hit-spinning" : ""}" type="button" data-monster-view="${escapeHtmlAttribute(monster.id)}" style="${escapeHtmlAttribute(tazzoClashStackStyle(stackIndex, stackTotal))}" aria-label="${escapeHtmlAttribute(ariaLabel)}">
       <span class="tazzo-clash-disc">
         <span class="tazzo-clash-face tazzo-clash-back">
           <img src="${escapeHtmlAttribute(monsterBackImage(monster))}" alt="">
         </span>
         <span class="tazzo-clash-face tazzo-clash-front">
-          ${renderMonsterArt(monster, "tazzo-clash-art", { revealHolographic: Boolean(capturedBy) })}
+          ${renderMonsterArt(monster, "tazzo-clash-art", { revealHolographic: Boolean(capturedBy || isNewFlip) })}
         </span>
       </span>
       <span class="tazzo-clash-entry-meta">
@@ -6951,10 +7301,12 @@ function clearPackOpeningTimers() {
 
 function schedulePackOpening() {
   clearPackOpeningTimers();
+  playSfx("pack-rustle", { cooldown: 180, pitch: 0.04 });
   const timer = setTimeout(() => {
     if (!state.packOpening) return;
     state.packOpening = null;
     state.packOpeningTimers = [];
+    playSfx("pack-open", { pitch: 0.04 });
     renderPacks();
   }, PACK_OPENING_DURATION_MS);
   state.packOpeningTimers = [timer];
@@ -7073,6 +7425,7 @@ function tearOpenPack() {
   if (!state.packOpening) return;
   clearPackOpeningTimers();
   state.packOpening = null;
+  playSfx("pack-tear", { pitch: 0.05 });
   renderPacks();
 }
 
@@ -7080,6 +7433,7 @@ function showPackCards() {
   if (!state.packOpening) return;
   clearPackOpeningTimers();
   state.packOpening = null;
+  playSfx("pack-open", { pitch: 0.04 });
   renderPacks();
 }
 
@@ -7200,6 +7554,7 @@ function upgradeMonsterLocally(monsterId) {
   progressMission("evolve", 1);
   progressTutorial("team");
   saveGame();
+  playSfx("upgrade", { pitch: 0.03 });
   renderAll();
 }
 
@@ -7207,6 +7562,7 @@ async function upgradeMonsterOnServer(monsterId) {
   try {
     await postServerMutation(SERVER_UPGRADE_ENDPOINT, { monsterId }, "Melhorando");
     progressTutorial("team");
+    playSfx("upgrade", { pitch: 0.03 });
     renderAll();
   } catch (error) {
     renderAll();
@@ -7741,6 +8097,7 @@ function buyShopItemLocally(itemId) {
     equipCosmetic(item.id);
     state.shopMessage = `${item.name} equipado em ${cosmeticSlotLabel(item)}.`;
     saveGame();
+    playSfx("ui-confirm");
     renderAll();
     return;
   }
@@ -7751,6 +8108,7 @@ function buyShopItemLocally(itemId) {
   equipCosmetic(item.id);
   state.shopMessage = `${item.name} comprado.`;
   saveGame();
+  playSfx("purchase");
   renderAll();
 }
 
@@ -7765,6 +8123,7 @@ async function buyShopItemOnServer(itemId) {
       window.location.assign(payload.checkoutUrl);
       return;
     }
+    playSfx("purchase");
     renderAll();
   } catch (error) {
     state.shopMessage = error.message || "Erro na loja.";
@@ -7785,6 +8144,7 @@ function setTeamSlot(monsterId) {
   state.save.team = normalizeTeam(team, state.save.collection);
   progressTutorial("team");
   saveGame();
+  playSfx("team-slot", { pitch: 0.03 });
   if (activeLockedBattle()) {
     renderAll();
     return;
@@ -7802,12 +8162,14 @@ function toggleWishlist(monsterId, options = {}) {
   if (!MONSTER_BY_ID[monsterId]) return;
   const shouldRender = options.render !== false;
   state.save.wishlist = sanitizeWishlist(state.save.wishlist);
-  if (state.save.wishlist[monsterId]) {
+  const wasWanted = Boolean(state.save.wishlist[monsterId]);
+  if (wasWanted) {
     delete state.save.wishlist[monsterId];
   } else {
     state.save.wishlist[monsterId] = true;
   }
   saveGame();
+  playSfx(wasWanted ? "favorite-off" : "favorite-on", { pitch: 0.03 });
   if (shouldRender) renderAll();
 }
 
@@ -7817,6 +8179,7 @@ function setGoalkeeper(monsterId) {
   state.save.goalkeeper = monsterId;
   progressTutorial("team");
   saveGame();
+  playSfx("goalkeeper-set");
   if (activeLockedBattle()) {
     renderAll();
     return;
@@ -7894,6 +8257,7 @@ async function sendFriendInvite() {
     }, "Convidando");
     state.social.message = "Convite enviado.";
     state.social.inviteName = "";
+    playSfx("friend-invite");
   } catch (error) {
     state.social.error = error.message || "Nao foi possivel enviar o convite.";
   }
@@ -7905,6 +8269,7 @@ async function respondFriendInvite(requestId, accept) {
   try {
     await postServerMutation(SERVER_FRIEND_RESPOND_ENDPOINT, { requestId, accept }, accept ? "Aceitando" : "Recusando");
     state.social.message = accept ? "Convite aceito." : "Convite recusado.";
+    playSfx(accept ? "trade-accept" : "trade-decline");
   } catch (error) {
     state.social.error = error.message || "Nao foi possivel responder o convite.";
   }
@@ -7921,6 +8286,7 @@ async function sendFriendChat() {
       message: state.social.draftMessage
     }, "Enviando");
     state.social.draftMessage = "";
+    playSfx("friend-message");
   } catch (error) {
     state.social.error = error.message || "Mensagem nao enviada.";
   }
@@ -7949,6 +8315,7 @@ async function createFriendTrade() {
     state.social.tradeDraft = { offerIds: [], requestIds: [] };
     state.social.message = "Proposta enviada.";
     progressTutorial("trade");
+    playSfx("trade-offer");
   } catch (error) {
     state.social.error = error.message || "Proposta nao enviada.";
   }
@@ -7961,6 +8328,7 @@ async function respondFriendTrade(tradeId, accept) {
     await postServerMutation(SERVER_SOCIAL_TRADE_RESPOND_ENDPOINT, { tradeId, accept }, accept ? "Trocando" : "Recusando");
     state.social.message = accept ? "Troca concluida." : "Proposta recusada.";
     if (accept) progressTutorial("trade");
+    playSfx(accept ? "trade-accept" : "trade-decline");
   } catch (error) {
     state.social.error = error.message || "Nao foi possivel responder a proposta.";
   }
@@ -8016,6 +8384,7 @@ async function sendFriendGift(friendId) {
         friendId
       }, "Enviando presente");
       state.tradeLog.unshift(payload.message || `Presente enviado para ${friend.name}: +80 Merreis.`);
+      playSfx("reward-open");
       renderAll();
     } catch (error) {
       state.tradeLog.unshift(error.message || "Presente indisponivel no servidor.");
@@ -8029,6 +8398,7 @@ async function sendFriendGift(friendId) {
   state.tradeLog.unshift(`Presente enviado para ${friend.name}: +80 Merreis.`);
   progressMission("gift", 1);
   saveGame();
+  playSfx("reward-open");
   renderAll();
 }
 

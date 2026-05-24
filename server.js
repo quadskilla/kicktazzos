@@ -27,8 +27,8 @@ const ONLINE_LOBBY_TTL_MS = 45 * 60 * 1000;
 const ONLINE_PLAYER_IDLE_MS = 8 * 60 * 1000;
 const ONLINE_PLAYER_AWAY_MS = Number(process.env.ONLINE_PLAYER_AWAY_MS) || 15000;
 const ONLINE_FORFEIT_GRACE_MS = Number(process.env.ONLINE_FORFEIT_GRACE_MS) || 60000;
-const TAZZO_CLASH_BASE_CHANCE = 0.5;
-const TAZZO_CLASH_PERFECT_CHANCE = 0.55;
+const TAZZO_CLASH_BASE_CHANCE = 0.25;
+const TAZZO_CLASH_PERFECT_CHANCE = 0.3;
 const TAZZO_CLASH_PERFECT_SCORE = 0.88;
 const ACCOUNT_EVENT_RETENTION = Math.max(50, Math.floor(Number(process.env.ACCOUNT_EVENT_RETENTION) || 500));
 const ACCOUNT_EVENT_DATA_BYTES = 4096;
@@ -98,6 +98,8 @@ const MIME_TYPES = {
   ".jpeg": "image/jpeg",
   ".webp": "image/webp",
   ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
   ".pdf": "application/pdf"
 };
 

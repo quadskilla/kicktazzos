@@ -1,0 +1,352 @@
+[
+  {
+    "id": "ui-click",
+    "file": "ui-click.wav",
+    "description": "Clique seco de botao"
+  },
+  {
+    "id": "ui-back",
+    "file": "ui-back.wav",
+    "description": "Voltar ou fechar painel"
+  },
+  {
+    "id": "ui-confirm",
+    "file": "ui-confirm.wav",
+    "description": "Confirmacao positiva"
+  },
+  {
+    "id": "ui-error",
+    "file": "ui-error.wav",
+    "description": "Erro curto"
+  },
+  {
+    "id": "ui-disabled",
+    "file": "ui-disabled.wav",
+    "description": "Botao indisponivel"
+  },
+  {
+    "id": "tab-switch",
+    "file": "tab-switch.wav",
+    "description": "Troca de aba"
+  },
+  {
+    "id": "modal-open",
+    "file": "modal-open.wav",
+    "description": "Abrir janela"
+  },
+  {
+    "id": "modal-close",
+    "file": "modal-close.wav",
+    "description": "Fechar janela"
+  },
+  {
+    "id": "wallet-pop",
+    "file": "wallet-pop.wav",
+    "description": "Popover da carteira"
+  },
+  {
+    "id": "pack-buy",
+    "file": "pack-buy.wav",
+    "description": "Comprar pacotinho"
+  },
+  {
+    "id": "pack-rustle",
+    "file": "pack-rustle.wav",
+    "description": "Pacote balancando"
+  },
+  {
+    "id": "pack-tear",
+    "file": "pack-tear.wav",
+    "description": "Rasgar salgadinho"
+  },
+  {
+    "id": "pack-open",
+    "file": "pack-open.wav",
+    "description": "Pacotinho abrindo"
+  },
+  {
+    "id": "snack-burst",
+    "file": "snack-burst.wav",
+    "description": "Salgadinho explodindo"
+  },
+  {
+    "id": "card-flip",
+    "file": "card-flip.wav",
+    "description": "Tazzo virando"
+  },
+  {
+    "id": "card-zoom",
+    "file": "card-zoom.wav",
+    "description": "Zoom no tazzo"
+  },
+  {
+    "id": "reveal-common",
+    "file": "reveal-common.wav",
+    "description": "Revelacao comum"
+  },
+  {
+    "id": "reveal-uncommon",
+    "file": "reveal-uncommon.wav",
+    "description": "Revelacao incomum"
+  },
+  {
+    "id": "reveal-rare",
+    "file": "reveal-rare.wav",
+    "description": "Revelacao rara"
+  },
+  {
+    "id": "reveal-epic",
+    "file": "reveal-epic.wav",
+    "description": "Revelacao epica"
+  },
+  {
+    "id": "reveal-legendary",
+    "file": "reveal-legendary.wav",
+    "description": "Revelacao lendaria"
+  },
+  {
+    "id": "reveal-mystic",
+    "file": "reveal-mystic.wav",
+    "description": "Revelacao mistica"
+  },
+  {
+    "id": "fragment-pop",
+    "file": "fragment-pop.wav",
+    "description": "Fragmentos ganhos"
+  },
+  {
+    "id": "battle-start",
+    "file": "battle-start.wav",
+    "description": "Inicio de batalha"
+  },
+  {
+    "id": "turn-start",
+    "file": "turn-start.wav",
+    "description": "Inicio do turno"
+  },
+  {
+    "id": "action-select",
+    "file": "action-select.wav",
+    "description": "Selecionar acao"
+  },
+  {
+    "id": "target-select",
+    "file": "target-select.wav",
+    "description": "Selecionar alvo"
+  },
+  {
+    "id": "move-slide",
+    "file": "move-slide.wav",
+    "description": "Mover tazzo no campo"
+  },
+  {
+    "id": "retreat-slide",
+    "file": "retreat-slide.wav",
+    "description": "Recuar tazzo"
+  },
+  {
+    "id": "swap",
+    "file": "swap.wav",
+    "description": "Trocar posicao"
+  },
+  {
+    "id": "dribble-hit",
+    "file": "dribble-hit.wav",
+    "description": "Drible batendo"
+  },
+  {
+    "id": "shot-kick",
+    "file": "shot-kick.wav",
+    "description": "Chute forte"
+  },
+  {
+    "id": "pressure-push",
+    "file": "pressure-push.wav",
+    "description": "Empurrao de pressao"
+  },
+  {
+    "id": "collision",
+    "file": "collision.wav",
+    "description": "Colisao entre tazzos"
+  },
+  {
+    "id": "wall-bump",
+    "file": "wall-bump.wav",
+    "description": "Bateu na borda"
+  },
+  {
+    "id": "ko",
+    "file": "ko.wav",
+    "description": "Tazzo saiu da arena"
+  },
+  {
+    "id": "pass-turn",
+    "file": "pass-turn.wav",
+    "description": "Passar turno"
+  },
+  {
+    "id": "keeper-charge",
+    "file": "keeper-charge.wav",
+    "description": "Goleiro carregando habilidade"
+  },
+  {
+    "id": "keeper-activate",
+    "file": "keeper-activate.wav",
+    "description": "Goleiro ativado"
+  },
+  {
+    "id": "battle-win",
+    "file": "battle-win.wav",
+    "description": "Vitoria"
+  },
+  {
+    "id": "battle-lose",
+    "file": "battle-lose.wav",
+    "description": "Derrota"
+  },
+  {
+    "id": "battle-draw",
+    "file": "battle-draw.wav",
+    "description": "Empate"
+  },
+  {
+    "id": "timer-warning",
+    "file": "timer-warning.wav",
+    "description": "Tempo acabando"
+  },
+  {
+    "id": "tazzo-clash-invite",
+    "file": "tazzo-clash-invite.wav",
+    "description": "Convite para bater tazzo"
+  },
+  {
+    "id": "tazzo-clash-accept",
+    "file": "tazzo-clash-accept.wav",
+    "description": "Duelo aceito"
+  },
+  {
+    "id": "tazzo-clash-coin",
+    "file": "tazzo-clash-coin.wav",
+    "description": "Cara ou coroa"
+  },
+  {
+    "id": "tazzo-clash-hit",
+    "file": "tazzo-clash-hit.wav",
+    "description": "Batida de tazzo"
+  },
+  {
+    "id": "tazzo-clash-perfect",
+    "file": "tazzo-clash-perfect.wav",
+    "description": "Batida perfeita"
+  },
+  {
+    "id": "tazzo-clash-flip",
+    "file": "tazzo-clash-flip.wav",
+    "description": "Tazzo virou na batida"
+  },
+  {
+    "id": "tazzo-clash-miss",
+    "file": "tazzo-clash-miss.wav",
+    "description": "Nenhum tazzo virou"
+  },
+  {
+    "id": "tazzo-clash-win",
+    "file": "tazzo-clash-win.wav",
+    "description": "Venceu batida de tazzo"
+  },
+  {
+    "id": "tazzo-clash-lose",
+    "file": "tazzo-clash-lose.wav",
+    "description": "Perdeu batida de tazzo"
+  },
+  {
+    "id": "coins",
+    "file": "coins.wav",
+    "description": "Merreis ganhos"
+  },
+  {
+    "id": "purchase",
+    "file": "purchase.wav",
+    "description": "Compra concluida"
+  },
+  {
+    "id": "upgrade",
+    "file": "upgrade.wav",
+    "description": "Melhoria de tazzo"
+  },
+  {
+    "id": "favorite-on",
+    "file": "favorite-on.wav",
+    "description": "Favoritar"
+  },
+  {
+    "id": "favorite-off",
+    "file": "favorite-off.wav",
+    "description": "Remover favorito"
+  },
+  {
+    "id": "team-slot",
+    "file": "team-slot.wav",
+    "description": "Colocar no time"
+  },
+  {
+    "id": "goalkeeper-set",
+    "file": "goalkeeper-set.wav",
+    "description": "Goleiro escolhido"
+  },
+  {
+    "id": "mission-claim",
+    "file": "mission-claim.wav",
+    "description": "Missao resgatada"
+  },
+  {
+    "id": "reward-shake",
+    "file": "reward-shake.wav",
+    "description": "Caixa de presente tremendo"
+  },
+  {
+    "id": "reward-open",
+    "file": "reward-open.wav",
+    "description": "Presente abrindo"
+  },
+  {
+    "id": "friend-invite",
+    "file": "friend-invite.wav",
+    "description": "Convite de amigo"
+  },
+  {
+    "id": "friend-message",
+    "file": "friend-message.wav",
+    "description": "Mensagem recebida"
+  },
+  {
+    "id": "trade-offer",
+    "file": "trade-offer.wav",
+    "description": "Proposta de troca"
+  },
+  {
+    "id": "trade-accept",
+    "file": "trade-accept.wav",
+    "description": "Troca aceita"
+  },
+  {
+    "id": "trade-decline",
+    "file": "trade-decline.wav",
+    "description": "Troca recusada"
+  },
+  {
+    "id": "online-lobby",
+    "file": "online-lobby.wav",
+    "description": "Sala online"
+  },
+  {
+    "id": "matchmaking",
+    "file": "matchmaking.wav",
+    "description": "Busca de partida"
+  },
+  {
+    "id": "notification",
+    "file": "notification.wav",
+    "description": "Aviso social"
+  }
+]

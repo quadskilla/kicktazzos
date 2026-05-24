@@ -67,6 +67,7 @@ function newBattle(config = null, legacyEnemyName = "IA") {
   }
 
   state.battleSceneOpen = true;
+  playSfx("battle-start", { cooldown: 500 });
   advanceTurn();
   startMatchTimer();
   renderAll();
@@ -212,6 +213,9 @@ function startTurnTimer(seconds) {
 
     state.battle.turnTime -= 1;
     renderTimer();
+    if (state.battle.turnTime > 0 && state.battle.turnTime <= 5 && isPlayerTurn()) {
+      playSfx("timer-warning");
+    }
 
     if (state.battle.turnTime <= 0) {
       clearTurnTimer();
@@ -257,6 +261,7 @@ function chooseAction(action) {
   const allowedAction = tutorialAllowedAction();
   if (allowedAction && action !== allowedAction) {
     state.battle.status = `Tutorial: selecione ${actionName(allowedAction)}.`;
+    playSfx("ui-error");
     renderBattle();
     return;
   }
@@ -266,6 +271,7 @@ function chooseAction(action) {
   }
   if (action === "pass") {
     logBattle(`${monsterOf(activePiece()).name} passou.`);
+    playBattleActionSfx("pass");
     if (activePiece()?.side === "player") progressTutorial("pass");
     if (completeTutorialActionScenario("pass")) return;
     finishTurn({ ignoreExtraTurn: true });
@@ -273,6 +279,7 @@ function chooseAction(action) {
   }
   state.battle.pendingAction = state.battle.pendingAction === action ? null : action;
   state.battle.validTargets = state.battle.pendingAction ? validTargetsFor(activePiece(), state.battle.pendingAction) : [];
+  playSfx(state.battle.pendingAction ? "action-select" : "ui-back");
   renderBattle();
 }
 
@@ -284,11 +291,13 @@ function handleArenaClick(x, y) {
   if (!isPlayerTurn() || !state.battle.pendingAction) return;
   const target = state.battle.validTargets.find((item) => item.x === x && item.y === y);
   if (!target) return;
+  playSfx("target-select");
   executeAction(activePiece(), target);
 }
 
 function executeAction(piece, target, options = {}) {
   const action = target.action;
+  playBattleActionSfx(action, { cooldown: 120 });
   if (action === "move" || action === "retreat") {
     piece.x = target.x;
     piece.y = target.y;
@@ -438,6 +447,7 @@ function pushPiece(target, attacker, steps, force = attacker.dribble) {
       const damage = incomingDamageAfterPosition(target, Math.round(force * 0.5));
       applyDamage(target, damage, attacker.side, { precalculated: true });
       logBattle(`${monsterOf(target).name} bateu na borda: ${damage} dano extra.`);
+      playSfx("wall-bump", { pitch: 0.04 });
       if (attacker.side === "player") progressTutorial("collision");
       result.out = true;
       break;
@@ -451,6 +461,7 @@ function pushPiece(target, attacker, steps, force = attacker.dribble) {
       applyDamage(target, targetDamage, attacker.side, { precalculated: true });
       applyDamage(blocker, blockerDamage, attacker.side, { precalculated: true });
       logBattle(`Colisao entre ${monsterOf(target).name} e ${monsterOf(blocker).name}: ${targetDamage}/${blockerDamage} dano.`);
+      playSfx("collision", { pitch: 0.04 });
       if (attacker.side === "player") {
         progressMission("collision", 1);
         progressTutorial("collision");
@@ -468,12 +479,14 @@ function pushPiece(target, attacker, steps, force = attacker.dribble) {
 }
 
 function applyDamage(piece, damage, sourceSide, options = {}) {
+  const wasAlive = piece.hp > 0;
   const finalDamage = options.precalculated ? damage : incomingDamageAfterPosition(piece, damage);
   piece.hp = Math.max(0, piece.hp - finalDamage);
   if (sourceSide === "player") state.battle.damageByPlayer += finalDamage;
   if (sourceSide === "cpu") state.battle.damageByCpu += finalDamage;
-  if (piece.hp <= 0) {
+  if (wasAlive && piece.hp <= 0) {
     logBattle(`${monsterOf(piece).name} saiu da arena.`);
+    playSfx("ko", { cooldown: 140, pitch: 0.03 });
   }
 }
 
@@ -611,6 +624,7 @@ function advanceTurn() {
     const next = state.battle.pieces.find((piece) => piece.id === nextId && piece.hp > 0);
     if (next) {
       state.battle.activeId = next.id;
+      if (next.side === "player") playSfx("turn-start", { cooldown: 220, pitch: 0.03 });
       if (next.side === "cpu" && !state.battle.online) {
         startTurnTimer(0);
         window.setTimeout(runAiTurn, 420);
@@ -733,6 +747,7 @@ function queuePlayerKeeperAbility() {
   const animation = keeperAbilityAnimation(piece, "windup", `${keeperMonster.name} vai ativar a habilidade.`);
   state.battle.animation = animation;
   state.battle.status = animation.text;
+  playSfx("keeper-charge");
   renderAll();
 
   window.setTimeout(() => {
@@ -747,6 +762,7 @@ function queuePlayerKeeperAbility() {
     state.battle.animation = resolvedAnimation;
     state.battle.status = resolvedAnimation.text;
     const used = useKeeperAbility(currentPiece.side);
+    if (used) playSfx("keeper-activate");
     if (used && completeTutorialActionScenario("keeper")) {
       scheduleBattleAnimationClear(resolvedAnimation);
       return;
@@ -763,6 +779,7 @@ function queueAiKeeperAbility(piece) {
   const animation = keeperAbilityAnimation(piece, "windup", `${state.battle.enemyName}: ${keeperMonster.name} vai ativar a habilidade.`);
   state.battle.animation = animation;
   state.battle.status = animation.text;
+  playSfx("keeper-charge", { volume: 0.72 });
   renderAll();
 
   window.setTimeout(() => {
@@ -777,6 +794,7 @@ function queueAiKeeperAbility(piece) {
     state.battle.animation = resolvedAnimation;
     state.battle.status = resolvedAnimation.text;
     const used = useKeeperAbility(currentPiece.side);
+    if (used) playSfx("keeper-activate", { volume: 0.78 });
     if (used && !state.battle.over && activePiece()?.id === currentPiece.id) {
       renderAll();
       window.setTimeout(runAiTurn, AI_ACTION_RESULT_MS);
@@ -1043,6 +1061,7 @@ function timeoutWinner() {
 }
 
 function setBattleResult(result) {
+  playSfx(result.winner === "player" ? "battle-win" : result.winner === "draw" ? "battle-draw" : "battle-lose");
   state.battle.result = {
     winner: result.winner,
     title: result.title,
