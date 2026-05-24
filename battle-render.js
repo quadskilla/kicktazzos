@@ -134,10 +134,17 @@ function clearBattleScene() {
   const matchLabel = document.getElementById("match-label");
   const roundLabel = document.getElementById("round-label");
   const activeLabel = document.getElementById("active-label");
+  const focusActiveLabel = document.getElementById("focus-active-label");
+  const focusHud = document.getElementById("battle-focus-hud");
   if (matchLabel) matchLabel.textContent = "0:00";
   if (roundLabel) roundLabel.textContent = "Rodada -";
   if (activeLabel) activeLabel.textContent = "Sem batalha";
+  if (focusActiveLabel) focusActiveLabel.textContent = "Sem batalha";
+  if (focusHud) {
+    focusHud.classList.remove("is-your-turn", "is-opponent-turn", "is-low-time");
+  }
   renderTimer();
+  renderMatchTimer();
   document.querySelectorAll("#action-grid button").forEach((button) => {
     button.disabled = true;
     button.classList.remove("is-active");
@@ -393,6 +400,7 @@ function renderArena() {
   document.getElementById("round-label").textContent = `Rodada ${Math.max(1, state.battle.round)}`;
   document.getElementById("match-label").textContent = formatTime(state.battle.matchTime || 0);
   document.getElementById("active-label").textContent = active ? `${monsterOf(active).name} (${active.side === "player" ? "voce" : state.battle.enemyName})` : state.battle.status;
+  renderBattleFocusHud();
 }
 
 function keeperAbilityCell(animation) {
@@ -950,16 +958,64 @@ function actionName(action) {
 
 function renderTimer() {
   const timer = document.getElementById("timer-chip");
-  if (!timer) return;
   const value = state.battle && state.battle.turnTime > 0 ? `${state.battle.turnTime}s` : "--";
-  timer.textContent = value;
+  const lowTime = Boolean(state.battle && state.battle.turnTime > 0 && state.battle.turnTime <= 5 && !state.battle.over);
+  if (timer) {
+    timer.textContent = value;
+    timer.classList.toggle("is-low-time", lowTime);
+  }
+  const focusTurn = document.getElementById("focus-turn-timer");
+  if (focusTurn) {
+    focusTurn.textContent = `Turno ${value}`;
+    focusTurn.classList.toggle("is-low-time", lowTime);
+  }
+  renderBattleFocusHud();
 }
 
 function renderMatchTimer() {
   const label = document.getElementById("match-label");
-  if (!label || !state.battle) return;
-  label.textContent = formatTime(state.battle.matchTime || 0);
-  label.classList.toggle("is-low-time", (state.battle.matchTime || 0) <= 30 && !state.battle.over);
+  const focusMatch = document.getElementById("focus-match-timer");
+  const value = state.battle ? formatTime(state.battle.matchTime || 0) : "0:00";
+  const lowTime = Boolean(state.battle && (state.battle.matchTime || 0) <= 30 && !state.battle.over);
+  if (label) {
+    label.textContent = value;
+    label.classList.toggle("is-low-time", lowTime);
+  }
+  if (focusMatch) {
+    focusMatch.textContent = `Partida ${value}`;
+    focusMatch.classList.toggle("is-low-time", lowTime);
+  }
+  renderBattleFocusHud();
+}
+
+function renderBattleFocusHud() {
+  const hud = document.getElementById("battle-focus-hud");
+  const activeLabel = document.getElementById("focus-active-label");
+  if (!hud || !activeLabel) return;
+
+  if (!state.battle) {
+    activeLabel.textContent = "Sem batalha";
+    hud.classList.remove("is-your-turn", "is-opponent-turn", "is-low-time");
+    return;
+  }
+
+  const active = activePiece();
+  const yourTurn = Boolean(active && active.side === "player" && !state.battle.over);
+  const opponentTurn = Boolean(active && active.side !== "player" && !state.battle.over);
+  const lowTurnTime = Boolean(state.battle.turnTime > 0 && state.battle.turnTime <= 5 && !state.battle.over);
+  hud.classList.toggle("is-your-turn", yourTurn);
+  hud.classList.toggle("is-opponent-turn", opponentTurn);
+  hud.classList.toggle("is-low-time", lowTurnTime);
+  if (state.battle.over) {
+    activeLabel.textContent = state.battle.result?.title || state.battle.status || "Partida encerrada";
+    return;
+  }
+  if (!active) {
+    activeLabel.textContent = state.battle.status || "Aguardando jogada";
+    return;
+  }
+  const playerLabel = active.side === "player" ? "Seu turno" : `Turno de ${state.battle.enemyName}`;
+  activeLabel.textContent = `${playerLabel}: ${monsterOf(active).name}`;
 }
 
 function renderBattleLog() {

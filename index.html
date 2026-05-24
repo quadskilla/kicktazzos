@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Kick Tazzos: Copa da zoeira!</title>
-  <link rel="stylesheet" href="styles.css?v=20260524-battle-focus-2">
+  <link rel="stylesheet" href="styles.css?v=20260524-battle-timer-1">
 </head>
 <body>
   <div class="app-shell">
@@ -160,6 +160,11 @@
                   <span id="round-label">Rodada -</span>
                   <strong id="active-label">Sem batalha</strong>
                 </div>
+              </div>
+              <div class="battle-focus-hud" id="battle-focus-hud" aria-live="polite">
+                <span id="focus-turn-timer" class="battle-focus-clock">Turno --</span>
+                <span id="focus-match-timer" class="battle-focus-clock is-match">Partida 0:00</span>
+                <strong id="focus-active-label">Sem batalha</strong>
               </div>
               <div class="arena-wrap">
                 <div class="arena" id="arena" data-testid="arena" role="grid" aria-label="Arena 7 por 5"></div>
@@ -513,7 +518,7 @@
   <script src="scripts/menu-missions.js?v=20260522-share-validation-1"></script>
   <script src="scripts/menu-views.js?v=20260520-agent-features-1"></script>
   <script src="app.js?v=20260524-sfx-3"></script>
-  <script src="battle-render.js?v=20260524-battle-focus-1"></script>
+  <script src="battle-render.js?v=20260524-battle-timer-1"></script>
   <script src="battle-engine.js?v=20260524-sfx-1"></script>
 </body>
 </html>
