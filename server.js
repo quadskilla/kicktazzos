@@ -1103,13 +1103,23 @@ async function createMerreisCheckoutForPlayer(playerId, itemId, clientRequestId)
   }
 }
 
-function redirectToPaymentReturn(res, status, params = {}) {
+function redirectToPaymentReturn(res, status, params = {}, extraHeaders = {}) {
   const url = new URL("/", "http://localhost");
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
   });
   res.writeHead(status, {
+    ...extraHeaders,
     Location: `${url.pathname}${url.search}`,
+    "Cache-Control": "no-store"
+  });
+  res.end();
+}
+
+function redirectToExternalCheckout(res, checkoutUrl, headers = {}) {
+  res.writeHead(303, {
+    ...headers,
+    Location: String(checkoutUrl || ""),
     "Cache-Control": "no-store"
   });
   res.end();
@@ -4055,6 +4065,15 @@ async function readBody(req) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+function parseRequestPayload(req, body) {
+  if (!body) return {};
+  const contentType = String(req.headers["content-type"] || "").toLowerCase();
+  if (contentType.includes("application/x-www-form-urlencoded")) {
+    return Object.fromEntries(new URLSearchParams(body));
+  }
+  return JSON.parse(body);
+}
+
 async function readSave(playerId) {
   if (!isValidPlayerId(playerId)) return null;
   const row = db().prepare("SELECT updated_at, save_json FROM saves WHERE player_id = ?").get(playerId);
@@ -6817,6 +6836,34 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (url.pathname === "/api/shop/checkout") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+
+    try {
+      const body = await readBody(req);
+      const payload = parseRequestPayload(req, body);
+      const checkout = await createMerreisCheckoutForPlayer(playerId, payload.itemId, payload.clientRequestId);
+      if (!checkout.checkoutUrl) {
+        const error = new Error("Mercado Pago nao retornou URL de checkout.");
+        error.status = 502;
+        throw error;
+      }
+      redirectToExternalCheckout(res, checkout.checkoutUrl, headers);
+    } catch (error) {
+      redirectToPaymentReturn(res, 303, {
+        mp_result: "checkout_error",
+        mp_message: safeText(error.message, "Nao foi possivel abrir o checkout.", 180)
+      }, headers);
+    }
+    return;
+  }
+
   if (url.pathname === "/api/shop") {
     if (req.method !== "POST") {
       json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
@@ -6828,7 +6875,7 @@ async function handleApi(req, res, url) {
 
     try {
       const body = await readBody(req);
-      const payload = body ? JSON.parse(body) : {};
+      const payload = parseRequestPayload(req, body);
       const result = await buyShopItemForPlayer(playerId, payload.itemId, payload.clientRequestId);
       json(res, 200, {
         ok: true,

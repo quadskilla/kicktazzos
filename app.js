@@ -34,6 +34,7 @@ const SERVER_MIGRATE_SAVE_ENDPOINT = "/api/save/migrate";
 const SERVER_OPEN_PACK_ENDPOINT = "/api/open-pack";
 const SERVER_STARTER_PACK_ENDPOINT = "/api/starter-pack";
 const SERVER_SHOP_ENDPOINT = "/api/shop";
+const SERVER_SHOP_CHECKOUT_ENDPOINT = "/api/shop/checkout";
 const SERVER_SHOP_CONFIG_ENDPOINT = "/api/shop/config";
 const SERVER_UPGRADE_ENDPOINT = "/api/upgrade";
 const SERVER_CLAIM_MISSION_ENDPOINT = "/api/claim-mission";
@@ -1310,6 +1311,8 @@ function handlePaymentReturnNotice() {
     state.shopMessage = "Pagamento pendente. Os Merreis caem quando o Mercado Pago aprovar.";
   } else if (result === "error") {
     state.shopMessage = "Nao foi possivel validar o pagamento agora. O webhook ainda pode creditar automaticamente.";
+  } else if (result === "checkout_error") {
+    state.shopMessage = params.get("mp_message") || "Nao foi possivel abrir o checkout do Mercado Pago.";
   } else {
     state.shopMessage = "Pagamento nao aprovado. Nenhum Merreis foi creditado.";
   }
@@ -8076,11 +8079,55 @@ function grantTournamentPackFromServer(pulls, serverPack) {
 
 async function buyShopItem(itemId) {
   if (!requireOnlineProfile()) return;
+  const item = SHOP_ITEMS.find((entry) => entry.id === itemId);
+  if (item?.type === "merreis" && state.server.enabled) {
+    await submitMerreisCheckout(itemId);
+    return;
+  }
   if (state.server.enabled) {
     await buyShopItemOnServer(itemId);
     return;
   }
   buyShopItemLocally(itemId);
+}
+
+async function submitMerreisCheckout(itemId) {
+  const item = SHOP_ITEMS.find((entry) => entry.id === itemId && entry.type === "merreis");
+  if (!item) return;
+  if (!state.shopPayments.checked || !state.shopPayments.configured) {
+    state.shopMessage = state.shopPayments.message || "Compra de Merreis indisponivel.";
+    renderShop();
+    return;
+  }
+
+  state.shopPayments.checkoutPending = true;
+  state.shopMessage = "Abrindo checkout seguro do Mercado Pago...";
+  setServerStatus("syncing", "Checkout");
+  renderShop();
+
+  if (state.server.saveTimer) await pushServerSave();
+
+  const clientRequestId = window.crypto?.randomUUID
+    ? window.crypto.randomUUID()
+    : `${Date.now()}-${Math.random()}`;
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = SERVER_SHOP_CHECKOUT_ENDPOINT;
+  form.style.display = "none";
+
+  [
+    ["itemId", item.id],
+    ["clientRequestId", clientRequestId]
+  ].forEach(([name, value]) => {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = name;
+    input.value = value;
+    form.appendChild(input);
+  });
+
+  document.body.appendChild(form);
+  form.submit();
 }
 
 function buyShopItemLocally(itemId) {
