@@ -2306,6 +2306,7 @@ function upgradeCost(monsterId) {
 
 function setup() {
   handlePaymentReturnNotice();
+  setupShopCheckoutRecovery();
   setupTabs();
   setupFilters();
   setupActions();
@@ -2322,6 +2323,23 @@ function setup() {
   loadShopPaymentConfig();
   setupServerSave();
   renderAll();
+}
+
+function setupShopCheckoutRecovery() {
+  window.addEventListener("pageshow", () => {
+    if (!state.shopPayments.checkoutPending) return;
+    state.shopPayments.checkoutPending = false;
+    state.shopMessage = "Checkout interrompido. Tente novamente ou use uma conta de comprador diferente da conta vendedora.";
+    setServerStatus("online", state.server.profile ? "Online" : "Salvo");
+    renderShop();
+  });
+}
+
+function mercadoPagoDeviceSessionId() {
+  return String(window.MP_DEVICE_SESSION_ID || window.deviceId || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9:_-]/g, "")
+    .slice(0, 180);
 }
 
 function setupTabs() {
@@ -8117,8 +8135,10 @@ async function submitMerreisCheckout(itemId) {
 
   [
     ["itemId", item.id],
-    ["clientRequestId", clientRequestId]
+    ["clientRequestId", clientRequestId],
+    ["deviceId", mercadoPagoDeviceSessionId()]
   ].forEach(([name, value]) => {
+    if (!value) return;
     const input = document.createElement("input");
     input.type = "hidden";
     input.name = name;

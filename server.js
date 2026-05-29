@@ -891,7 +891,29 @@ async function mercadoPagoRequest(pathname, options = {}) {
   return payload;
 }
 
-async function createMercadoPagoPreference(order) {
+function cleanMercadoPagoDeviceId(value) {
+  return safeText(value, "", 180)
+    .trim()
+    .replace(/[^a-zA-Z0-9:_-]/g, "")
+    .slice(0, 180);
+}
+
+function mercadoPagoPayerFromProfile(profile) {
+  if (!profile) return null;
+  const firebaseAuth = profile.authProviders?.firebase || null;
+  const email = safeText(firebaseAuth?.email || "", "", 160).trim();
+  const nameParts = safeText(profile.name || "", "", 120)
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const payer = {};
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) payer.email = email;
+  if (nameParts[0]) payer.name = nameParts[0].slice(0, 80);
+  if (nameParts.length > 1) payer.surname = nameParts.slice(1).join(" ").slice(0, 80);
+  return Object.keys(payer).length ? payer : null;
+}
+
+async function createMercadoPagoPreference(order, req = null, checkoutOptions = {}) {
   const config = mercadoPagoCheckoutConfig();
   if (!config.configured) {
     const error = new Error(publicMercadoPagoConfig().message);
@@ -899,36 +921,47 @@ async function createMercadoPagoPreference(order) {
     throw error;
   }
   const unitPrice = Number((order.amount_cents / 100).toFixed(2));
+  const profile = await profileForPlayer(order.player_id);
+  const payer = mercadoPagoPayerFromProfile(profile);
+  const deviceId = cleanMercadoPagoDeviceId(checkoutOptions.deviceId || req?.headers?.["x-meli-session-id"]);
+  const preference = {
+    items: [{
+      id: order.item_id,
+      title: `${order.merreis.toLocaleString("pt-BR")} Merreis - Kick Tazzos`,
+      description: `Pacote digital com ${order.merreis.toLocaleString("pt-BR")} Merreis para usar no Kick Tazzos.`,
+      category_id: "games",
+      quantity: 1,
+      currency_id: order.currency,
+      unit_price: unitPrice
+    }],
+    external_reference: order.id,
+    notification_url: `${config.publicBaseUrl}/api/mercadopago/webhook`,
+    back_urls: {
+      success: `${config.publicBaseUrl}/api/mercadopago/return?order_id=${encodeURIComponent(order.id)}&result=success`,
+      pending: `${config.publicBaseUrl}/api/mercadopago/return?order_id=${encodeURIComponent(order.id)}&result=pending`,
+      failure: `${config.publicBaseUrl}/api/mercadopago/return?order_id=${encodeURIComponent(order.id)}&result=failure`
+    },
+    statement_descriptor: "TAZZOSTRIKE",
+    binary_mode: false,
+    auto_return: "approved",
+    metadata: {
+      player_id: order.player_id,
+      player_name: safeText(profile?.name || "", "", 80),
+      item_id: order.item_id,
+      merreis: order.merreis,
+      product_kind: "digital_currency"
+    }
+  };
+  if (payer) preference.payer = payer;
   return mercadoPagoRequest("/checkout/preferences", {
     method: "POST",
     headers: {
-      "X-Idempotency-Key": order.idempotency_key
+      "X-Idempotency-Key": order.idempotency_key,
+      ...(deviceId ? { "X-meli-session-id": deviceId } : {})
     },
-    body: JSON.stringify({
-      items: [{
-        id: order.item_id,
-        title: `${order.merreis.toLocaleString("pt-BR")} Merreis - Kick Tazzos`,
-        quantity: 1,
-        currency_id: order.currency,
-        unit_price: unitPrice
-      }],
-      external_reference: order.id,
-      notification_url: `${config.publicBaseUrl}/api/mercadopago/webhook`,
-      back_urls: {
-        success: `${config.publicBaseUrl}/api/mercadopago/return?order_id=${encodeURIComponent(order.id)}&result=success`,
-        pending: `${config.publicBaseUrl}/api/mercadopago/return?order_id=${encodeURIComponent(order.id)}&result=pending`,
-        failure: `${config.publicBaseUrl}/api/mercadopago/return?order_id=${encodeURIComponent(order.id)}&result=failure`
-      },
-      auto_return: "approved",
-      metadata: {
-        player_id: order.player_id,
-        item_id: order.item_id,
-        merreis: order.merreis
-      }
-    })
+    body: JSON.stringify(preference)
   });
 }
-
 function mercadoPagoPaymentIdFromNotification(url, payload = {}) {
   return normalizePaymentId(
     url.searchParams.get("data.id")
@@ -1068,7 +1101,7 @@ async function validateMercadoPagoPayment(paymentId) {
   return creditApprovedMercadoPagoPayment(payment);
 }
 
-async function createMerreisCheckoutForPlayer(playerId, itemId, clientRequestId) {
+async function createMerreisCheckoutForPlayer(playerId, itemId, clientRequestId, req = null, checkoutOptions = {}) {
   await requireProfileForPlayer(playerId);
   const plan = merreisShopPlan(itemId);
   if (!plan) {
@@ -1091,7 +1124,7 @@ async function createMerreisCheckoutForPlayer(playerId, itemId, clientRequestId)
   if (!order) order = insertPendingPaymentOrder(playerId, plan, idempotencyKey);
 
   try {
-    const preference = await createMercadoPagoPreference(order);
+    const preference = await createMercadoPagoPreference(order, req, checkoutOptions);
     order = updatePaymentOrderPreference(order.id, preference);
     return { order, item: plan.item, checkoutUrl: order.init_point || order.sandbox_init_point };
   } catch (error) {
@@ -5410,7 +5443,7 @@ async function openPackForPlayer(playerId, packId) {
   return { save, pulls, pack };
 }
 
-async function buyShopItemForPlayer(playerId, itemId, clientRequestId = "") {
+async function buyShopItemForPlayer(playerId, itemId, clientRequestId = "", req = null, checkoutOptions = {}) {
   await requireProfileForPlayer(playerId);
   const item = SHOP_ITEMS.find((entry) => entry.id === itemId);
   if (!item) {
@@ -5424,7 +5457,7 @@ async function buyShopItemForPlayer(playerId, itemId, clientRequestId = "") {
   save.cosmetics = save.cosmetics || {};
 
   if (item.type === "merreis") {
-    const checkout = await createMerreisCheckoutForPlayer(playerId, item.id, clientRequestId);
+    const checkout = await createMerreisCheckoutForPlayer(playerId, item.id, clientRequestId, req, checkoutOptions);
     return {
       save,
       item,
@@ -6848,7 +6881,9 @@ async function handleApi(req, res, url) {
     try {
       const body = await readBody(req);
       const payload = parseRequestPayload(req, body);
-      const checkout = await createMerreisCheckoutForPlayer(playerId, payload.itemId, payload.clientRequestId);
+      const checkout = await createMerreisCheckoutForPlayer(playerId, payload.itemId, payload.clientRequestId, req, {
+        deviceId: payload.deviceId
+      });
       if (!checkout.checkoutUrl) {
         const error = new Error("Mercado Pago nao retornou URL de checkout.");
         error.status = 502;
@@ -6876,7 +6911,9 @@ async function handleApi(req, res, url) {
     try {
       const body = await readBody(req);
       const payload = parseRequestPayload(req, body);
-      const result = await buyShopItemForPlayer(playerId, payload.itemId, payload.clientRequestId);
+      const result = await buyShopItemForPlayer(playerId, payload.itemId, payload.clientRequestId, req, {
+        deviceId: payload.deviceId
+      });
       json(res, 200, {
         ok: true,
         playerId,
