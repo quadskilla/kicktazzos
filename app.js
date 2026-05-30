@@ -40,6 +40,7 @@ const SERVER_SHOP_CHECKOUT_ENDPOINT = "/api/shop/checkout";
 const SERVER_SHOP_CONFIG_ENDPOINT = "/api/shop/config";
 const SERVER_UPGRADE_ENDPOINT = "/api/upgrade";
 const SERVER_CLAIM_MISSION_ENDPOINT = "/api/claim-mission";
+const SERVER_TUTORIAL_REWARD_ENDPOINT = "/api/tutorial-reward";
 const SERVER_SHARE_LINK_ENDPOINT = "/api/share-link";
 const SERVER_SHARE_VISIT_ENDPOINT = "/api/share-visit";
 const SERVER_SHARE_REWARD_ENDPOINT = "/api/share-reward";
@@ -271,6 +272,7 @@ const state = {
   },
   tutorialResult: null,
   missionClaimPending: false,
+  tutorialRewardPending: false,
   shareRewardPending: "",
   shareRewardMessage: "",
   incomingShareHandled: false,
@@ -2156,6 +2158,7 @@ function resetAccountScopedState() {
   state.packReveal = [];
   state.tutorialResult = null;
   state.missionClaimPending = false;
+  state.tutorialRewardPending = false;
   state.rewardCelebration = null;
   state.tradeLog = [];
   state.competitiveLog = [];
@@ -6970,6 +6973,10 @@ function renderTutorial() {
   const done = completedTutorialCount();
   const complete = done === TUTORIAL_STEPS.length;
   const rewardReady = complete && !state.save.tutorialRewardClaimed;
+  const rewardDisabled = !rewardReady || state.tutorialRewardPending;
+  const rewardLabel = state.tutorialRewardPending
+    ? "Resgatando..."
+    : state.save.tutorialRewardClaimed ? "Recompensa resgatada" : "Resgatar tutorial";
   document.getElementById("tutorial-panel").innerHTML = `
     <div class="panel-heading">
       <div>
@@ -6986,7 +6993,7 @@ function renderTutorial() {
         ${complete ? "" : tutorialStepDetails(current)}
       </div>
       ${complete
-        ? `<button type="button" data-tutorial-reward="true" ${rewardReady ? "" : "disabled"}>${state.save.tutorialRewardClaimed ? "Recompensa resgatada" : "Resgatar tutorial"}</button>`
+        ? `<button type="button" data-tutorial-reward="true" ${rewardDisabled ? "disabled" : ""}>${rewardLabel}</button>`
         : `<button type="button" data-tutorial-action="${current.id}">${current.action || "Continuar"}</button>`}
     </div>
     <div class="tutorial-grid">
@@ -7007,6 +7014,11 @@ function renderTutorialCoach() {
   const done = completedTutorialCount();
   const complete = done === TUTORIAL_STEPS.length;
   const percent = Math.round((done / TUTORIAL_STEPS.length) * 100);
+  const rewardReady = complete && !state.save.tutorialRewardClaimed;
+  const rewardDisabled = !rewardReady || state.tutorialRewardPending;
+  const rewardLabel = state.tutorialRewardPending
+    ? "Resgatando..."
+    : state.save.tutorialRewardClaimed ? "Recompensa resgatada" : "Resgatar";
   coach.classList.toggle("is-complete", complete);
   coach.innerHTML = `
     <div class="tutorial-coach-copy">
@@ -7019,7 +7031,7 @@ function renderTutorialCoach() {
       <span style="width:${percent}%"></span>
     </div>
     ${complete
-      ? `<button type="button" data-tutorial-reward="true" ${!state.save.tutorialRewardClaimed ? "" : "disabled"}>${state.save.tutorialRewardClaimed ? "Recompensa resgatada" : "Resgatar"}</button>`
+      ? `<button type="button" data-tutorial-reward="true" ${rewardDisabled ? "disabled" : ""}>${rewardLabel}</button>`
       : `<button type="button" data-tutorial-action="${current.id}">${current.action || "Continuar"}</button>`}
   `;
 }
@@ -8713,20 +8725,25 @@ function progressTutorial(id) {
   queueTutorialResult(id);
 }
 
-function claimTutorialReward() {
+async function claimTutorialReward() {
   if (!requireOnlineProfile()) return;
+  if (state.tutorialRewardPending) return;
   const complete = TUTORIAL_STEPS.every((step) => state.save.tutorial[step.id]);
   if (!complete || state.save.tutorialRewardClaimed) return;
-  state.save.tutorialRewardClaimed = true;
-  state.save.merreis += 500;
-  state.save.fragments += 25;
-  saveGame();
+  state.tutorialRewardPending = true;
   renderAll();
-  showRewardCelebration({
-    title: "Tutorial concluido",
-    message: "Recompensa de boas-vindas resgatada.",
-    rewards: ["500 Merreis", "25 fragmentos"]
-  });
+  try {
+    const payload = await postServerMutation(SERVER_TUTORIAL_REWARD_ENDPOINT, {}, "Resgatando");
+    const reward = payload.reward || { merreis: 500, fragments: 25 };
+    showRewardCelebration({
+      title: "Tutorial concluido",
+      message: "Recompensa de boas-vindas resgatada.",
+      rewards: [`${formatNumber(reward.merreis || 500)} Merreis`, `${formatNumber(reward.fragments || 25)} fragmentos`]
+    });
+  } finally {
+    state.tutorialRewardPending = false;
+    renderAll();
+  }
 }
 
 function resetSave() {
@@ -8737,6 +8754,7 @@ function resetSave() {
   state.pendingTournament = null;
   state.pendingRanked = null;
   state.tutorialResult = null;
+  state.tutorialRewardPending = false;
   clearRewardCelebrationTimers();
   state.rewardCelebration = null;
   clearPackOpeningTimers();

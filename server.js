@@ -5602,6 +5602,33 @@ async function claimMissionForPlayer(playerId, missionId) {
   return { save, mission };
 }
 
+async function claimTutorialRewardForPlayer(playerId) {
+  await requireProfileForPlayer(playerId);
+  const record = await readOrCreateSave(playerId);
+  const save = normalizeServerSave(record.save);
+  const complete = TUTORIAL_STEPS.every((step) => save.tutorial?.[step.id]);
+  if (!complete) {
+    const error = new Error("Tutorial ainda incompleto.");
+    error.status = 400;
+    error.save = save;
+    throw error;
+  }
+  const reward = { merreis: 500, fragments: 25 };
+  if (save.tutorialRewardClaimed) {
+    return { save, reward, alreadyClaimed: true };
+  }
+
+  save.tutorialRewardClaimed = true;
+  save.merreis += reward.merreis;
+  save.fragments += reward.fragments;
+  await writeSave(playerId, save);
+  recordAccountEvent(playerId, "tutorial:reward:claim", {
+    reward,
+    balances: accountEventBalance(save)
+  });
+  return { save, reward, alreadyClaimed: false };
+}
+
 function socialShareRewardById(networkId) {
   return SOCIAL_SHARE_REWARDS.find((item) => item.id === networkId) || null;
 }
@@ -7004,6 +7031,35 @@ async function handleApi(req, res, url) {
       json(res, error.status || 500, {
         ok: false,
         error: error.message || "Erro ao resgatar missao.",
+        save: error.save || null
+      }, headers);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/tutorial-reward") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+
+    try {
+      await readBody(req);
+      const result = await claimTutorialRewardForPlayer(playerId);
+      json(res, 200, {
+        ok: true,
+        playerId,
+        reward: result.reward,
+        alreadyClaimed: Boolean(result.alreadyClaimed),
+        save: result.save
+      }, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao resgatar tutorial.",
         save: error.save || null
       }, headers);
     }
