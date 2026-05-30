@@ -3148,10 +3148,6 @@ button.image-button:focus-visible {
   transform: none;
 }
 
-.snack-pack.has-image.is-tearing .snack-rain span {
-  animation-delay: calc(520ms + var(--delay));
-}
-
 .pack-opening-progress {
   width: min(260px, 100%);
   height: 8px;
@@ -3230,40 +3226,6 @@ button.image-button:focus-visible {
   border-radius: 6px;
   box-shadow: 0 4px 0 rgba(28, 36, 48, 0.1), 0 10px 18px rgba(28, 36, 48, 0.08);
   font-weight: 900;
-}
-
-.snack-rain {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
-
-.snack-rain span {
-  position: absolute;
-  top: 24px;
-  left: calc(12% + (var(--delay) / 7ms));
-  width: 18px;
-  height: 28px;
-  background: #ffd166;
-  border: 2px solid rgba(28, 36, 48, 0.18);
-  border-radius: 9px 9px 12px 12px;
-  box-shadow: 0 5px 10px rgba(28, 36, 48, 0.18);
-  transform: rotate(calc(var(--delay) / 10ms * 1deg));
-  animation: snack-fall 900ms ease-out both;
-  animation-delay: var(--delay);
-}
-
-@keyframes snack-fall {
-  from {
-    opacity: 0;
-    transform: translateY(-30px) rotate(-18deg);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(150px) rotate(22deg);
-  }
 }
 
 @keyframes pack-overlay-in {
@@ -5737,6 +5699,23 @@ button.image-button:focus-visible {
   border-color: rgba(15, 125, 121, 0.28);
   box-shadow: 0 12px 28px rgba(15, 125, 121, 0.12);
   overflow: hidden;
+}
+
+.shop-card.is-starter-bundle {
+  background:
+    radial-gradient(circle at 16% 10%, rgba(240, 180, 41, 0.34), transparent 36%),
+    radial-gradient(circle at 86% 4%, rgba(56, 189, 248, 0.24), transparent 32%),
+    linear-gradient(180deg, rgba(255, 252, 229, 0.94), rgba(232, 255, 247, 0.94)),
+    var(--recess-panel) center / cover no-repeat;
+  border-color: rgba(240, 180, 41, 0.56);
+  box-shadow: 0 18px 38px rgba(12, 58, 77, 0.16);
+}
+
+.shop-card.is-starter-bundle .shop-merreis-art {
+  aspect-ratio: 1 / 0.86;
+  background:
+    radial-gradient(circle at 50% 30%, rgba(240, 180, 41, 0.34), transparent 44%),
+    linear-gradient(135deg, rgba(12, 58, 77, 0.94), rgba(9, 31, 48, 0.88));
 }
 
 .shop-merreis-art {

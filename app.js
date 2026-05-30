@@ -407,6 +407,7 @@ function defaultSave() {
     cosmetics: {},
     equippedCosmetics: {},
     selectedCosmetic: null,
+    oneTimePurchases: {},
     friendGifts: {},
     shareValidations: {},
     shareRewards: {},
@@ -526,6 +527,16 @@ function sanitizeShareValidations(validations = {}) {
   );
 }
 
+function sanitizeOneTimePurchases(purchases = {}) {
+  if (!purchases || typeof purchases !== "object" || Array.isArray(purchases)) return {};
+  const oneTimeIds = new Set(SHOP_ITEMS.filter((item) => item.oneTime).map((item) => item.id));
+  return Object.fromEntries(
+    Object.entries(purchases)
+      .filter(([id, purchasedAt]) => oneTimeIds.has(id) && purchasedAt)
+      .map(([id, purchasedAt]) => [id, String(purchasedAt).slice(0, 64)])
+  );
+}
+
 function equipCosmetic(itemId) {
   const item = cosmeticItem(itemId);
   if (!item || item.type === "merreis" || !state.save.cosmetics?.[item.id]) return false;
@@ -621,6 +632,7 @@ function normalizeSave(rawSave) {
       cosmetics,
       equippedCosmetics,
       selectedCosmetic: Object.values(equippedCosmetics)[0] || (cosmetics?.[save.selectedCosmetic] ? save.selectedCosmetic : fresh.selectedCosmetic),
+      oneTimePurchases: sanitizeOneTimePurchases(save.oneTimePurchases || fresh.oneTimePurchases),
       friendGifts: { ...fresh.friendGifts, ...(save.friendGifts || {}) },
       shareValidations: sanitizeShareValidations(save.shareValidations || fresh.shareValidations),
       shareRewards: sanitizeShareRewards(save.shareRewards || fresh.shareRewards),
@@ -1332,10 +1344,20 @@ function handlePaymentReturnNotice() {
   const result = params.get("mp_result");
   if (!result) return;
   const merreis = Math.max(0, Math.floor(Number(params.get("mp_merreis"))) || 0);
+  const fragments = Math.max(0, Math.floor(Number(params.get("mp_fragments"))) || 0);
+  const legendaryCards = Math.max(0, Math.floor(Number(params.get("mp_legendary"))) || 0);
+  const message = params.get("mp_message") || "";
   if (result === "approved") {
-    state.shopMessage = merreis
-      ? `Pagamento aprovado: +${formatNumber(merreis)} Merreis.`
-      : "Pagamento aprovado. Seus Merreis foram creditados.";
+    if (message) {
+      state.shopMessage = message;
+    } else {
+      const rewards = [
+        merreis ? `+${formatNumber(merreis)} Merreis` : "",
+        fragments ? `+${formatNumber(fragments)} fragmentos` : "",
+        legendaryCards ? `${formatNumber(legendaryCards)} lendario(s)` : ""
+      ].filter(Boolean).join(", ");
+      state.shopMessage = rewards ? `Pagamento aprovado: ${rewards}.` : "Pagamento aprovado. Seus itens foram creditados.";
+    }
   } else if (result === "pending") {
     state.shopMessage = "Pagamento pendente. Os Merreis caem quando o Mercado Pago aprovar.";
   } else if (result === "error") {
@@ -1348,6 +1370,9 @@ function handlePaymentReturnNotice() {
   params.delete("mp_result");
   params.delete("mp_order");
   params.delete("mp_merreis");
+  params.delete("mp_fragments");
+  params.delete("mp_legendary");
+  params.delete("mp_item");
   params.delete("mp_payment");
   params.delete("mp_message");
   const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}${window.location.hash}`;
@@ -7294,14 +7319,12 @@ function starterIntroTemplate() {
 
 function starterOpeningTemplate() {
   const pack = starterPack();
-  const snacks = Array.from({ length: 10 }, (_, index) => `<span style="--delay:${index * 70}ms"></span>`).join("");
   return `
     <section class="pack-opening-overlay" role="dialog" aria-modal="true" aria-live="polite">
       <div class="pack-opening is-auto-opening">
         <div class="snack-pack has-image is-tearing" aria-label="Abrindo salgadinho ${pack.name}">
           <img class="snack-pack-art snack-pack-art-closed" src="${pack.image}" alt="Pacote ${pack.name}">
           <img class="snack-pack-art snack-pack-art-open" src="${pack.openImage || pack.image}" alt="Pacote ${pack.name} aberto">
-          <div class="snack-rain" aria-hidden="true">${snacks}</div>
         </div>
         <div class="opening-copy">
           <span class="eyebrow">Primeiro salgadinho</span>
@@ -7521,9 +7544,6 @@ async function openPack(packId) {
 function openPackLocally(pack) {
   state.save.merreis -= pack.cost;
   const pulls = drawPackPulls(pack);
-  if (pack.id === "familia") {
-    state.save.fragments += 8;
-  }
 
   state.packReveal = pulls;
   state.packOpening = {

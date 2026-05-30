@@ -193,7 +193,6 @@
     const pack = ctx.PACKS.find((item) => item.id === opening.packId);
     const packImage = pack?.image || "assets/pack-simples.png";
     const packOpenImage = pack?.openImage || packImage;
-    const snacks = Array.from({ length: Math.min(10, pack?.cards ? pack.cards + 4 : 7) }, (_, index) => `<span style="--delay:${index * 70}ms"></span>`).join("");
 
     return `
       <section class="pack-opening-overlay" role="dialog" aria-modal="true" aria-live="polite">
@@ -201,7 +200,6 @@
           <div class="snack-pack has-image is-tearing" aria-label="Abrindo pacotinho ${opening.packName}">
             <img class="snack-pack-art snack-pack-art-closed" src="${packImage}" alt="Pacote ${opening.packName}">
             <img class="snack-pack-art snack-pack-art-open" src="${packOpenImage}" alt="Pacote ${opening.packName} aberto">
-            <div class="snack-rain" aria-hidden="true">${snacks}</div>
           </div>
           <div class="opening-copy">
             <span class="eyebrow">Pacotinho comprado</span>

@@ -746,10 +746,42 @@ function merreisShopPlan(itemId) {
   const item = SHOP_ITEMS.find((entry) => entry.id === itemId && entry.type === "merreis");
   if (!item) return null;
   const merreis = Math.max(0, Math.floor(Number(item.merreis)) || 0);
+  const fragments = Math.max(0, Math.floor(Number(item.fragments)) || 0);
+  const legendaryCards = Math.max(0, Math.floor(Number(item.legendaryCards)) || 0);
   const amountCents = Math.max(0, Math.floor(Number(item.priceCents)) || 0);
   const currency = String(item.currency || "BRL").toUpperCase();
-  if (!merreis || !amountCents || currency !== "BRL") return null;
-  return { item, merreis, amountCents, currency };
+  if ((!merreis && !fragments && !legendaryCards) || !amountCents || currency !== "BRL") return null;
+  return {
+    item,
+    merreis,
+    fragments,
+    legendaryCards,
+    amountCents,
+    currency,
+    oneTime: Boolean(item.oneTime)
+  };
+}
+
+function shopPlanRewards(planOrItem = {}) {
+  const item = planOrItem.item || planOrItem;
+  return {
+    merreis: Math.max(0, Math.floor(Number(planOrItem.merreis ?? item.merreis)) || 0),
+    fragments: Math.max(0, Math.floor(Number(planOrItem.fragments ?? item.fragments)) || 0),
+    legendaryCards: Math.max(0, Math.floor(Number(planOrItem.legendaryCards ?? item.legendaryCards)) || 0),
+    oneTime: Boolean(planOrItem.oneTime ?? item.oneTime)
+  };
+}
+
+function shopOrderRewards(order) {
+  const item = SHOP_ITEMS.find((entry) => entry.id === order?.item_id) || {};
+  const dataRewards = paymentOrderData(order).rewards || {};
+  return shopPlanRewards({
+    item,
+    merreis: order?.merreis ?? dataRewards.merreis,
+    fragments: dataRewards.fragments ?? item.fragments,
+    legendaryCards: dataRewards.legendaryCards ?? item.legendaryCards,
+    oneTime: dataRewards.oneTime ?? item.oneTime
+  });
 }
 
 function paymentOrderData(row) {
@@ -763,6 +795,9 @@ function publicPaymentOrder(row) {
     itemId: row.item_id,
     itemName: row.item_name,
     merreis: row.merreis,
+    fragments: shopOrderRewards(row).fragments,
+    legendaryCards: shopOrderRewards(row).legendaryCards,
+    oneTime: shopOrderRewards(row).oneTime,
     amountCents: row.amount_cents,
     currency: row.currency,
     status: row.status,
@@ -791,6 +826,28 @@ function paymentOrderById(orderId) {
 
 function paymentOrderByIdempotencyKey(idempotencyKey) {
   return db().prepare("SELECT * FROM payment_orders WHERE idempotency_key = ?").get(String(idempotencyKey || ""));
+}
+
+function creditedPaymentOrderForItem(playerId, itemId) {
+  return db().prepare(`
+    SELECT * FROM payment_orders
+    WHERE player_id = ? AND item_id = ? AND status = 'credited'
+    ORDER BY credited_at DESC, created_at DESC
+    LIMIT 1
+  `).get(playerId, itemId);
+}
+
+function reusableOneTimePaymentOrder(playerId, itemId) {
+  return db().prepare(`
+    SELECT * FROM payment_orders
+    WHERE player_id = ? AND item_id = ? AND status IN ('pending', 'preference_failed')
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).get(playerId, itemId);
+}
+
+function oneTimeShopItemClaimed(playerId, itemId, save = null) {
+  return Boolean(save?.oneTimePurchases?.[itemId] || creditedPaymentOrderForItem(playerId, itemId));
 }
 
 function insertPendingPaymentOrder(playerId, plan, idempotencyKey) {
@@ -826,7 +883,7 @@ function insertPendingPaymentOrder(playerId, plan, idempotencyKey) {
     order.idempotencyKey,
     order.createdAt,
     order.updatedAt,
-    JSON.stringify({})
+    JSON.stringify({ rewards: shopPlanRewards(plan) })
   );
   return paymentOrderById(order.id);
 }
@@ -924,11 +981,18 @@ async function createMercadoPagoPreference(order, req = null, checkoutOptions = 
   const profile = await profileForPlayer(order.player_id);
   const payer = mercadoPagoPayerFromProfile(profile);
   const deviceId = cleanMercadoPagoDeviceId(checkoutOptions.deviceId || req?.headers?.["x-meli-session-id"]);
+  const item = SHOP_ITEMS.find((entry) => entry.id === order.item_id) || {};
+  const rewards = shopOrderRewards(order);
+  const rewardText = [
+    rewards.merreis ? `${rewards.merreis.toLocaleString("pt-BR")} Merreis` : "",
+    rewards.fragments ? `${rewards.fragments.toLocaleString("pt-BR")} fragmentos` : "",
+    rewards.legendaryCards ? `${rewards.legendaryCards.toLocaleString("pt-BR")} tazzos lendarios` : ""
+  ].filter(Boolean).join(", ");
   const preference = {
     items: [{
       id: order.item_id,
-      title: `${order.merreis.toLocaleString("pt-BR")} Merreis - Kick Tazzos`,
-      description: `Pacote digital com ${order.merreis.toLocaleString("pt-BR")} Merreis para usar no Kick Tazzos.`,
+      title: `${order.item_name} - Kick Tazzos`,
+      description: item.note || `Pacote digital com ${rewardText} para usar no Kick Tazzos.`,
       category_id: "games",
       quantity: 1,
       currency_id: order.currency,
@@ -948,8 +1012,10 @@ async function createMercadoPagoPreference(order, req = null, checkoutOptions = 
       player_id: order.player_id,
       player_name: safeText(profile?.name || "", "", 80),
       item_id: order.item_id,
-      merreis: order.merreis,
-      product_kind: "digital_currency"
+      merreis: rewards.merreis,
+      fragments: rewards.fragments,
+      legendary_cards: rewards.legendaryCards,
+      product_kind: rewards.legendaryCards || rewards.fragments ? "digital_bundle" : "digital_currency"
     }
   };
   if (payer) preference.payer = payer;
@@ -1010,6 +1076,38 @@ function paymentAmountMatchesOrder(payment, order) {
   return paidCents === Number(order.amount_cents) && String(payment.currency_id || "BRL").toUpperCase() === order.currency;
 }
 
+function drawLegendaryRewardPulls(save, count) {
+  const safeCount = Math.max(0, Math.floor(Number(count)) || 0);
+  const legendaryPool = MONSTERS.filter((monster) => monster.rarity === "Lendario");
+  const pulls = [];
+  const usedThisReward = new Set();
+  for (let index = 0; index < safeCount; index += 1) {
+    const freshPool = legendaryPool.filter((monster) => !usedThisReward.has(monster.id));
+    const pool = freshPool.length ? freshPool : legendaryPool;
+    const monster = randomItem(pool);
+    if (!monster) break;
+    usedThisReward.add(monster.id);
+    const previousCopies = Math.max(0, Math.floor(Number(save.collection[monster.id])) || 0);
+    save.collection[monster.id] = previousCopies + 1;
+    save.packPity = { sinceLegendaryPlus: 0 };
+    pulls.push({ monsterId: monster.id, isNew: previousCopies <= 0, fragments: 0, revealed: true });
+  }
+  return pulls;
+}
+
+function applyPaidShopRewards(save, order, rewards = shopOrderRewards(order)) {
+  save.merreis += rewards.merreis;
+  save.fragments += rewards.fragments;
+  const pulls = drawLegendaryRewardPulls(save, rewards.legendaryCards);
+  let purchasedAt = "";
+  if (rewards.oneTime) {
+    purchasedAt = new Date().toISOString();
+    save.oneTimePurchases = sanitizeServerOneTimePurchases(save.oneTimePurchases);
+    save.oneTimePurchases[order.item_id] = purchasedAt;
+  }
+  return { rewards, pulls, purchasedAt };
+}
+
 async function creditApprovedMercadoPagoPayment(payment) {
   const orderId = String(payment.external_reference || "").trim();
   const paymentId = normalizePaymentId(payment.id);
@@ -1059,7 +1157,24 @@ async function creditApprovedMercadoPagoPayment(payment) {
 
     const saveRow = database.prepare("SELECT save_json FROM saves WHERE player_id = ?").get(order.player_id);
     const save = normalizeServerSave(saveRow ? jsonFromDb(saveRow.save_json, {}) : defaultServerSave());
-    save.merreis += Number(order.merreis) || 0;
+    const rewards = shopOrderRewards(order);
+    if (rewards.oneTime && save.oneTimePurchases?.[order.item_id]) {
+      const now = new Date().toISOString();
+      database.prepare(`
+        UPDATE payment_orders
+        SET status = 'duplicate_paid', payment_id = ?, mp_status = ?, updated_at = ?, data_json = ?
+        WHERE id = ?
+      `).run(
+        paymentId,
+        String(payment.status || ""),
+        now,
+        JSON.stringify({ ...paymentOrderData(order), duplicatePaidAt: now, lastPayment: { id: paymentId, status: payment.status, statusDetail: payment.status_detail || "" } }),
+        order.id
+      );
+      const duplicateOrder = database.prepare("SELECT * FROM payment_orders WHERE id = ?").get(order.id);
+      return { credited: false, alreadyClaimed: true, order: duplicateOrder, save };
+    }
+    const rewardResult = applyPaidShopRewards(save, order, rewards);
     const updatedAt = new Date().toISOString();
     const normalizedSave = normalizeServerSave(save);
     database.prepare(`
@@ -1075,7 +1190,13 @@ async function creditApprovedMercadoPagoPayment(payment) {
       String(payment.status || ""),
       updatedAt,
       updatedAt,
-      JSON.stringify({ ...paymentOrderData(order), lastPayment: { id: paymentId, status: payment.status, statusDetail: payment.status_detail || "" } }),
+      JSON.stringify({
+        ...paymentOrderData(order),
+        creditedRewards: rewardResult.rewards,
+        creditedPulls: accountEventPulls(rewardResult.pulls),
+        oneTimePurchasedAt: rewardResult.purchasedAt || "",
+        lastPayment: { id: paymentId, status: payment.status, statusDetail: payment.status_detail || "" }
+      }),
       order.id
     );
     const updatedOrder = database.prepare("SELECT * FROM payment_orders WHERE id = ?").get(order.id);
@@ -1083,7 +1204,11 @@ async function creditApprovedMercadoPagoPayment(payment) {
       item: { id: order.item_id, name: order.item_name },
       orderId: order.id,
       paymentId,
-      merreis: order.merreis,
+      rewards: rewardResult.rewards,
+      pulls: accountEventPulls(rewardResult.pulls),
+      merreis: rewardResult.rewards.merreis,
+      fragments: rewardResult.rewards.fragments,
+      legendaryCards: rewardResult.rewards.legendaryCards,
       amountCents: order.amount_cents,
       balances: accountEventBalance(normalizedSave)
     };
@@ -1116,8 +1241,20 @@ async function createMerreisCheckoutForPlayer(playerId, itemId, clientRequestId,
     throw error;
   }
 
+  if (plan.oneTime) {
+    const record = await readOrCreateSave(playerId);
+    const save = normalizeServerSave(record.save);
+    if (oneTimeShopItemClaimed(playerId, plan.item.id, save)) {
+      const error = new Error("Pacote unico ja comprado nesta conta.");
+      error.status = 409;
+      error.save = save;
+      throw error;
+    }
+  }
+
   const idempotencyKey = normalizeCheckoutIdempotencyKey(playerId, plan.item.id, clientRequestId);
   let order = paymentOrderByIdempotencyKey(idempotencyKey);
+  if (!order && plan.oneTime) order = reusableOneTimePaymentOrder(playerId, plan.item.id);
   if (order?.init_point || order?.sandbox_init_point) {
     return { order, item: plan.item, checkoutUrl: order.init_point || order.sandbox_init_point };
   }
@@ -4330,6 +4467,7 @@ function defaultServerSave() {
     cosmetics: {},
     equippedCosmetics: {},
     selectedCosmetic: null,
+    oneTimePurchases: {},
     friendGifts: {},
     shareValidations: {},
     shareRewards: {},
@@ -4508,6 +4646,16 @@ function sanitizeServerShareValidations(validations = {}) {
   );
 }
 
+function sanitizeServerOneTimePurchases(purchases = {}) {
+  if (!purchases || typeof purchases !== "object" || Array.isArray(purchases)) return {};
+  const validIds = new Set(SHOP_ITEMS.filter((item) => item.oneTime).map((item) => item.id));
+  return Object.fromEntries(
+    Object.entries(purchases)
+      .map(([id, purchasedAt]) => [id, safeText(purchasedAt, "", 64)])
+      .filter(([id, purchasedAt]) => validIds.has(id) && purchasedAt)
+  );
+}
+
 function equipServerCosmetic(save, itemId) {
   const item = shopItemById(itemId);
   if (!item || item.type === "merreis" || !save.cosmetics?.[item.id]) return false;
@@ -4578,6 +4726,7 @@ function normalizeServerSave(rawSave = {}) {
     cosmetics,
     equippedCosmetics,
     selectedCosmetic: Object.values(equippedCosmetics)[0] || (cosmetics?.[save.selectedCosmetic] ? save.selectedCosmetic : fresh.selectedCosmetic),
+    oneTimePurchases: sanitizeServerOneTimePurchases(save.oneTimePurchases || fresh.oneTimePurchases),
     friendGifts: save.friendGifts && typeof save.friendGifts === "object" ? save.friendGifts : fresh.friendGifts,
     shareValidations: sanitizeServerShareValidations(save.shareValidations || fresh.shareValidations),
     shareRewards: sanitizeServerShareRewards(save.shareRewards || fresh.shareRewards),
@@ -4621,6 +4770,7 @@ function economicSaveFingerprint(save) {
     onlineDraws: normalized.onlineDraws,
     activeCompetitive: normalized.activeCompetitive,
     cosmetics: normalized.cosmetics,
+    oneTimePurchases: normalized.oneTimePurchases,
     friendGifts: normalized.friendGifts,
     shareValidations: normalized.shareValidations,
     shareRewards: normalized.shareRewards,
@@ -4657,6 +4807,7 @@ const PROTECTED_SAVE_FIELDS = [
   "onlineDraws",
   "activeCompetitive",
   "cosmetics",
+  "oneTimePurchases",
   "friendGifts",
   "shareValidations",
   "shareRewards",
@@ -5443,7 +5594,6 @@ async function openPackForPlayer(playerId, packId) {
 
   save.merreis -= pack.cost;
   const pulls = drawPackPulls(save, pack);
-  if (pack.id === "familia") save.fragments += 8;
   progressServerMission(save, "pack", 1);
   await writeSave(playerId, save);
   recordAccountEvent(playerId, "pack:open", {
@@ -6233,6 +6383,7 @@ async function handleApi(req, res, url) {
         ok: true,
         credited: Boolean(result.credited),
         alreadyCredited: Boolean(result.alreadyCredited),
+        alreadyClaimed: Boolean(result.alreadyClaimed),
         order: publicPaymentOrder(result.order)
       }, headers);
     } catch (error) {
@@ -6269,11 +6420,22 @@ async function handleApi(req, res, url) {
     try {
       const result = await validateMercadoPagoPayment(paymentId);
       const order = result.order || paymentOrderById(orderId);
+      const rewards = order ? shopOrderRewards(order) : { merreis: 0, fragments: 0, legendaryCards: 0 };
+      const approved = Boolean(result.credited || result.alreadyCredited);
+      const rewardText = [
+        rewards.merreis ? `+${rewards.merreis.toLocaleString("pt-BR")} Merreis` : "",
+        rewards.fragments ? `+${rewards.fragments.toLocaleString("pt-BR")} fragmentos` : "",
+        rewards.legendaryCards ? `${rewards.legendaryCards.toLocaleString("pt-BR")} lendario(s)` : ""
+      ].filter(Boolean).join(", ");
       redirectToPaymentReturn(res, 303, {
-        mp_result: result.credited || result.alreadyCredited ? "approved" : (order?.status || "pending"),
+        mp_result: approved ? "approved" : (order?.status || "pending"),
         mp_order: order?.id || orderId,
-        mp_merreis: order?.merreis || "",
-        mp_payment: paymentId
+        mp_item: order?.item_id || "",
+        mp_merreis: rewards.merreis || "",
+        mp_fragments: rewards.fragments || "",
+        mp_legendary: rewards.legendaryCards || "",
+        mp_payment: paymentId,
+        mp_message: approved && rewardText ? `Pagamento aprovado: ${rewardText}.` : ""
       });
     } catch (error) {
       redirectToPaymentReturn(res, 303, {
