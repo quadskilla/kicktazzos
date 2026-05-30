@@ -6890,9 +6890,9 @@ async function handleApi(req, res, url) {
       });
       return;
     }
-    json(res, 200, {
-      ok: true,
-      merreisCoin: publicMerreisCoinConfig()
+    json(res, 410, {
+      ok: false,
+      error: "Recurso indisponivel."
     }, headers);
     return;
   }

@@ -32,39 +32,6 @@
     `;
   }
 
-  function renderCryptoPanel(ctx) {
-    const crypto = ctx.state.crypto || {};
-    const token = crypto.token || {};
-    const network = crypto.network || {};
-    const address = token.contractAddress || "";
-    const explorerBase = network.explorerUrl ? String(network.explorerUrl).replace(/\/+$/, "") : "";
-    const explorerLink = crypto.enabled && explorerBase && address
-      ? `${explorerBase}/address/${address}`
-      : "";
-    const status = !crypto.checked
-      ? "Checando..."
-      : crypto.enabled
-      ? "Sandbox ativo"
-      : "Sandbox desligado";
-    const addressText = address ? `${address.slice(0, 6)}...${address.slice(-4)}` : "Sem contrato";
-    return `
-      <article class="shop-card crypto-testnet-card${crypto.enabled ? " is-active" : ""}">
-        <span class="eyebrow">MerreisCoin</span>
-        <h2>MER testnet</h2>
-        <p>${escapeHtml(crypto.message || "Moeda crypto experimental dos Merreis, ainda sem valor real.")}</p>
-        <div class="pack-meta">
-          <span class="chip">${escapeHtml(status)}</span>
-          <span class="rarity-chip">${escapeHtml(network.name || "testnet")} ${network.chainId ? `#${escapeHtml(network.chainId)}` : ""}</span>
-        </div>
-        <div class="crypto-contract-line">
-          <span>Contrato</span>
-          <strong>${escapeHtml(addressText)}</strong>
-        </div>
-        ${explorerLink ? `<a class="crypto-link-button" href="${escapeHtml(explorerLink)}" target="_blank" rel="noreferrer">Ver no explorer</a>` : `<button type="button" disabled>Contrato pendente</button>`}
-      </article>
-    `;
-  }
-
   function renderShop(ctx) {
     const payments = ctx.state.shopPayments || {};
     const paymentNotice = payments.checked && !payments.configured ? payments.message : "";
@@ -78,9 +45,8 @@
       promoSlot.innerHTML = promoHtml;
       promoSlot.hidden = !promoHtml;
     }
-    const cryptoPanel = renderCryptoPanel(ctx);
     const gridItems = ctx.SHOP_ITEMS.filter((item) => !item.featured);
-    document.getElementById("shop-grid").innerHTML = cryptoPanel + gridItems.map((item) => {
+    document.getElementById("shop-grid").innerHTML = gridItems.map((item) => {
       const merreisPack = item.type === "merreis";
       const cosmeticSlot = item.cosmeticSlot || "profile";
       const oneTimePurchased = merreisPack && item.oneTime && Boolean(ctx.state.save.oneTimePurchases?.[item.id]);

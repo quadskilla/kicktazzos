@@ -38,7 +38,6 @@ const SERVER_STARTER_PACK_ENDPOINT = "/api/starter-pack";
 const SERVER_SHOP_ENDPOINT = "/api/shop";
 const SERVER_SHOP_CHECKOUT_ENDPOINT = "/api/shop/checkout";
 const SERVER_SHOP_CONFIG_ENDPOINT = "/api/shop/config";
-const SERVER_CRYPTO_CONFIG_ENDPOINT = "/api/crypto/config";
 const SERVER_UPGRADE_ENDPOINT = "/api/upgrade";
 const SERVER_CLAIM_MISSION_ENDPOINT = "/api/claim-mission";
 const SERVER_TUTORIAL_REWARD_ENDPOINT = "/api/tutorial-reward";
@@ -341,14 +340,6 @@ const state = {
     checkoutFallbackTimer: null
   },
   shopRewardReveal: null,
-  crypto: {
-    checked: false,
-    enabled: false,
-    sandbox: true,
-    message: "Checando MerreisCoin testnet...",
-    network: null,
-    token: null
-  },
   battle: null,
   battleSceneOpen: false,
   music: { audio: null, isPlaying: false, autoplayArmed: false, collapsed: false },
@@ -1520,47 +1511,6 @@ async function loadShopPaymentConfig() {
   renderShop();
 }
 
-async function loadCryptoConfig() {
-  if (!canUseServerSave()) {
-    state.crypto = {
-      checked: true,
-      enabled: false,
-      sandbox: true,
-      message: "Abra pelo servidor para ver MerreisCoin testnet.",
-      network: null,
-      token: null
-    };
-    renderShop();
-    return;
-  }
-  try {
-    const response = await fetch(SERVER_CRYPTO_CONFIG_ENDPOINT, {
-      credentials: "same-origin",
-      cache: "no-store"
-    });
-    const payload = await response.json().catch(() => ({}));
-    const merreisCoin = payload.merreisCoin || {};
-    state.crypto = {
-      checked: true,
-      enabled: Boolean(response.ok && merreisCoin.enabled),
-      sandbox: merreisCoin.sandbox !== false,
-      message: merreisCoin.message || "MerreisCoin testnet indisponivel.",
-      network: merreisCoin.network || null,
-      token: merreisCoin.token || null
-    };
-  } catch (error) {
-    state.crypto = {
-      checked: true,
-      enabled: false,
-      sandbox: true,
-      message: "Nao foi possivel checar MerreisCoin testnet.",
-      network: null,
-      token: null
-    };
-  }
-  renderShop();
-}
-
 function hasOnlineProfile() {
   return Boolean(canUseServerSave() && state.server.enabled && state.server.profile);
 }
@@ -2623,7 +2573,6 @@ function setup() {
   setupSocialRealtime();
   setupCompetitiveRealtime();
   loadShopPaymentConfig();
-  loadCryptoConfig();
   setupServerSave();
   renderAll();
 }
