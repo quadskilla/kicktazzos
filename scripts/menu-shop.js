@@ -15,7 +15,17 @@
     const payments = ctx.state.shopPayments || {};
     const paymentNotice = payments.checked && !payments.configured ? payments.message : "";
     document.getElementById("shop-message").textContent = paymentNotice || ctx.state.shopMessage;
-    document.getElementById("shop-grid").innerHTML = ctx.SHOP_ITEMS.map((item) => {
+    const promoSlot = document.getElementById("shop-promo");
+    if (promoSlot) {
+      const promoItem = ctx.shopPromoItem?.();
+      const promoHtml = promoItem && ctx.shopPromoAvailable?.(promoItem) && ctx.shopPromoBanner
+        ? ctx.shopPromoBanner(promoItem, "shop")
+        : "";
+      promoSlot.innerHTML = promoHtml;
+      promoSlot.hidden = !promoHtml;
+    }
+    const gridItems = ctx.SHOP_ITEMS.filter((item) => !item.featured);
+    document.getElementById("shop-grid").innerHTML = gridItems.map((item) => {
       const merreisPack = item.type === "merreis";
       const cosmeticSlot = item.cosmeticSlot || "profile";
       const oneTimePurchased = merreisPack && item.oneTime && Boolean(ctx.state.save.oneTimePurchases?.[item.id]);

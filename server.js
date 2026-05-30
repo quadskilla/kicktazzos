@@ -784,6 +784,17 @@ function shopOrderRewards(order) {
   });
 }
 
+function paymentOrderPullTokens(order) {
+  const pulls = paymentOrderData(order).creditedPulls;
+  return Array.isArray(pulls)
+    ? pulls.map((pull) => {
+      const id = String(pull?.monster?.id || "").trim();
+      if (!MONSTER_BY_ID[id]) return "";
+      return `${id}:${pull.isNew ? "1" : "0"}`;
+    }).filter(Boolean).slice(0, 12)
+    : [];
+}
+
 function paymentOrderData(row) {
   return jsonFromDb(row?.data_json, {});
 }
@@ -6421,6 +6432,7 @@ async function handleApi(req, res, url) {
       const result = await validateMercadoPagoPayment(paymentId);
       const order = result.order || paymentOrderById(orderId);
       const rewards = order ? shopOrderRewards(order) : { merreis: 0, fragments: 0, legendaryCards: 0 };
+      const pullTokens = order ? paymentOrderPullTokens(order) : [];
       const approved = Boolean(result.credited || result.alreadyCredited);
       const rewardText = [
         rewards.merreis ? `+${rewards.merreis.toLocaleString("pt-BR")} Merreis` : "",
@@ -6434,6 +6446,7 @@ async function handleApi(req, res, url) {
         mp_merreis: rewards.merreis || "",
         mp_fragments: rewards.fragments || "",
         mp_legendary: rewards.legendaryCards || "",
+        mp_pulls: pullTokens.join(","),
         mp_payment: paymentId,
         mp_message: approved && rewardText ? `Pagamento aprovado: ${rewardText}.` : ""
       });

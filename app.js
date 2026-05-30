@@ -91,6 +91,7 @@ const COMPETITIVE_STREAK_BONUSES = Object.freeze({
   5: 8
 });
 const STARTER_PACK_ID = "recheado";
+const STARTER_PROMO_ITEM_ID = "starter-bundle";
 const STARTER_FIELD_SLOTS = [
   { label: "Atacante", test: (monster) => monster.types.includes("Atacante") },
   { label: "Meia", test: (monster) => monster.types.includes("Meia") },
@@ -335,6 +336,7 @@ const state = {
     checkoutStartedAt: 0,
     checkoutFallbackTimer: null
   },
+  shopRewardReveal: null,
   battle: null,
   battleSceneOpen: false,
   music: { audio: null, isPlaying: false, autoplayArmed: false, collapsed: false },
@@ -1346,6 +1348,8 @@ function handlePaymentReturnNotice() {
   const merreis = Math.max(0, Math.floor(Number(params.get("mp_merreis"))) || 0);
   const fragments = Math.max(0, Math.floor(Number(params.get("mp_fragments"))) || 0);
   const legendaryCards = Math.max(0, Math.floor(Number(params.get("mp_legendary"))) || 0);
+  const itemId = params.get("mp_item") || "";
+  const pulls = parsePaymentReturnPulls(params.get("mp_pulls"));
   const message = params.get("mp_message") || "";
   if (result === "approved") {
     if (message) {
@@ -1357,6 +1361,18 @@ function handlePaymentReturnNotice() {
         legendaryCards ? `${formatNumber(legendaryCards)} lendario(s)` : ""
       ].filter(Boolean).join(", ");
       state.shopMessage = rewards ? `Pagamento aprovado: ${rewards}.` : "Pagamento aprovado. Seus itens foram creditados.";
+    }
+    if (itemId === STARTER_PROMO_ITEM_ID) {
+      state.save.oneTimePurchases = { ...(state.save.oneTimePurchases || {}), [itemId]: new Date().toISOString() };
+    }
+    if (pulls.length) {
+      state.shopRewardReveal = {
+        itemId,
+        title: itemId === STARTER_PROMO_ITEM_ID ? "Pacote iniciante resgatado!" : "Tazzos recebidos!",
+        message: state.shopMessage,
+        pulls
+      };
+      playSfx("reveal-legendary", { volume: 0.86 });
     }
   } else if (result === "pending") {
     state.shopMessage = "Pagamento pendente. Os Merreis caem quando o Mercado Pago aprovar.";
@@ -1373,10 +1389,29 @@ function handlePaymentReturnNotice() {
   params.delete("mp_fragments");
   params.delete("mp_legendary");
   params.delete("mp_item");
+  params.delete("mp_pulls");
   params.delete("mp_payment");
   params.delete("mp_message");
   const next = `${window.location.pathname}${params.toString() ? `?${params}` : ""}${window.location.hash}`;
   window.history.replaceState({}, "", next);
+}
+
+function parsePaymentReturnPulls(value) {
+  return String(value || "")
+    .split(",")
+    .map((token) => {
+      const [monsterId, isNewToken] = token.split(":");
+      const id = String(monsterId || "").trim();
+      if (!MONSTER_BY_ID[id]) return null;
+      return {
+        monsterId: id,
+        isNew: isNewToken !== "0",
+        fragments: 0,
+        revealed: true
+      };
+    })
+    .filter(Boolean)
+    .slice(0, 12);
 }
 
 async function loadShopPaymentConfig() {
@@ -3337,6 +3372,7 @@ function setupFilters() {
 
 function setupActions() {
   document.getElementById("view-home")?.addEventListener("click", (event) => {
+    if (handleShopPurchaseClick(event)) return;
     const button = event.target.closest("button[data-home-jump]");
     if (!button || button.disabled) return;
     switchTab(button.dataset.homeJump);
@@ -3409,11 +3445,9 @@ function setupActions() {
     runTournament(button.dataset.tournament);
   });
 
-  document.getElementById("shop-grid").addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-shop]");
-    if (!button || button.disabled) return;
-    buyShopItem(button.dataset.shop);
-  });
+  document.getElementById("shop-grid").addEventListener("click", handleShopPurchaseClick);
+  document.getElementById("shop-promo")?.addEventListener("click", handleShopPurchaseClick);
+  document.getElementById("shop-reward-reveal")?.addEventListener("click", handleShopRewardRevealClick);
 
   document.getElementById("action-grid").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-action]");
@@ -3431,12 +3465,25 @@ function setupActions() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       if (state.rewardCelebration) hideRewardCelebration();
+      if (state.shopRewardReveal) closeShopRewardReveal();
       closeTazzoViewer();
       const profileModal = document.getElementById("profile-modal");
       if (profileModal && !profileModal.hidden) closeProfileModal();
     }
   });
   setupHolographicArtMotion();
+}
+
+function handleShopPurchaseClick(event) {
+  const button = event.target.closest("button[data-shop]");
+  if (!button || button.disabled) return false;
+  buyShopItem(button.dataset.shop);
+  return true;
+}
+
+function handleShopRewardRevealClick(event) {
+  if (!event.target.closest("[data-close-shop-reward]")) return;
+  closeShopRewardReveal();
 }
 
 function handleOnlineLobbyClick(event) {
@@ -5664,6 +5711,7 @@ function renderAll() {
   renderTutorialCoach();
   renderTutorialPopover();
   renderTutorialResultPopup();
+  renderShopRewardReveal();
   decorateImageButtons();
 }
 
@@ -5893,6 +5941,7 @@ function renderHome() {
   const bannerGrid = document.getElementById("home-banner-grid");
   const summaryGrid = document.getElementById("home-summary-grid");
   if (!bannerGrid || !summaryGrid) return;
+  renderHomePromo();
 
   const collection = homeCollectionProgress();
   const rank = currentRank();
@@ -5951,6 +6000,64 @@ function renderHome() {
     homeSummaryTemplate("Tutorial", `${tutorialDone}/${tutorialTotal}`, state.save.tutorialRewardClaimed ? "Recompensa recebida" : "Recompensa pendente", "missions"),
     homeSummaryTemplate("Carteira", `${formatNumber(state.save.merreis)} Merreis`, `${formatNumber(state.save.fragments)} fragmentos`, "shop")
   ].join("");
+}
+
+function renderHomePromo() {
+  const slot = document.getElementById("home-promo-banner");
+  if (!slot) return;
+  const promoItem = shopPromoItem();
+  const promoHtml = promoItem && shopPromoAvailable(promoItem)
+    ? shopPromoBanner(promoItem, "home")
+    : "";
+  slot.innerHTML = promoHtml;
+  slot.hidden = !promoHtml;
+}
+
+function shopPromoItem() {
+  return SHOP_ITEMS.find((item) => item.id === STARTER_PROMO_ITEM_ID && item.featured) || null;
+}
+
+function shopPromoAvailable(item = shopPromoItem()) {
+  if (!item) return false;
+  if (state.shopRewardReveal?.itemId === item.id) return false;
+  return !Boolean(state.save.oneTimePurchases?.[item.id]);
+}
+
+function shopPromoBanner(item = shopPromoItem(), placement = "shop") {
+  if (!item) return "";
+  const payments = state.shopPayments || {};
+  const purchased = Boolean(state.save.oneTimePurchases?.[item.id]);
+  const paymentUnavailable = item.type === "merreis" && payments.checked && !payments.configured;
+  const disabled = purchased || payments.checkoutPending || paymentUnavailable;
+  const status = purchased ? "Promocao resgatada" : "Compra unica por conta";
+  const actionLabel = purchased
+    ? "Ja comprado"
+    : payments.checkoutPending
+    ? "Abrindo checkout..."
+    : paymentUnavailable
+    ? "Indisponivel"
+    : `Comprar por ${item.priceLabel}`;
+  const rewardText = [
+    item.merreis ? `${formatNumber(item.merreis)} Merreis` : "",
+    item.fragments ? `${formatNumber(item.fragments)} fragmentos` : "",
+    item.legendaryCards ? `${formatNumber(item.legendaryCards)} lendarios` : ""
+  ].filter(Boolean).join(" + ");
+  return `
+    <article class="shop-promo-banner is-${escapeHtmlAttribute(placement)}${disabled ? " is-disabled" : ""}">
+      <button class="shop-promo-button" type="button" data-shop="${escapeHtmlAttribute(item.id)}" ${disabled ? "disabled" : ""}>
+        <img class="shop-promo-image" src="${escapeHtmlAttribute(item.bannerImage || item.image)}" alt="${escapeHtmlAttribute(item.name)}">
+        <span class="shop-promo-info">
+          <span class="eyebrow">${status}</span>
+          <strong>${escapeHtmlAttribute(item.name)}</strong>
+          <small>${escapeHtmlAttribute(rewardText)}</small>
+        </span>
+        <span class="shop-promo-action">
+          <span class="chip">${escapeHtmlAttribute(item.priceLabel)}</span>
+          <span>${escapeHtmlAttribute(actionLabel)}</span>
+        </span>
+      </button>
+    </article>
+  `;
 }
 
 function homeBannerTemplate(card) {
@@ -6052,7 +6159,10 @@ function menuViewContext() {
     shareRewardValidated,
     shareRewardRequested,
     shareGameForReward,
-    tradeValue
+    tradeValue,
+    shopPromoItem,
+    shopPromoAvailable,
+    shopPromoBanner
   };
 }
 
@@ -6074,6 +6184,41 @@ function packResultsRenderKey() {
 
 function renderPullCard(pull, index) {
   return menuViews().renderPullCard(menuViewContext(), pull, index);
+}
+
+function renderShopRewardReveal() {
+  const root = document.getElementById("shop-reward-reveal");
+  if (!root) return;
+  const reveal = state.shopRewardReveal;
+  if (!reveal?.pulls?.length) {
+    root.hidden = true;
+    root.innerHTML = "";
+    return;
+  }
+  const cards = reveal.pulls.map((pull, index) => renderPullCard({ ...pull, revealed: true }, index)).join("");
+  root.hidden = false;
+  root.innerHTML = `
+    <section class="pack-results-overlay shop-reward-overlay" role="dialog" aria-modal="true" aria-labelledby="shop-reward-title">
+      <div class="pack-results-dialog shop-reward-dialog">
+        <div class="pack-results-head">
+          <div>
+            <span class="eyebrow">Promocao concluida</span>
+            <h2 id="shop-reward-title">${escapeHtmlAttribute(reveal.title || "Tazzos recebidos!")}</h2>
+          </div>
+          <div class="pack-results-actions">
+            <button class="viewer-close" type="button" data-close-shop-reward>Fechar</button>
+          </div>
+        </div>
+        <p class="shop-reward-summary">${escapeHtmlAttribute(reveal.message || "Os tazzos abaixo ja foram adicionados ao seu album.")}</p>
+        <div class="pack-results-grid shop-reward-grid">${cards}</div>
+      </div>
+    </section>
+  `;
+}
+
+function closeShopRewardReveal() {
+  state.shopRewardReveal = null;
+  renderAll();
 }
 
 function handlePackResultsClick(event) {

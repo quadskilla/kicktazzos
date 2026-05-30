@@ -164,7 +164,7 @@ const TOURNAMENTS = [
 ];
 
 const SHOP_ITEMS = [
-  { id: "starter-bundle", type: "merreis", name: "Pacote Iniciante", merreis: 50000, fragments: 1000, legendaryCards: 3, oneTime: true, priceCents: 990, currency: "BRL", priceLabel: "R$ 9,90", image: "assets/pacote_iniciante.png", note: "Compra unica por conta: 50 mil Merreis, 1000 fragmentos e 3 tazzos lendarios aleatorios." },
+  { id: "starter-bundle", type: "merreis", featured: true, name: "Pacote Iniciante", merreis: 50000, fragments: 1000, legendaryCards: 3, oneTime: true, priceCents: 990, currency: "BRL", priceLabel: "R$ 9,90", image: "assets/pacote_iniciante.png", bannerImage: "assets/banner_promo.png", note: "Compra unica por conta: 50 mil Merreis, 1000 fragmentos e 3 tazzos lendarios aleatorios." },
   { id: "merreis-2000", type: "merreis", name: "Bolso de Merreis", merreis: 2000, priceCents: 499, currency: "BRL", priceLabel: "R$ 4,99", image: "assets/4,99.png", note: "Recarga rapida para abrir pacotinhos e entrar em torneios." },
   { id: "merreis-10000", type: "merreis", name: "Combo Recreio", merreis: 10000, priceCents: 1499, currency: "BRL", priceLabel: "R$ 14,99", image: "assets/14,99.png", note: "Mais folego para comprar pacotinhos e melhorar seu time." },
   { id: "merreis-30000", type: "merreis", name: "Cofre Campeao", merreis: 30000, priceCents: 2499, currency: "BRL", priceLabel: "R$ 24,99", image: "assets/24,99.png", note: "Pacote grande para colecionadores que querem acelerar a liga." },
