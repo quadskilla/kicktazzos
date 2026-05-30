@@ -24,6 +24,8 @@ const {
 } = window.TAZZOMON_DATA;
 
 const STORAGE_KEY = "tazzomon-save-v1";
+const STORAGE_GUEST_KEY = `${STORAGE_KEY}:guest`;
+const STORAGE_PROFILE_PREFIX = `${STORAGE_KEY}:profile:`;
 const SERVER_PROFILE_ENDPOINT = "/api/profile";
 const SERVER_FIREBASE_CONFIG_ENDPOINT = "/api/firebase/config";
 const SERVER_FIREBASE_PROFILE_ENDPOINT = "/api/profile/firebase";
@@ -347,6 +349,7 @@ const state = {
     profileMessage: "",
     profileMessageType: "info",
     saveTimer: null,
+    saveEpoch: 0,
     startupSave: cloneSave(startupLocalSave),
     localChangedWhileLoading: false,
     entryGatePaused: false,
@@ -413,13 +416,26 @@ function defaultSave() {
   };
 }
 
-function loadSave() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return normalizeSave(raw ? JSON.parse(raw) : defaultSave());
-  } catch (error) {
-    return defaultSave();
+function localSaveStorageKey(playerId = "", profile = null) {
+  const profilePlayerId = String(profile?.playerId || playerId || "").trim();
+  if (canUseServerSave()) {
+    return profile && profilePlayerId ? `${STORAGE_PROFILE_PREFIX}${profilePlayerId}` : STORAGE_GUEST_KEY;
   }
+  return STORAGE_KEY;
+}
+
+function readStoredSave(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? normalizeSave(JSON.parse(raw)) : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function loadSave() {
+  const key = canUseServerSave() ? STORAGE_GUEST_KEY : STORAGE_KEY;
+  return readStoredSave(key) || defaultSave();
 }
 
 function cloneSave(save) {
@@ -1286,9 +1302,15 @@ function saveGame() {
   queueServerSave();
 }
 
-function persistLocalSave() {
+function persistLocalSave(options = {}) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state.save));
+    const playerId = Object.prototype.hasOwnProperty.call(options, "playerId") ? options.playerId : state.server.playerId;
+    const profile = Object.prototype.hasOwnProperty.call(options, "profile") ? options.profile : state.server.profile;
+    const key = localSaveStorageKey(playerId, profile);
+    localStorage.setItem(key, JSON.stringify(state.save));
+    if (canUseServerSave() && key !== STORAGE_KEY) {
+      localStorage.removeItem(STORAGE_KEY);
+    }
   } catch (error) {
     setServerStatus("error", "Local cheio");
   }
@@ -1373,6 +1395,17 @@ function requireOnlineProfile(message = "Entre em uma conta para continuar jogan
   return false;
 }
 
+function beginServerIdentityTransition() {
+  state.server.saveEpoch += 1;
+  window.clearTimeout(state.server.saveTimer);
+  state.server.saveTimer = null;
+  state.server.localChangedWhileLoading = false;
+}
+
+function isCurrentServerRequest(epoch, playerId = state.server.playerId) {
+  return epoch === state.server.saveEpoch && playerId === state.server.playerId;
+}
+
 function setupServerSave() {
   if (!canUseServerSave()) {
     setServerStatus("local", "Local");
@@ -1384,6 +1417,7 @@ function setupServerSave() {
 }
 
 async function loadServerSave() {
+  const requestEpoch = state.server.saveEpoch;
   try {
     const response = await fetch(SERVER_SAVE_ENDPOINT, {
       credentials: "same-origin",
@@ -1391,6 +1425,7 @@ async function loadServerSave() {
     });
     if (!response.ok) throw new Error("Servidor indisponivel");
     const payload = await response.json();
+    if (requestEpoch !== state.server.saveEpoch) return;
     state.server.enabled = true;
     state.server.loading = false;
     state.server.playerId = payload.playerId || "";
@@ -1416,8 +1451,9 @@ async function loadServerSave() {
       return;
     }
 
-    await pushServerSave();
+    if (requestEpoch === state.server.saveEpoch) await pushServerSave();
   } catch (error) {
+    if (requestEpoch !== state.server.saveEpoch) return;
     state.server.enabled = false;
     state.server.loading = false;
     disconnectOnlineSocket();
@@ -1426,6 +1462,7 @@ async function loadServerSave() {
 }
 
 async function migrateServerSave(save) {
+  const requestEpoch = state.server.saveEpoch;
   try {
     const response = await fetch(SERVER_MIGRATE_SAVE_ENDPOINT, {
       method: "POST",
@@ -1434,6 +1471,7 @@ async function migrateServerSave(save) {
       body: JSON.stringify({ save })
     });
     const payload = await response.json().catch(() => ({}));
+    if (requestEpoch !== state.server.saveEpoch) return true;
     if (!response.ok) {
       if (payload.save) {
         state.save = normalizeSave(payload.save);
@@ -1445,11 +1483,11 @@ async function migrateServerSave(save) {
     }
 
     state.server.playerId = payload.playerId || state.server.playerId;
+    applyProfile(payload.profile);
     if (payload.save) {
       state.save = normalizeSave(payload.save);
       persistLocalSave();
     }
-    applyProfile(payload.profile);
     state.server.localChangedWhileLoading = false;
     setServerStatus("online", "Migrado");
     renderAll();
@@ -1475,6 +1513,10 @@ function queueServerSave() {
 
 async function pushServerSave() {
   if (!state.server.enabled || !state.server.profile) return;
+  const requestEpoch = state.server.saveEpoch;
+  const requestPlayerId = state.server.playerId;
+  const requestProfile = state.server.profile;
+  const saveSnapshot = cloneSave(state.save);
   window.clearTimeout(state.server.saveTimer);
   state.server.saveTimer = null;
   setServerStatus("syncing", "Salvando");
@@ -1483,19 +1525,24 @@ async function pushServerSave() {
       method: "PUT",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ save: state.save })
+      body: JSON.stringify({ save: saveSnapshot })
     });
     if (!response.ok) throw new Error("Falha ao salvar no servidor");
     const payload = await response.json();
+    if (!isCurrentServerRequest(requestEpoch, requestPlayerId)) return;
     state.server.playerId = payload.playerId || state.server.playerId;
+    if ("profile" in payload) applyProfile(payload.profile);
     if (payload.save) {
       state.save = normalizeSave(payload.save);
-      persistLocalSave();
+      persistLocalSave({
+        playerId: payload.playerId || requestPlayerId,
+        profile: Object.prototype.hasOwnProperty.call(payload, "profile") ? payload.profile : requestProfile
+      });
     }
-    applyProfile(payload.profile);
     state.server.localChangedWhileLoading = false;
     setServerStatus("online", payload.ignoredProtectedFields?.length ? "Protegido" : "Salvo");
   } catch (error) {
+    if (!isCurrentServerRequest(requestEpoch, requestPlayerId)) return;
     setServerStatus("error", "Local");
   }
 }
@@ -1503,6 +1550,9 @@ async function pushServerSave() {
 async function postServerMutation(endpoint, body, statusLabel) {
   if (!requireOnlineProfile()) throw new Error("Entre em uma conta para continuar jogando.");
   if (state.server.saveTimer) await pushServerSave();
+  const requestEpoch = state.server.saveEpoch;
+  const requestPlayerId = state.server.playerId;
+  const requestProfile = state.server.profile;
   setServerStatus("syncing", statusLabel);
 
   let response;
@@ -1516,15 +1566,24 @@ async function postServerMutation(endpoint, body, statusLabel) {
     });
     payload = await response.json().catch(() => ({}));
   } catch (error) {
+    if (!isCurrentServerRequest(requestEpoch, requestPlayerId)) throw error;
     state.server.enabled = false;
     disconnectOnlineSocket();
     setServerStatus("error", "Local");
     throw error;
   }
 
+  if (!isCurrentServerRequest(requestEpoch, requestPlayerId)) {
+    throw new Error("Operacao ignorada porque a conta mudou.");
+  }
+  state.server.playerId = payload.playerId || state.server.playerId;
+  if ("profile" in payload) applyProfile(payload.profile);
   if (payload.save) {
     state.save = normalizeSave(payload.save);
-    persistLocalSave();
+    persistLocalSave({
+      playerId: payload.playerId || requestPlayerId,
+      profile: Object.prototype.hasOwnProperty.call(payload, "profile") ? payload.profile : requestProfile
+    });
   }
   if (payload.friends || payload.incomingInvites || payload.outgoingInvites || payload.trades || payload.clashes) {
     applySocialPayload(payload);
@@ -1534,8 +1593,6 @@ async function postServerMutation(endpoint, body, statusLabel) {
     throw new Error(payload.error || "Operacao recusada pelo servidor.");
   }
 
-  state.server.playerId = payload.playerId || state.server.playerId;
-  if ("profile" in payload) applyProfile(payload.profile);
   state.server.localChangedWhileLoading = false;
   setServerStatus("online", "Salvo");
   return payload;
@@ -2085,7 +2142,64 @@ function reconnectOnlineSocket() {
   window.setTimeout(connectOnlineSocket, 80);
 }
 
+function resetAccountScopedState() {
+  clearTurnTimer();
+  clearMatchTimer();
+  clearPackOpeningTimers();
+  clearRewardCelebrationTimers();
+  disconnectOnlineSocket();
+  state.pendingTournament = null;
+  state.pendingRanked = null;
+  state.matchmaking = { active: false, type: "", label: "", startedAt: 0 };
+  state.packOpening = null;
+  state.packPurchasePending = false;
+  state.packReveal = [];
+  state.tutorialResult = null;
+  state.missionClaimPending = false;
+  state.rewardCelebration = null;
+  state.tradeLog = [];
+  state.competitiveLog = [];
+  state.selectedTrade = { offer: "", wish: "" };
+  state.social.friends = [];
+  state.social.incomingInvites = [];
+  state.social.outgoingInvites = [];
+  state.social.messages = [];
+  state.social.trades = [];
+  state.social.clashes = [];
+  state.social.loading = false;
+  state.social.loadedAt = 0;
+  state.social.error = "";
+  state.social.message = "";
+  state.social.selectedFriendId = "";
+  state.social.tradeFriendId = "";
+  state.social.tradeDraft = { offerIds: [], requestIds: [] };
+  state.social.clashFriendId = "";
+  state.social.clashDraft = { offerIds: [], requestIds: [] };
+  state.social.clashPickDrafts = {};
+  state.social.clashAnimation = null;
+  state.social.notices = [];
+  state.social.notifiedTradeKeys = [];
+  state.social.noticeHydratedFor = "";
+  state.online.lobbies = [];
+  state.online.currentLobby = null;
+  state.online.loading = false;
+  state.online.loadedAt = 0;
+  state.online.error = "";
+  state.online.message = "";
+  state.online.joinCode = "";
+  state.online.inviteMessage = "";
+  state.online.inviteMessageType = "info";
+  state.online.inviteHandled = false;
+  state.battle = null;
+  state.battleSceneOpen = false;
+}
+
 function applyProfile(profile) {
+  const previousProfileId = state.server.profile?.playerId || "";
+  const nextProfileId = profile?.playerId || "";
+  if (previousProfileId !== nextProfileId) {
+    resetAccountScopedState();
+  }
   state.server.profile = profile || null;
   if (profile) state.server.entryGatePaused = false;
   updateProfileStatus();
@@ -4155,6 +4269,7 @@ async function loginWithFirebase(providerId = "google") {
 
   try {
     if (state.server.saveTimer) await pushServerSave();
+    beginServerIdentityTransition();
     const modules = state.firebase.modules;
     const provider = providerId === "facebook"
       ? new modules.FacebookAuthProvider()
@@ -4174,11 +4289,11 @@ async function loginWithFirebase(providerId = "google") {
     state.server.enabled = true;
     state.server.loading = false;
     state.server.playerId = payload.playerId || state.server.playerId;
+    applyProfile(payload.profile);
     if (payload.save) {
       state.save = normalizeSave(payload.save);
       persistLocalSave();
     }
-    applyProfile(payload.profile);
     setServerStatus("online", payload.migratedGuestSave ? "Migrado" : "Salvo");
     reconnectOnlineSocket();
     closeProfileModal();
@@ -4305,6 +4420,7 @@ async function submitProfileForm(event) {
 
   try {
     if (state.server.saveTimer) await pushServerSave();
+    beginServerIdentityTransition();
     const response = await fetch(`${SERVER_PROFILE_ENDPOINT}/${action}`, {
       method: "POST",
       credentials: "same-origin",
@@ -4317,11 +4433,11 @@ async function submitProfileForm(event) {
     state.server.enabled = true;
     state.server.loading = false;
     state.server.playerId = payload.playerId || state.server.playerId;
+    applyProfile(payload.profile);
     if (payload.save) {
       state.save = normalizeSave(payload.save);
       persistLocalSave();
     }
-    applyProfile(payload.profile);
     setServerStatus("online", "Salvo");
     reconnectOnlineSocket();
     closeProfileModal();
@@ -4336,6 +4452,7 @@ async function logoutProfile() {
   setProfileMessage("Saindo...");
   try {
     if (state.server.saveTimer) await pushServerSave();
+    beginServerIdentityTransition();
     await fetch(`${SERVER_PROFILE_ENDPOINT}/logout`, {
       method: "POST",
       credentials: "same-origin"
@@ -4349,6 +4466,7 @@ async function logoutProfile() {
   }
 
   state.save = defaultSave();
+  state.server.playerId = "";
   persistLocalSave();
   applyProfile(null);
   closeProfileModal();

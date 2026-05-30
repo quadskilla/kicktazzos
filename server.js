@@ -4143,6 +4143,22 @@ async function deleteSave(playerId) {
   db().prepare("DELETE FROM saves WHERE player_id = ?").run(playerId);
 }
 
+async function guestMigrationSaveForPlayer(currentPlayerId) {
+  if (!isValidPlayerId(currentPlayerId)) {
+    return { save: defaultServerSave(), migratedGuestSave: false };
+  }
+  const currentProfile = await profileForPlayer(currentPlayerId);
+  if (currentProfile) {
+    return { save: defaultServerSave(), migratedGuestSave: false };
+  }
+  const currentRecord = await readSave(currentPlayerId);
+  const save = normalizeServerSave(currentRecord?.save || defaultServerSave());
+  return {
+    save,
+    migratedGuestSave: Boolean(currentRecord && hasServerEconomyProgress(save))
+  };
+}
+
 async function registerProfile({ currentPlayerId, name, pin }) {
   const input = validateProfileInput(name, pin);
   const profiles = await readProfiles();
@@ -4167,9 +4183,9 @@ async function registerProfile({ currentPlayerId, name, pin }) {
   profiles.profiles[input.key] = profile;
   await writeProfiles(profiles);
 
-  const currentRecord = currentPlayerId ? await readOrCreateSave(currentPlayerId) : null;
-  const profileSave = normalizeServerSave(currentRecord?.save || defaultServerSave());
-  const migratedGuestSave = Boolean(currentRecord && hasServerEconomyProgress(profileSave));
+  const migration = await guestMigrationSaveForPlayer(currentPlayerId);
+  const profileSave = migration.save;
+  const migratedGuestSave = migration.migratedGuestSave;
   await writeSave(playerId, profileSave);
   recordAccountEvent(playerId, "account:create", {
     method: "pin",
@@ -4272,9 +4288,9 @@ async function loginFirebaseProfile({ currentPlayerId, decodedToken }) {
   profiles.profiles[key] = profile;
   await writeProfiles(profiles);
 
-  const currentRecord = currentPlayerId ? await readOrCreateSave(currentPlayerId) : null;
-  const save = normalizeServerSave(currentRecord?.save || defaultServerSave());
-  const migratedGuestSave = Boolean(currentRecord && hasServerEconomyProgress(save));
+  const migration = await guestMigrationSaveForPlayer(currentPlayerId);
+  const save = migration.save;
+  const migratedGuestSave = migration.migratedGuestSave;
   if (migratedGuestSave) save.migratedFromLocalAt = now;
   await writeSave(playerId, save);
   recordAccountEvent(playerId, "account:create", {
