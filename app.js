@@ -61,6 +61,9 @@ const SERVER_RANKED_START_ENDPOINT = "/api/ranked/start";
 const SERVER_TOURNAMENT_START_ENDPOINT = "/api/tournament/start";
 const SERVER_COMPETITIVE_RESOLVE_ENDPOINT = "/api/competitive/resolve";
 const SERVER_SAVE_DEBOUNCE_MS = 450;
+const CHECKOUT_SAVE_FLUSH_TIMEOUT_MS = 1200;
+const CHECKOUT_NAVIGATION_FALLBACK_MS = 3000;
+const CHECKOUT_RETURN_RECOVERY_MS = 1200;
 const ONLINE_WS_RECONNECT_MS = 2200;
 const PUBLIC_GAME_SHARE_URL = "https://www.tazzostrike.com.br/";
 const TODAY_KEY = new Date().toISOString().slice(0, 10);
@@ -328,7 +331,9 @@ const state = {
     checked: false,
     configured: false,
     message: "Checando Mercado Pago...",
-    checkoutPending: false
+    checkoutPending: false,
+    checkoutStartedAt: 0,
+    checkoutFallbackTimer: null
   },
   battle: null,
   battleSceneOpen: false,
@@ -2443,13 +2448,50 @@ function setup() {
 }
 
 function setupShopCheckoutRecovery() {
-  window.addEventListener("pageshow", () => {
-    if (!state.shopPayments.checkoutPending) return;
-    state.shopPayments.checkoutPending = false;
-    state.shopMessage = "Checkout interrompido. Tente novamente ou use uma conta de comprador diferente da conta vendedora.";
-    setServerStatus("online", state.server.profile ? "Online" : "Salvo");
-    renderShop();
+  const recover = () => recoverInterruptedCheckout();
+  window.addEventListener("pageshow", recover);
+  window.addEventListener("focus", recover);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") recover();
   });
+}
+
+function clearCheckoutFallbackTimer() {
+  if (!state.shopPayments.checkoutFallbackTimer) return;
+  window.clearTimeout(state.shopPayments.checkoutFallbackTimer);
+  state.shopPayments.checkoutFallbackTimer = null;
+}
+
+function markCheckoutPending(message = "Abrindo checkout seguro do Mercado Pago...") {
+  clearCheckoutFallbackTimer();
+  state.shopPayments.checkoutPending = true;
+  state.shopPayments.checkoutStartedAt = Date.now();
+  state.shopMessage = message;
+  setServerStatus("syncing", "Checkout");
+}
+
+function resetCheckoutPending(message = "") {
+  clearCheckoutFallbackTimer();
+  state.shopPayments.checkoutPending = false;
+  state.shopPayments.checkoutStartedAt = 0;
+  if (message) state.shopMessage = message;
+}
+
+function recoverInterruptedCheckout() {
+  if (!state.shopPayments.checkoutPending) return;
+  const elapsed = Date.now() - (state.shopPayments.checkoutStartedAt || 0);
+  if (elapsed < CHECKOUT_RETURN_RECOVERY_MS) return;
+  resetCheckoutPending("Checkout interrompido. Tente novamente ou use uma conta de comprador diferente da conta vendedora.");
+  setServerStatus("online", state.server.profile ? "Online" : "Salvo");
+  renderShop();
+}
+
+function waitForCheckoutSaveFlush() {
+  if (!state.server.saveTimer) return Promise.resolve();
+  return Promise.race([
+    pushServerSave(),
+    new Promise((resolve) => window.setTimeout(resolve, CHECKOUT_SAVE_FLUSH_TIMEOUT_MS))
+  ]).catch(() => {});
 }
 
 function mercadoPagoDeviceSessionId() {
@@ -8248,16 +8290,15 @@ async function submitMerreisCheckout(itemId) {
     return;
   }
 
-  state.shopPayments.checkoutPending = true;
-  state.shopMessage = "Abrindo checkout seguro do Mercado Pago...";
-  setServerStatus("syncing", "Checkout");
+  markCheckoutPending();
   renderShop();
 
-  if (state.server.saveTimer) await pushServerSave();
+  await waitForCheckoutSaveFlush();
 
   const clientRequestId = window.crypto?.randomUUID
     ? window.crypto.randomUUID()
     : `${Date.now()}-${Math.random()}`;
+  const deviceId = mercadoPagoDeviceSessionId();
   const form = document.createElement("form");
   form.method = "POST";
   form.action = SERVER_SHOP_CHECKOUT_ENDPOINT;
@@ -8266,7 +8307,7 @@ async function submitMerreisCheckout(itemId) {
   [
     ["itemId", item.id],
     ["clientRequestId", clientRequestId],
-    ["deviceId", mercadoPagoDeviceSessionId()]
+    ["deviceId", deviceId]
   ].forEach(([name, value]) => {
     if (!value) return;
     const input = document.createElement("input");
@@ -8277,7 +8318,36 @@ async function submitMerreisCheckout(itemId) {
   });
 
   document.body.appendChild(form);
-  form.submit();
+  let navigationStarted = false;
+  const markNavigationStarted = () => {
+    navigationStarted = true;
+    clearCheckoutFallbackTimer();
+  };
+  window.addEventListener("pagehide", markNavigationStarted, { once: true });
+  window.addEventListener("beforeunload", markNavigationStarted, { once: true });
+
+  const fallbackToCheckoutUrl = async () => {
+    if (navigationStarted) return;
+    try {
+      const payload = await postServerMutation(SERVER_SHOP_ENDPOINT, { itemId: item.id, clientRequestId, deviceId }, "Checkout");
+      if (!payload?.checkoutUrl) throw new Error("Mercado Pago nao retornou URL de checkout.");
+      navigationStarted = true;
+      clearCheckoutFallbackTimer();
+      window.location.assign(payload.checkoutUrl);
+    } catch (error) {
+      resetCheckoutPending(error.message || "Nao foi possivel abrir o checkout.");
+      setServerStatus("online", state.server.profile ? "Online" : "Salvo");
+      renderShop();
+    }
+  };
+
+  state.shopPayments.checkoutFallbackTimer = window.setTimeout(fallbackToCheckoutUrl, CHECKOUT_NAVIGATION_FALLBACK_MS);
+  try {
+    HTMLFormElement.prototype.submit.call(form);
+  } catch (error) {
+    clearCheckoutFallbackTimer();
+    await fallbackToCheckoutUrl();
+  }
 }
 
 function buyShopItemLocally(itemId) {
