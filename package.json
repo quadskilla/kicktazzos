@@ -10,6 +10,16 @@
     "start": "node server.js",
     "start:local": "node server.js",
     "start:prod": "node server.js",
-    "check": "node --check server.js && node --check data.js && node --check scripts/menu-shared.js && node --check scripts/menu-packs.js && node --check scripts/menu-collection.js && node --check scripts/menu-friends.js && node --check scripts/menu-tournaments.js && node --check scripts/menu-trades.js && node --check scripts/menu-shop.js && node --check scripts/menu-missions.js && node --check scripts/menu-views.js && node --check app.js && node --check battle-render.js && node --check battle-engine.js"
+    "check": "node --check server.js && node --check data.js && node --check scripts/menu-shared.js && node --check scripts/menu-packs.js && node --check scripts/menu-collection.js && node --check scripts/menu-friends.js && node --check scripts/menu-tournaments.js && node --check scripts/menu-trades.js && node --check scripts/menu-shop.js && node --check scripts/menu-missions.js && node --check scripts/menu-views.js && node --check app.js && node --check battle-render.js && node --check battle-engine.js && node --check admin.js && node --check tools/crypto/env.js && node --check tools/crypto/compile-merreiscoin.js && node --check tools/crypto/deploy-merreiscoin.js && node --check tools/crypto/mint-merreiscoin.js && node --check tools/crypto/check-merreiscoin-ready.js && node --check tools/crypto/activate-merreiscoin.js",
+    "crypto:compile": "node tools/crypto/compile-merreiscoin.js",
+    "crypto:check": "node --use-system-ca tools/crypto/check-merreiscoin-ready.js",
+    "crypto:deploy": "node --use-system-ca tools/crypto/deploy-merreiscoin.js",
+    "crypto:activate": "node tools/crypto/activate-merreiscoin.js",
+    "crypto:mint": "node --use-system-ca tools/crypto/mint-merreiscoin.js"
+  },
+  "devDependencies": {
+    "@openzeppelin/contracts": "^5.6.1",
+    "ethers": "^6.16.0",
+    "solc": "^0.8.35"
   }
 }

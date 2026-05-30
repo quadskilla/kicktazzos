@@ -1,4 +1,5 @@
 const crypto = require("node:crypto");
+const fsSync = require("node:fs");
 const fs = require("node:fs/promises");
 const http = require("node:http");
 const path = require("node:path");
@@ -6,10 +7,36 @@ const vm = require("node:vm");
 const { DatabaseSync } = require("node:sqlite");
 const { URL } = require("node:url");
 
+const ROOT_DIR = __dirname;
+
+function loadLocalEnvFiles(rootDir) {
+  const initialEnvKeys = new Set(Object.keys(process.env));
+  [".env", ".env.local", ".env.crypto.local"].forEach((fileName) => {
+    const filePath = path.join(rootDir, fileName);
+    if (!fsSync.existsSync(filePath)) return;
+    const text = fsSync.readFileSync(filePath, "utf8");
+    text.split(/\r?\n/).forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) return;
+      const index = trimmed.indexOf("=");
+      if (index <= 0) return;
+      const key = trimmed.slice(0, index).trim();
+      let value = trimmed.slice(index + 1).trim();
+      if ((value.startsWith("\"") && value.endsWith("\"")) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      if (!initialEnvKeys.has(key) || !String(process.env[key] || "").trim()) {
+        process.env[key] = value;
+      }
+    });
+  });
+}
+
+loadLocalEnvFiles(ROOT_DIR);
+
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const PORT = Number(process.env.PORT) || 8025;
 const HOST = process.env.HOST || (IS_PRODUCTION ? "0.0.0.0" : "127.0.0.1");
-const ROOT_DIR = __dirname;
 const DATA_DIR = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR)
   : process.env.RAILWAY_VOLUME_MOUNT_PATH
@@ -140,6 +167,10 @@ let onlineHeartbeat = null;
 let onlineTurnHeartbeat = null;
 let shuttingDown = false;
 let firebaseCertCache = { certs: null, expiresAt: 0 };
+const ADMIN_COOKIE = "tazzo-admin-session";
+const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+const DEFAULT_ADMIN_EMAILS = ["quadskilla@gmail.com"];
+const ADMIN_TOKEN = String(process.env.ADMIN_TOKEN || "").trim();
 
 function missionPeriod(mission) {
   return mission?.period || (mission?.scope === "album" ? "album" : "daily");
@@ -222,6 +253,86 @@ function playerCookie(playerId) {
 
 function clearPlayerCookie() {
   return `${PLAYER_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
+}
+
+function isHttpsRequest(req) {
+  return req.socket?.encrypted || String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https";
+}
+
+function adminCookieFlags(req, maxAgeSeconds) {
+  return [
+    "Path=/",
+    `Max-Age=${Math.max(0, Math.floor(Number(maxAgeSeconds)) || 0)}`,
+    "HttpOnly",
+    "SameSite=Lax",
+    isHttpsRequest(req) ? "Secure" : ""
+  ].filter(Boolean).join("; ");
+}
+
+function adminSessionSecret() {
+  return String(process.env.ADMIN_SESSION_SECRET || process.env.SESSION_SECRET || ADMIN_TOKEN || "").trim();
+}
+
+function signAdminSession(issuedAt) {
+  const secret = adminSessionSecret();
+  if (!secret) return "";
+  return crypto.createHmac("sha256", secret).update(String(issuedAt)).digest("hex");
+}
+
+function safeEqualText(a, b) {
+  const left = Buffer.from(String(a || ""));
+  const right = Buffer.from(String(b || ""));
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
+function isValidAdminToken(token) {
+  return Boolean(ADMIN_TOKEN) && safeEqualText(String(token || "").trim(), ADMIN_TOKEN);
+}
+
+function adminSessionCookie(req) {
+  const issuedAt = Date.now();
+  const signature = signAdminSession(issuedAt);
+  return `${ADMIN_COOKIE}=${encodeURIComponent(`${issuedAt}.${signature}`)}; ${adminCookieFlags(req, ADMIN_SESSION_TTL_MS / 1000)}`;
+}
+
+function clearAdminSessionCookie(req) {
+  return `${ADMIN_COOKIE}=; ${adminCookieFlags(req, 0)}`;
+}
+
+function appendSetCookie(headers = {}, cookie = "") {
+  const existing = headers["Set-Cookie"];
+  if (!existing) return { ...headers, "Set-Cookie": cookie };
+  return {
+    ...headers,
+    "Set-Cookie": Array.isArray(existing) ? [...existing, cookie] : [existing, cookie]
+  };
+}
+
+function hasValidAdminSession(req) {
+  if (!ADMIN_TOKEN || !adminSessionSecret()) return false;
+  const raw = parseCookies(req.headers.cookie)[ADMIN_COOKIE] || "";
+  const [issuedAtText, signature] = String(raw).split(".");
+  const issuedAt = Number(issuedAtText);
+  if (!Number.isFinite(issuedAt) || !signature) return false;
+  if (Date.now() - issuedAt > ADMIN_SESSION_TTL_MS || issuedAt > Date.now() + 60000) return false;
+  return safeEqualText(signature, signAdminSession(issuedAtText));
+}
+
+function configuredAdminEmails() {
+  return new Set([
+    ...DEFAULT_ADMIN_EMAILS,
+    ...String(process.env.ADMIN_EMAILS || "").split(/[,\s]+/)
+  ].map((email) => email.trim().toLowerCase()).filter(Boolean));
+}
+
+function adminEmailForProfile(profile) {
+  return String(profile?.authProviders?.firebase?.email || "").trim().toLowerCase();
+}
+
+function isAdminProfile(profile) {
+  const email = adminEmailForProfile(profile);
+  if (!email || !configuredAdminEmails().has(email)) return false;
+  return Boolean(profile?.authProviders?.firebase?.emailVerified);
 }
 
 function savePath(playerId) {
@@ -496,6 +607,27 @@ function configuredFirebaseProviders() {
   return [...new Set(providers)];
 }
 
+function normalizeFirebaseProviderId(provider) {
+  const value = String(provider || "").toLowerCase();
+  if (value === "google" || value === "google.com") return "google";
+  if (value === "facebook" || value === "facebook.com") return "facebook";
+  return value.replace(/\.com$/, "");
+}
+
+function firebaseProviderLabel(provider) {
+  return FIREBASE_AUTH_PROVIDER_LABELS[normalizeFirebaseProviderId(provider)] || "Firebase";
+}
+
+function assertFirebaseProviderAllowed(authData) {
+  const provider = normalizeFirebaseProviderId(authData?.provider);
+  if (!configuredFirebaseProviders().includes(provider)) {
+    const error = new Error("Este provedor de login nao esta liberado para criar ou entrar em contas.");
+    error.status = 403;
+    throw error;
+  }
+  return provider;
+}
+
 function firebaseConfigValue(envName, configName) {
   return process.env[envName] || FIREBASE_DEFAULT_CONFIG[configName] || "";
 }
@@ -614,7 +746,7 @@ function firebaseAuthProfile(decodedToken, now = new Date().toISOString()) {
     uid: String(decodedToken.uid || ""),
     email: String(decodedToken.email || "").slice(0, 160),
     emailVerified: Boolean(decodedToken.email_verified),
-    provider: String(decodedToken.firebase?.sign_in_provider || "firebase").slice(0, 40),
+    provider: normalizeFirebaseProviderId(decodedToken.firebase?.sign_in_provider || "firebase").slice(0, 40),
     picture: String(decodedToken.picture || "").slice(0, 500),
     lastLoginAt: now
   };
@@ -650,7 +782,7 @@ function publicProfile(profile) {
     createdAt: profile.createdAt,
     lastLoginAt: profile.lastLoginAt || profile.createdAt,
     authProvider: firebaseAuth ? "firebase" : "pin",
-    authLabel: firebaseAuth ? "Google" : "Nome/PIN",
+    authLabel: firebaseAuth ? firebaseProviderLabel(firebaseAuth.provider) : "Perfil antigo",
     authEmail: firebaseAuth ? safeText(firebaseAuth.email, "", 160) : "",
     authEmailVerified: firebaseAuth ? Boolean(firebaseAuth.emailVerified) : false,
     authPicture: firebaseAuth ? safeProfileImageUrl(firebaseAuth.picture) : ""
@@ -700,17 +832,13 @@ function safeText(value, fallback = "", limit = 180) {
   return String(value || fallback).replace(/[<>"&]/g, "").slice(0, limit);
 }
 
-function configuredPublicBaseUrl() {
-  const raw = String(
-    process.env.PUBLIC_BASE_URL
-    || process.env.SITE_URL
-    || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "")
-    || ""
-  ).trim();
-  if (!raw) return "";
+function normalizePublicBaseUrl(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
   try {
-    const url = new URL(raw);
+    const url = new URL(value);
     if (url.protocol !== "https:") return "";
+    if (/^(localhost|127\.|0\.0\.0\.0|\[?::1\]?)$/i.test(url.hostname)) return "";
     url.pathname = url.pathname.replace(/\/+$/, "");
     url.search = "";
     url.hash = "";
@@ -720,11 +848,31 @@ function configuredPublicBaseUrl() {
   }
 }
 
-function mercadoPagoCheckoutConfig() {
-  const publicBaseUrl = configuredPublicBaseUrl();
+function configuredPublicBaseUrl() {
+  return normalizePublicBaseUrl(
+    process.env.PUBLIC_BASE_URL
+    || process.env.SITE_URL
+    || (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "")
+    || ""
+  );
+}
+
+function requestPublicBaseUrl(req) {
+  if (!req) return "";
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+  const proto = forwardedProto || (req.socket?.encrypted ? "https" : "");
+  if (proto !== "https") return "";
+  const forwardedHost = String(req.headers["x-forwarded-host"] || "").split(",")[0].trim();
+  const host = forwardedHost || String(req.headers.host || "").trim();
+  if (!host) return "";
+  return normalizePublicBaseUrl(`https://${host}`);
+}
+
+function mercadoPagoCheckoutConfig(req = null) {
+  const publicBaseUrl = configuredPublicBaseUrl() || requestPublicBaseUrl(req);
   const missing = [];
   if (!MERCADO_PAGO_ACCESS_TOKEN) missing.push("MERCADO_PAGO_ACCESS_TOKEN");
-  if (!publicBaseUrl) missing.push("PUBLIC_BASE_URL HTTPS");
+  if (!publicBaseUrl) missing.push("PUBLIC_BASE_URL HTTPS ou acesso por dominio HTTPS");
   return {
     configured: missing.length === 0,
     publicBaseUrl,
@@ -732,13 +880,42 @@ function mercadoPagoCheckoutConfig() {
   };
 }
 
-function publicMercadoPagoConfig() {
-  const config = mercadoPagoCheckoutConfig();
+function publicMercadoPagoConfig(req = null) {
+  const config = mercadoPagoCheckoutConfig(req);
   return {
     configured: config.configured,
     message: config.configured
       ? "Checkout Mercado Pago pronto."
       : `Compra de Merreis indisponivel: configure ${config.missing.join(" e ")}.`
+  };
+}
+
+function publicMerreisCoinConfig() {
+  const chainId = Math.max(0, Math.floor(Number(process.env.MERREISCOIN_CHAIN_ID)) || 84532);
+  const decimals = Math.max(0, Math.min(18, Math.floor(Number(process.env.MERREISCOIN_DECIMALS)) || 0));
+  const contractAddress = String(process.env.MERREISCOIN_CONTRACT_ADDRESS || "").trim();
+  const enabled = String(process.env.MERREISCOIN_TESTNET_ENABLED || "").toLowerCase() === "true"
+    && /^0x[a-fA-F0-9]{40}$/.test(contractAddress)
+    && chainId > 0;
+  const networkName = safeText(process.env.MERREISCOIN_NETWORK || "base-sepolia", "base-sepolia", 48);
+  const explorerUrl = safeText(process.env.MERREISCOIN_EXPLORER_URL || "https://sepolia.basescan.org", "", 180);
+  return {
+    enabled,
+    sandbox: true,
+    message: enabled
+      ? `MerreisCoin testnet pronta em ${networkName}.`
+      : "MerreisCoin testnet desligada. Implante o contrato e configure MERREISCOIN_CONTRACT_ADDRESS.",
+    network: {
+      name: networkName,
+      chainId,
+      explorerUrl
+    },
+    token: {
+      name: "MerreisCoin",
+      symbol: "MER",
+      decimals,
+      contractAddress
+    }
   };
 }
 
@@ -982,9 +1159,9 @@ function mercadoPagoPayerFromProfile(profile) {
 }
 
 async function createMercadoPagoPreference(order, req = null, checkoutOptions = {}) {
-  const config = mercadoPagoCheckoutConfig();
+  const config = mercadoPagoCheckoutConfig(req);
   if (!config.configured) {
-    const error = new Error(publicMercadoPagoConfig().message);
+    const error = new Error(publicMercadoPagoConfig(req).message);
     error.status = 503;
     throw error;
   }
@@ -1039,8 +1216,20 @@ async function createMercadoPagoPreference(order, req = null, checkoutOptions = 
     body: JSON.stringify(preference)
   });
 }
+
+function mercadoPagoPaymentIdFromValue(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const direct = normalizePaymentId(text);
+  if (/^[0-9]+$/.test(text)) return direct;
+  const urlMatch = text.match(/\/payments\/([0-9]+)/i);
+  if (urlMatch) return normalizePaymentId(urlMatch[1]);
+  const trailingNumber = text.match(/([0-9]+)(?:[/?#].*)?$/);
+  return trailingNumber ? normalizePaymentId(trailingNumber[1]) : direct;
+}
+
 function mercadoPagoPaymentIdFromNotification(url, payload = {}) {
-  return normalizePaymentId(
+  return mercadoPagoPaymentIdFromValue(
     url.searchParams.get("data.id")
     || url.searchParams.get("id")
     || payload?.data?.id
@@ -1245,9 +1434,9 @@ async function createMerreisCheckoutForPlayer(playerId, itemId, clientRequestId,
     error.status = 400;
     throw error;
   }
-  const config = mercadoPagoCheckoutConfig();
+  const config = mercadoPagoCheckoutConfig(req);
   if (!config.configured) {
-    const error = new Error(publicMercadoPagoConfig().message);
+    const error = new Error(publicMercadoPagoConfig(req).message);
     error.status = 503;
     throw error;
   }
@@ -1504,6 +1693,44 @@ async function requireProfileForPlayer(playerId) {
   return profile;
 }
 
+async function adminContextForRequest(req, playerId) {
+  const profile = await profileForPlayer(playerId);
+  if (isAdminProfile(profile)) {
+    return {
+      authorized: true,
+      method: "google",
+      tokenEnabled: Boolean(ADMIN_TOKEN),
+      profile: publicProfile(profile),
+      email: adminEmailForProfile(profile)
+    };
+  }
+  if (hasValidAdminSession(req)) {
+    return {
+      authorized: true,
+      method: "token",
+      tokenEnabled: Boolean(ADMIN_TOKEN),
+      profile: publicProfile(profile),
+      email: adminEmailForProfile(profile)
+    };
+  }
+  return {
+    authorized: false,
+    method: "",
+    tokenEnabled: Boolean(ADMIN_TOKEN),
+    profile: publicProfile(profile),
+    email: adminEmailForProfile(profile)
+  };
+}
+
+async function requireAdminForRequest(req, playerId) {
+  const context = await adminContextForRequest(req, playerId);
+  if (context.authorized) return context;
+  const error = new Error("Acesso admin restrito.");
+  error.status = 403;
+  error.context = context;
+  throw error;
+}
+
 function cleanAccountEventType(type) {
   return String(type || "event")
     .trim()
@@ -1521,6 +1748,32 @@ function accountEventDataJson(data = {}) {
     return "{}";
   }
   return JSON.stringify({ truncated: true });
+}
+
+function sanitizeTelemetryValue(value, depth = 0) {
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") return value.slice(0, 240);
+  if (Array.isArray(value)) {
+    if (depth > 1) return `[${value.length}]`;
+    return value.slice(0, 16).map((item) => sanitizeTelemetryValue(item, depth + 1));
+  }
+  if (value && typeof value === "object") {
+    if (depth > 1) return "[object]";
+    return Object.fromEntries(Object.entries(value).slice(0, 24).map(([key, item]) => [
+      String(key).replace(/[^a-zA-Z0-9:_-]+/g, "_").slice(0, 48) || "value",
+      sanitizeTelemetryValue(item, depth + 1)
+    ]));
+  }
+  return String(value ?? "").slice(0, 120);
+}
+
+function sanitizeTelemetryData(data = {}) {
+  const source = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+  return Object.fromEntries(Object.entries(source).slice(0, 40).map(([key, value]) => [
+    String(key).replace(/[^a-zA-Z0-9:_-]+/g, "_").slice(0, 48) || "value",
+    sanitizeTelemetryValue(value)
+  ]));
 }
 
 function publicAccountEvent(row) {
@@ -1604,6 +1857,154 @@ function accountEventsForPlayer(playerId, limit = 40) {
     ORDER BY created_at DESC
     LIMIT ?
   `).all(playerId, safeLimit).map(publicAccountEvent).filter(Boolean);
+}
+
+function accountEventRowsSince(sinceIso, limit = 6000) {
+  const safeLimit = clamp(Math.floor(Number(limit)) || 6000, 100, 20000);
+  return db().prepare(`
+    SELECT id, player_id, type, created_at, data_json
+    FROM account_events
+    WHERE created_at >= ?
+    ORDER BY created_at DESC
+    LIMIT ?
+  `).all(sinceIso, safeLimit).map((row) => ({
+    id: row.id,
+    playerId: row.player_id,
+    type: row.type,
+    createdAt: row.created_at,
+    data: jsonFromDb(row.data_json, {})
+  }));
+}
+
+function incrementCount(map, key, amount = 1) {
+  const safeKey = String(key || "").trim() || "desconhecido";
+  map.set(safeKey, (map.get(safeKey) || 0) + amount);
+}
+
+function sortedCounts(map, limit = 12) {
+  return [...map.entries()]
+    .map(([key, count]) => ({ key, count }))
+    .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key))
+    .slice(0, limit);
+}
+
+function shortEventData(data = {}) {
+  const keys = ["tab", "stepId", "tutorialStep", "packId", "source", "mode", "winner", "reason", "itemId", "networkId"];
+  return Object.fromEntries(keys
+    .filter((key) => data[key] !== undefined && data[key] !== "")
+    .map((key) => [key, data[key]]));
+}
+
+async function adminTelemetrySummary(days = 7) {
+  const safeDays = clamp(Math.floor(Number(days)) || 7, 1, 90);
+  const since = new Date(Date.now() - safeDays * 86400000).toISOString();
+  const rows = accountEventRowsSince(since);
+  const profilesById = profilesByPlayerId(await readProfiles());
+  const uniquePlayers = new Set(rows.map((row) => row.playerId).filter(Boolean));
+  const profilePlayers = new Set([...uniquePlayers].filter((playerId) => profilesById[playerId]));
+  const guests = Math.max(0, uniquePlayers.size - profilePlayers.size);
+  const typeCounts = new Map();
+  const tabCounts = new Map();
+  const tabPlayers = new Map();
+  const packCounts = new Map();
+  const battleCounts = new Map();
+  const dayCounts = new Map();
+  const playerCounts = new Map();
+  const tutorial = new Map(TUTORIAL_STEPS.map((step) => [step.id, {
+    id: step.id,
+    title: step.title,
+    action: 0,
+    ready: 0,
+    complete: 0,
+    players: new Set()
+  }]));
+
+  rows.forEach((row) => {
+    const data = row.data || {};
+    incrementCount(typeCounts, row.type);
+    incrementCount(playerCounts, row.playerId);
+    incrementCount(dayCounts, String(row.createdAt || "").slice(0, 10));
+
+    if (row.type === "client:tab:view" && data.tab) {
+      incrementCount(tabCounts, data.tab);
+      if (!tabPlayers.has(data.tab)) tabPlayers.set(data.tab, new Set());
+      tabPlayers.get(data.tab).add(row.playerId);
+    }
+
+    if (row.type === "client:tutorial:action" || row.type === "client:tutorial:step_ready" || row.type === "client:tutorial:complete") {
+      const step = tutorial.get(String(data.stepId || ""));
+      if (step) {
+        if (row.type.endsWith(":action")) step.action += 1;
+        if (row.type.endsWith(":step_ready")) step.ready += 1;
+        if (row.type.endsWith(":complete")) {
+          step.complete += 1;
+          step.players.add(row.playerId);
+        }
+      }
+    }
+
+    if (row.type === "pack:open" || row.type === "client:pack:open") {
+      incrementCount(packCounts, data.pack?.id || data.packId || "pacotinho");
+    }
+
+    if (row.type === "client:battle:start") incrementCount(battleCounts, `start:${data.mode || "battle"}`);
+    if (row.type === "client:battle:result") incrementCount(battleCounts, `result:${data.winner || "unknown"}`);
+    if (row.type === "ranked:start" || row.type === "tournament:start" || row.type === "ranked:resolve" || row.type === "tournament:resolve") {
+      incrementCount(battleCounts, row.type);
+    }
+  });
+
+  const totalProfiles = db().prepare("SELECT COUNT(*) AS count FROM profiles").get()?.count || 0;
+  const totalSaves = db().prepare("SELECT COUNT(*) AS count FROM saves").get()?.count || 0;
+  const tutorialSteps = [...tutorial.values()].map((step) => ({
+    id: step.id,
+    title: step.title,
+    action: step.action,
+    ready: step.ready,
+    complete: step.complete,
+    uniquePlayers: step.players.size
+  }));
+  const firstStepPlayers = tutorialSteps[0]?.uniquePlayers || tutorialSteps[0]?.complete || 0;
+  const lastStepPlayers = tutorialSteps[tutorialSteps.length - 1]?.uniquePlayers || tutorialSteps[tutorialSteps.length - 1]?.complete || 0;
+  const tabList = sortedCounts(tabCounts, 16).map((item) => ({
+    tab: item.key,
+    count: item.count,
+    uniquePlayers: tabPlayers.get(item.key)?.size || 0
+  }));
+
+  return {
+    generatedAt: new Date().toISOString(),
+    window: { days: safeDays, since },
+    overview: {
+      events: rows.length,
+      uniquePlayers: uniquePlayers.size,
+      profilePlayers: profilePlayers.size,
+      guestPlayers: guests,
+      totalProfiles,
+      totalSaves,
+      tutorialCompletionRate: firstStepPlayers ? Math.round((lastStepPlayers / firstStepPlayers) * 100) : 0
+    },
+    tutorial: { steps: tutorialSteps },
+    tabs: tabList,
+    packs: sortedCounts(packCounts, 10).map((item) => ({ packId: item.key, count: item.count })),
+    battles: sortedCounts(battleCounts, 12),
+    eventTypes: sortedCounts(typeCounts, 20),
+    daily: sortedCounts(dayCounts, safeDays).sort((a, b) => a.key.localeCompare(b.key)),
+    players: sortedCounts(playerCounts, 12).map((item) => ({
+      playerId: item.key,
+      count: item.count,
+      name: profilesById[item.key]?.name || "Visitante",
+      profile: Boolean(profilesById[item.key])
+    })),
+    recentEvents: rows.slice(0, 40).map((row) => ({
+      id: row.id,
+      type: row.type,
+      createdAt: row.createdAt,
+      playerId: row.playerId,
+      playerName: profilesById[row.playerId]?.name || "Visitante",
+      data: shortEventData(row.data)
+    }))
+  };
 }
 
 function profilesByPlayerId(profiles) {
@@ -4374,6 +4775,7 @@ async function loginFirebaseProfile({ currentPlayerId, decodedToken }) {
   const profiles = await readProfiles();
   const now = new Date().toISOString();
   const authData = firebaseAuthProfile(decodedToken, now);
+  assertFirebaseProviderAllowed(authData);
   const existingFirebaseEntry = firebaseProfileEntry(profiles, uid);
   const currentProfileEntry = currentPlayerId ? profileEntryForPlayer(profiles, currentPlayerId) : null;
   const entry = existingFirebaseEntry || currentProfileEntry;
@@ -4414,6 +4816,12 @@ async function loginFirebaseProfile({ currentPlayerId, decodedToken }) {
       migratedGuestSave
     });
     return { profile, save, migratedGuestSave };
+  }
+
+  if (authData.email && !authData.emailVerified) {
+    const error = new Error("Use uma conta com email verificado para criar jogador novo.");
+    error.status = 403;
+    throw error;
   }
 
   let key = firebaseProfileKey(uid);
@@ -4698,9 +5106,10 @@ function normalizeServerSave(rawSave = {}) {
       ...((save.missions || {})[mission.id] || {})
     }, mission)
   ]));
+  const savedTutorial = save.tutorial && typeof save.tutorial === "object" && !Array.isArray(save.tutorial) ? save.tutorial : {};
   const tutorial = Object.fromEntries(TUTORIAL_STEPS.map((step) => [
     step.id,
-    Boolean((save.tutorial || fresh.tutorial)[step.id])
+    Boolean(savedTutorial[step.id] || fresh.tutorial[step.id] || (save.tutorialRewardClaimed && !Object.prototype.hasOwnProperty.call(savedTutorial, step.id)))
   ]));
   const cosmetics = save.cosmetics && typeof save.cosmetics === "object" ? save.cosmetics : fresh.cosmetics;
   const equippedCosmetics = sanitizeServerEquippedCosmetics(save.equippedCosmetics || fresh.equippedCosmetics, cosmetics, save.selectedCosmetic);
@@ -6291,6 +6700,128 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (url.pathname === "/api/telemetry") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      const type = cleanAccountEventType(payload.type || "event");
+      const event = recordAccountEvent(playerId, `client:${type}`, {
+        ...sanitizeTelemetryData(payload.data),
+        userAgent: safeText(req.headers["user-agent"], "", 160)
+      });
+      json(res, 200, {
+        ok: true,
+        playerId,
+        eventId: event?.id || null
+      }, headers);
+    } catch (error) {
+      json(res, 400, {
+        ok: false,
+        error: "Telemetria invalida."
+      }, headers);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/admin/session") {
+    if (req.method !== "GET") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "GET"
+      });
+      return;
+    }
+    const context = await adminContextForRequest(req, playerId);
+    json(res, 200, {
+      ok: true,
+      admin: context.authorized,
+      method: context.method,
+      tokenEnabled: context.tokenEnabled,
+      profile: context.profile
+    }, headers);
+    return;
+  }
+
+  if (url.pathname === "/api/admin/login") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+    try {
+      const body = await readBody(req);
+      const payload = body ? JSON.parse(body) : {};
+      if (!isValidAdminToken(payload.token)) {
+        json(res, 401, {
+          ok: false,
+          error: "Token admin invalido."
+        }, headers);
+        return;
+      }
+      json(res, 200, {
+        ok: true,
+        admin: true,
+        method: "token"
+      }, appendSetCookie(headers, adminSessionCookie(req)));
+    } catch (error) {
+      json(res, 400, {
+        ok: false,
+        error: "Login admin invalido."
+      }, headers);
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/admin/logout") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+    json(res, 200, { ok: true }, appendSetCookie(headers, clearAdminSessionCookie(req)));
+    return;
+  }
+
+  if (url.pathname === "/api/admin/telemetry/summary") {
+    if (req.method !== "GET") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "GET"
+      });
+      return;
+    }
+    try {
+      const context = await requireAdminForRequest(req, playerId);
+      const days = clamp(Math.floor(Number(url.searchParams.get("days"))) || 7, 1, 90);
+      json(res, 200, {
+        ok: true,
+        admin: {
+          method: context.method,
+          profile: context.profile
+        },
+        summary: await adminTelemetrySummary(days)
+      }, headers);
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Acesso admin indisponivel.",
+        tokenEnabled: error.context?.tokenEnabled ?? Boolean(ADMIN_TOKEN)
+      }, headers);
+    }
+    return;
+  }
+
   if (url.pathname === "/api/account/events") {
     if (req.method !== "GET") {
       json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
@@ -6346,7 +6877,22 @@ async function handleApi(req, res, url) {
     }
     json(res, 200, {
       ok: true,
-      mercadoPago: publicMercadoPagoConfig()
+      mercadoPago: publicMercadoPagoConfig(req)
+    }, headers);
+    return;
+  }
+
+  if (url.pathname === "/api/crypto/config") {
+    if (req.method !== "GET") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "GET"
+      });
+      return;
+    }
+    json(res, 200, {
+      ok: true,
+      merreisCoin: publicMerreisCoinConfig()
     }, headers);
     return;
   }
@@ -6642,27 +7188,10 @@ async function handleApi(req, res, url) {
       });
       return;
     }
-    try {
-      const body = await readBody(req);
-      const payload = body ? JSON.parse(body) : {};
-      const result = await registerProfile({
-        currentPlayerId: playerId,
-        name: payload.name,
-        pin: payload.pin
-      });
-      json(res, 200, {
-        ok: true,
-        playerId: result.profile.playerId,
-        profile: publicProfile(result.profile),
-        save: result.save,
-        migratedGuestSave: Boolean(result.migratedGuestSave)
-      }, { "Set-Cookie": playerCookie(result.profile.playerId) });
-    } catch (error) {
-      json(res, error.status || 500, {
-        ok: false,
-        error: error.message || "Erro ao criar jogador."
-      }, headers);
-    }
+    json(res, 403, {
+      ok: false,
+      error: "Criacao de perfil antigo foi desativada. Use Google ou outro login social liberado."
+    }, headers);
     return;
   }
 
@@ -7528,7 +8057,11 @@ async function serveStatic(req, res, url) {
   }
 
   const decodedPath = decodeURIComponent(url.pathname);
-  const relativePath = decodedPath === "/" ? "index.html" : decodedPath.replace(/^\/+/, "");
+  const relativePath = decodedPath === "/"
+    ? "index.html"
+    : decodedPath === "/admin" || decodedPath === "/admin/"
+    ? "admin.html"
+    : decodedPath.replace(/^\/+/, "");
   const filePath = path.resolve(ROOT_DIR, relativePath);
   if (filePath !== ROOT_DIR && !filePath.startsWith(ROOT_PREFIX)) {
     res.writeHead(403);

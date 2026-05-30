@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tazzo Strike Admin</title>
+  <link rel="stylesheet" href="admin.css?v=20260524-admin-telemetry-1">
+</head>
+<body>
+  <main class="admin-shell">
+    <header class="admin-header">
+      <div>
+        <span class="eyebrow">Tazzo Strike</span>
+        <h1>Painel admin</h1>
+        <p>Telemetria de tutorial, abas, pacotinhos e batalhas.</p>
+      </div>
+      <div class="admin-actions">
+        <a class="ghost-link" href="/">Voltar ao jogo</a>
+        <button class="ghost-button" type="button" id="admin-logout" hidden>Sair</button>
+      </div>
+    </header>
+
+    <section class="access-card" id="access-card" hidden>
+      <span class="eyebrow">Acesso restrito</span>
+      <h2>Entre com a conta admin</h2>
+      <p>Abra o jogo neste mesmo dominio, entre com o Google admin configurado e volte para esta pagina.</p>
+      <form class="token-form" id="token-form" hidden>
+        <label>
+          Token admin
+          <input id="token-input" type="password" autocomplete="current-password" placeholder="ADMIN_TOKEN">
+        </label>
+        <button type="submit">Entrar</button>
+      </form>
+      <p class="access-message" id="access-message"></p>
+    </section>
+
+    <section class="dashboard" id="dashboard" hidden>
+      <div class="toolbar">
+        <div>
+          <span class="eyebrow">Resumo</span>
+          <strong id="admin-profile">Admin</strong>
+        </div>
+        <label>
+          Janela
+          <select id="range-select">
+            <option value="7">7 dias</option>
+            <option value="14">14 dias</option>
+            <option value="30">30 dias</option>
+            <option value="90">90 dias</option>
+          </select>
+        </label>
+        <button type="button" id="refresh-button">Atualizar</button>
+      </div>
+
+      <section class="metric-grid" id="metric-grid"></section>
+
+      <section class="dashboard-grid">
+        <article class="panel wide">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Onboarding</span>
+              <h2>Funil do tutorial</h2>
+            </div>
+            <strong id="tutorial-rate">0%</strong>
+          </div>
+          <div class="funnel-list" id="tutorial-funnel"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Navegacao</span>
+              <h2>Abas mais abertas</h2>
+            </div>
+          </div>
+          <div class="bar-list" id="tab-list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Economia</span>
+              <h2>Pacotinhos</h2>
+            </div>
+          </div>
+          <div class="bar-list" id="pack-list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Combate</span>
+              <h2>Batalhas</h2>
+            </div>
+          </div>
+          <div class="bar-list" id="battle-list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Eventos</span>
+              <h2>Tipos principais</h2>
+            </div>
+          </div>
+          <div class="bar-list" id="event-type-list"></div>
+        </article>
+
+        <article class="panel wide">
+          <div class="panel-head">
+            <div>
+              <span class="eyebrow">Ultimos registros</span>
+              <h2>Eventos recentes</h2>
+            </div>
+          </div>
+          <div class="event-table" id="recent-events"></div>
+        </article>
+      </section>
+    </section>
+  </main>
+
+  <script src="admin.js?v=20260524-admin-telemetry-1"></script>
+</body>
+</html>

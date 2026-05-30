@@ -38,6 +38,7 @@ const SERVER_STARTER_PACK_ENDPOINT = "/api/starter-pack";
 const SERVER_SHOP_ENDPOINT = "/api/shop";
 const SERVER_SHOP_CHECKOUT_ENDPOINT = "/api/shop/checkout";
 const SERVER_SHOP_CONFIG_ENDPOINT = "/api/shop/config";
+const SERVER_CRYPTO_CONFIG_ENDPOINT = "/api/crypto/config";
 const SERVER_UPGRADE_ENDPOINT = "/api/upgrade";
 const SERVER_CLAIM_MISSION_ENDPOINT = "/api/claim-mission";
 const SERVER_TUTORIAL_REWARD_ENDPOINT = "/api/tutorial-reward";
@@ -57,6 +58,7 @@ const SERVER_TAZZO_CLASH_CREATE_ENDPOINT = "/api/social/tazzo-clash/create";
 const SERVER_TAZZO_CLASH_RESPOND_ENDPOINT = "/api/social/tazzo-clash/respond";
 const SERVER_TAZZO_CLASH_PICK_ENDPOINT = "/api/social/tazzo-clash/pick";
 const SERVER_TAZZO_CLASH_HIT_ENDPOINT = "/api/social/tazzo-clash/hit";
+const SERVER_TELEMETRY_ENDPOINT = "/api/telemetry";
 const SERVER_RANKED_START_ENDPOINT = "/api/ranked/start";
 const SERVER_TOURNAMENT_START_ENDPOINT = "/api/tournament/start";
 const SERVER_COMPETITIVE_RESOLVE_ENDPOINT = "/api/competitive/resolve";
@@ -64,6 +66,7 @@ const SERVER_SAVE_DEBOUNCE_MS = 450;
 const CHECKOUT_SAVE_FLUSH_TIMEOUT_MS = 1200;
 const CHECKOUT_NAVIGATION_FALLBACK_MS = 3000;
 const CHECKOUT_RETURN_RECOVERY_MS = 1200;
+const CLIENT_TELEMETRY_COOLDOWN_MS = 1000;
 const ONLINE_WS_RECONNECT_MS = 2200;
 const PUBLIC_GAME_SHARE_URL = "https://www.tazzostrike.com.br/";
 const TODAY_KEY = new Date().toISOString().slice(0, 10);
@@ -275,6 +278,7 @@ const state = {
     message: ""
   },
   tutorialResult: null,
+  tutorialExpanded: false,
   missionClaimPending: false,
   tutorialRewardPending: false,
   shareRewardPending: "",
@@ -337,9 +341,18 @@ const state = {
     checkoutFallbackTimer: null
   },
   shopRewardReveal: null,
+  crypto: {
+    checked: false,
+    enabled: false,
+    sandbox: true,
+    message: "Checando MerreisCoin testnet...",
+    network: null,
+    token: null
+  },
   battle: null,
   battleSceneOpen: false,
   music: { audio: null, isPlaying: false, autoplayArmed: false, collapsed: false },
+  telemetry: { sessionId: "", lastSent: {} },
   sfx: {
     cache: new Map(),
     buffers: new Map(),
@@ -616,9 +629,10 @@ function normalizeSave(rawSave) {
         ...((save.missions || {})[mission.id] || {})
       }, mission)
     ]));
+    const savedTutorial = save.tutorial && typeof save.tutorial === "object" ? save.tutorial : {};
     const tutorial = Object.fromEntries(TUTORIAL_STEPS.map((step) => [
       step.id,
-      Boolean((save.tutorial || fresh.tutorial)[step.id])
+      Boolean(savedTutorial[step.id] || fresh.tutorial[step.id] || (save.tutorialRewardClaimed && !Object.prototype.hasOwnProperty.call(savedTutorial, step.id)))
     ]));
     const cosmetics = { ...fresh.cosmetics, ...(save.cosmetics || {}) };
     const equippedCosmetics = sanitizeEquippedCosmetics(save.equippedCosmetics || fresh.equippedCosmetics, cosmetics, save.selectedCosmetic);
@@ -1295,18 +1309,19 @@ function renderProfileAvatar(element, profile) {
 
 function profileProviderText(profile) {
   if (!profile) return "Perfil";
-  if (profile.authProvider === "firebase") return "Google";
-  return "Nome/PIN";
+  if (profile.authProvider === "firebase") return profile.authLabel || "Login social";
+  return "Perfil antigo";
 }
 
 function profileMetaText(profile) {
   if (!profile) return "Save anonimo sincronizado neste navegador.";
   if (profile.authProvider === "firebase") {
+    const provider = profile.authLabel || "login social";
     return profile.authEmail
-      ? `Conta Google conectada: ${profile.authEmail}`
-      : "Conta Google conectada. Colecao, Merreis e partidas salvas no servidor.";
+      ? `Conta ${provider} conectada: ${profile.authEmail}`
+      : `Conta ${provider} conectada. Colecao, Merreis e partidas salvas no servidor.`;
   }
-  return "Colecao, Merreis e progresso salvos no servidor por nome/PIN.";
+  return "Colecao, Merreis e progresso salvos no servidor.";
 }
 
 function nextCatalogNumber() {
@@ -1339,6 +1354,62 @@ function persistLocalSave(options = {}) {
 
 function canUseServerSave() {
   return window.location.protocol === "http:" || window.location.protocol === "https:";
+}
+
+function telemetrySessionId() {
+  if (!state.telemetry.sessionId) {
+    state.telemetry.sessionId = window.crypto?.randomUUID
+      ? window.crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  }
+  return state.telemetry.sessionId;
+}
+
+function compactTelemetryValue(value, depth = 0) {
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string") return value.slice(0, 180);
+  if (Array.isArray(value)) {
+    if (depth > 1) return `[${value.length}]`;
+    return value.slice(0, 12).map((item) => compactTelemetryValue(item, depth + 1));
+  }
+  if (value && typeof value === "object") {
+    if (depth > 1) return "[object]";
+    return Object.fromEntries(Object.entries(value).slice(0, 18).map(([key, item]) => [
+      String(key).slice(0, 40),
+      compactTelemetryValue(item, depth + 1)
+    ]));
+  }
+  return String(value ?? "").slice(0, 80);
+}
+
+function trackTelemetry(type, data = {}, options = {}) {
+  if (!canUseServerSave() || !state.server.enabled) return;
+  const eventType = String(type || "event").trim().slice(0, 64);
+  if (!eventType) return;
+  const now = Date.now();
+  const cooldown = Number.isFinite(Number(options.cooldown)) ? Number(options.cooldown) : CLIENT_TELEMETRY_COOLDOWN_MS;
+  const dedupeKey = options.dedupeKey || eventType;
+  if (cooldown > 0 && now - (state.telemetry.lastSent[dedupeKey] || 0) < cooldown) return;
+  state.telemetry.lastSent[dedupeKey] = now;
+  const step = currentTutorialStep();
+  const payload = {
+    type: eventType,
+    data: compactTelemetryValue({
+      ...data,
+      tab: state.currentTab,
+      tutorialStep: step?.id || "",
+      profile: Boolean(state.server.profile),
+      sessionId: telemetrySessionId()
+    })
+  };
+  fetch(SERVER_TELEMETRY_ENDPOINT, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    keepalive: true
+  }).catch(() => {});
 }
 
 function handlePaymentReturnNotice() {
@@ -1449,6 +1520,47 @@ async function loadShopPaymentConfig() {
   renderShop();
 }
 
+async function loadCryptoConfig() {
+  if (!canUseServerSave()) {
+    state.crypto = {
+      checked: true,
+      enabled: false,
+      sandbox: true,
+      message: "Abra pelo servidor para ver MerreisCoin testnet.",
+      network: null,
+      token: null
+    };
+    renderShop();
+    return;
+  }
+  try {
+    const response = await fetch(SERVER_CRYPTO_CONFIG_ENDPOINT, {
+      credentials: "same-origin",
+      cache: "no-store"
+    });
+    const payload = await response.json().catch(() => ({}));
+    const merreisCoin = payload.merreisCoin || {};
+    state.crypto = {
+      checked: true,
+      enabled: Boolean(response.ok && merreisCoin.enabled),
+      sandbox: merreisCoin.sandbox !== false,
+      message: merreisCoin.message || "MerreisCoin testnet indisponivel.",
+      network: merreisCoin.network || null,
+      token: merreisCoin.token || null
+    };
+  } catch (error) {
+    state.crypto = {
+      checked: true,
+      enabled: false,
+      sandbox: true,
+      message: "Nao foi possivel checar MerreisCoin testnet.",
+      network: null,
+      token: null
+    };
+  }
+  renderShop();
+}
+
 function hasOnlineProfile() {
   return Boolean(canUseServerSave() && state.server.enabled && state.server.profile);
 }
@@ -1515,6 +1627,10 @@ async function loadServerSave() {
       persistLocalSave();
       setServerStatus("online", "Online");
       renderAll();
+      trackTelemetry("session:ready", {
+        source: payload.profile ? "profile" : "guest",
+        starterComplete: Boolean(state.save.starterOnboardingComplete)
+      }, { dedupeKey: "session:ready", cooldown: 0 });
       return;
     }
 
@@ -1558,6 +1674,10 @@ async function migrateServerSave(save) {
     state.server.localChangedWhileLoading = false;
     setServerStatus("online", "Migrado");
     renderAll();
+    trackTelemetry("session:migrated", {
+      source: payload.profile ? "profile" : "guest",
+      starterComplete: Boolean(state.save.starterOnboardingComplete)
+    }, { dedupeKey: "session:migrated", cooldown: 0 });
     return true;
   } catch (error) {
     return false;
@@ -2503,6 +2623,7 @@ function setup() {
   setupSocialRealtime();
   setupCompetitiveRealtime();
   loadShopPaymentConfig();
+  loadCryptoConfig();
   setupServerSave();
   renderAll();
 }
@@ -2673,8 +2794,17 @@ function walletInfoDetails(kind) {
 function switchTab(tabName) {
   const previousTab = state.currentTab;
   state.currentTab = PLAYER_TABS.has(tabName) ? tabName : "home";
-  if (tabName === "collection") progressTutorial("collection");
+  const tutorialStepId = currentTutorialStep()?.id || "";
+  trackTelemetry("tab:view", {
+    tab: state.currentTab,
+    previousTab
+  }, { dedupeKey: `tab:${state.currentTab}`, cooldown: 700 });
+  if (state.currentTab === "collection") progressTutorial("collection");
   if (state.currentTab === "trade" && isCurrentTutorialStep("trade")) progressTutorial("trade");
+  if (state.currentTab === "online" && tutorialStepId === "clash") progressTutorial("clash");
+  if (state.currentTab === "competitive" && (tutorialStepId === "tournament" || tutorialStepId === "ranked")) {
+    progressTutorial(tutorialStepId);
+  }
   if (state.currentTab === "competitive") refreshLeaderboard({ force: true });
   if (state.currentTab === "online") refreshOnlineLobbies({ force: true });
   if (state.currentTab === "friends" || state.currentTab === "trade" || state.currentTab === "online") refreshSocial({ force: true });
@@ -3446,6 +3576,7 @@ function setupActions() {
   });
 
   document.getElementById("shop-grid").addEventListener("click", handleShopPurchaseClick);
+  document.getElementById("shop-grid").addEventListener("keydown", handleShopPurchaseKeydown);
   document.getElementById("shop-promo")?.addEventListener("click", handleShopPurchaseClick);
   document.getElementById("shop-reward-reveal")?.addEventListener("click", handleShopRewardRevealClick);
 
@@ -3475,10 +3606,22 @@ function setupActions() {
 }
 
 function handleShopPurchaseClick(event) {
-  const button = event.target.closest("button[data-shop]");
-  if (!button || button.disabled) return false;
-  buyShopItem(button.dataset.shop);
+  const target = event.target.closest("[data-shop]");
+  if (!target) return false;
+  const disabled = target.matches("button:disabled")
+    || target.getAttribute("aria-disabled") === "true"
+    || target.dataset.disabled === "true";
+  if (disabled) return false;
+  buyShopItem(target.dataset.shop);
   return true;
+}
+
+function handleShopPurchaseKeydown(event) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const target = event.target.closest("[data-shop]");
+  if (!target || target.tagName === "BUTTON") return;
+  event.preventDefault();
+  handleShopPurchaseClick(event);
 }
 
 function handleShopRewardRevealClick(event) {
@@ -4294,7 +4437,7 @@ function setupProfileActions() {
   profileModal.querySelector(".profile-mode-tabs").addEventListener("click", (event) => {
     const button = event.target.closest("button[data-profile-mode]");
     if (!button) return;
-    state.server.profileMode = button.dataset.profileMode === "register" ? "register" : "login";
+    state.server.profileMode = "login";
     state.server.profileMessage = "";
     renderProfileModal();
   });
@@ -4347,7 +4490,7 @@ async function loadFirebaseAuth() {
   } catch (error) {
     state.firebase.checked = true;
     state.firebase.enabled = false;
-    state.firebase.message = "Login social nao carregou. Nome/PIN continua funcionando.";
+    state.firebase.message = "Login social nao carregou. Tente novamente em instantes.";
     renderFirebaseAuth();
   }
 }
@@ -4444,10 +4587,10 @@ function setupEntryGateActions() {
   const gate = document.getElementById("entry-gate");
   const loginButton = document.getElementById("entry-login-button");
   const registerButton = document.getElementById("entry-register-button");
-  if (!gate || !loginButton || !registerButton) return;
+  if (!gate || !loginButton) return;
 
   loginButton.addEventListener("click", () => openProfileModal("login", { fromEntryGate: true }));
-  registerButton.addEventListener("click", () => openProfileModal("register", { fromEntryGate: true }));
+  if (registerButton) registerButton.addEventListener("click", () => openProfileModal("register", { fromEntryGate: true }));
 }
 
 function entryGateStatusText() {
@@ -4456,8 +4599,8 @@ function entryGateStatusText() {
   if (!canUseServerSave()) return "Abra pelo servidor online para criar ou entrar em um perfil.";
   if (state.server.loading || state.server.status === "connecting") return "Conectando ao servidor...";
   if (!state.server.enabled || state.server.status === "error") return "Servidor indisponivel agora. Conta online obrigatoria para jogar.";
-  if (state.firebase.enabled) return `Servidor online. Entre com ${firebaseProviderListLabel()} ou nome/PIN para jogar.`;
-  return "Servidor online. Crie ou entre em um perfil para liberar o jogo.";
+  if (state.firebase.enabled) return `Servidor online. Use ${firebaseProviderListLabel()} para criar ou entrar na sua conta.`;
+  return "Servidor online. Login social obrigatorio para criar conta nova.";
 }
 
 function renderEntryGate() {
@@ -4480,7 +4623,7 @@ function renderEntryGate() {
 
 function openProfileModal(mode = state.server.profileMode, options = {}) {
   state.server.profileMessage = "";
-  state.server.profileMode = mode === "register" ? "register" : "login";
+  state.server.profileMode = "login";
   if (options.fromEntryGate) {
     state.server.entryGatePaused = true;
     renderEntryGate();
@@ -4498,7 +4641,8 @@ function closeProfileModal() {
 }
 
 function renderProfileModal() {
-  const mode = state.server.profileMode;
+  const mode = "login";
+  state.server.profileMode = mode;
   const profile = state.server.profile;
   const currentName = document.getElementById("profile-current-name");
   const currentMeta = document.getElementById("profile-current-meta");
@@ -4512,12 +4656,12 @@ function renderProfileModal() {
   renderProfileAvatar(currentAvatar, profile);
   currentName.textContent = profile?.name || "Visitante";
   currentMeta.textContent = profileMetaText(profile);
-  title.textContent = mode === "register" ? "Criar jogador" : "Entrar no perfil";
-  submit.textContent = mode === "register" ? "Criar jogador" : "Entrar";
+  title.textContent = "Entrar no perfil";
+  submit.textContent = "Entrar";
   message.textContent = state.server.profileMessage;
   message.classList.toggle("is-error", state.server.profileMessageType === "error");
   logoutButton.hidden = !profile;
-  logoutButton.textContent = profile?.authProvider === "firebase" ? "Sair da conta Google" : "Sair do perfil";
+  logoutButton.textContent = profile?.authProvider === "firebase" ? "Sair da conta social" : "Sair do perfil";
   document.querySelectorAll("[data-profile-mode]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.profileMode === mode);
   });
@@ -4532,8 +4676,8 @@ async function submitProfileForm(event) {
 
   const name = document.getElementById("profile-name-input").value;
   const pin = document.getElementById("profile-pin-input").value;
-  const action = state.server.profileMode === "register" ? "register" : "login";
-  setProfileMessage(action === "register" ? "Criando jogador..." : "Entrando...");
+  const action = "login";
+  setProfileMessage("Entrando...");
 
   try {
     if (state.server.saveTimer) await pushServerSave();
@@ -5512,6 +5656,22 @@ async function handleResultAction(action) {
 }
 
 function handleTutorialControls(event) {
+  const toggleButton = event.target.closest("button[data-tutorial-toggle]");
+  if (toggleButton) {
+    state.tutorialExpanded = !state.tutorialExpanded;
+    renderTutorialCoach();
+    decorateImageButtons(document.getElementById("tutorial-coach"));
+    return;
+  }
+
+  const collapseButton = event.target.closest("button[data-tutorial-collapse]");
+  if (collapseButton) {
+    state.tutorialExpanded = false;
+    renderTutorialCoach();
+    decorateImageButtons(document.getElementById("tutorial-coach"));
+    return;
+  }
+
   const resultButton = event.target.closest("button[data-tutorial-result-continue]");
   if (resultButton) {
     confirmTutorialResult();
@@ -5526,10 +5686,16 @@ function handleTutorialControls(event) {
 
   const actionButton = event.target.closest("button[data-tutorial-action]");
   if (!actionButton || actionButton.disabled) return;
+  state.tutorialExpanded = false;
   handleTutorialAction(actionButton.dataset.tutorialAction);
 }
 
 function handleTutorialAction(stepId) {
+  trackTelemetry("tutorial:action", { stepId }, {
+    dedupeKey: `tutorial:action:${stepId}`,
+    cooldown: 400
+  });
+
   if (stepId === "pack") {
     switchTab("packs");
     return;
@@ -5548,6 +5714,11 @@ function handleTutorialAction(stepId) {
 
   if (stepId === "trade") {
     switchTab("trade");
+    return;
+  }
+
+  if (stepId === "clash") {
+    switchTab("online");
     return;
   }
 
@@ -5838,13 +6009,17 @@ function tutorialResultText(stepId) {
       title: "Trocas apresentadas",
       body: "A mesa de trocas mostra amigos, oferta, pedido e desejo. Ela fica disponivel quando voce tiver amigos jogando, mas nao trava seu progresso."
     },
+    clash: {
+      title: "Bater tazzos apresentado",
+      body: "O duelo social fica em Online. Primeiro voce convida um amigo; se ele aceitar, os dois escolhem tazzos equivalentes e batem na mesa."
+    },
     tournament: {
-      title: "Torneio iniciado",
-      body: "O torneio criou uma batalha com entrada e premio. Ganhar a partida entrega a recompensa da chave."
+      title: "Torneios apresentados",
+      body: "Aqui ficam as chaves com entrada, premio e adversario. O tutorial so mostra onde elas estao; jogar fica para quando voce quiser."
     },
     ranked: {
-      title: "Ranqueada iniciada",
-      body: "A ranqueada abriu uma batalha competitiva. O resultado mexe nos trofeus e ajuda a subir de divisao."
+      title: "Ranqueada apresentada",
+      body: "A liga competitiva e o matchmaking ficam nesta area. Voce viu onde entrar sem precisar disputar uma partida agora."
     }
   };
   return messages[stepId] || {
@@ -5862,6 +6037,10 @@ function queueTutorialResult(stepId) {
     title: tutorialResultText(stepId).title,
     body: tutorialResultText(stepId).body
   };
+  trackTelemetry("tutorial:step_ready", { stepId }, {
+    dedupeKey: `tutorial:step_ready:${stepId}`,
+    cooldown: 0
+  });
   renderTutorialResultPopup();
   return true;
 }
@@ -5870,8 +6049,20 @@ function confirmTutorialResult() {
   const result = state.tutorialResult;
   if (!result) return;
   state.tutorialResult = null;
+  let newlyCompleted = false;
   if (state.save.tutorial && !state.save.tutorial[result.stepId]) {
     state.save.tutorial[result.stepId] = true;
+    newlyCompleted = true;
+  }
+  if (newlyCompleted) {
+    trackTelemetry("tutorial:complete", {
+      stepId: result.stepId,
+      completed: completedTutorialCount(),
+      total: TUTORIAL_STEPS.length
+    }, {
+      dedupeKey: `tutorial:complete:${result.stepId}`,
+      cooldown: 0
+    });
   }
   if (state.battle?.tutorial?.stepId === result.stepId || state.battle?.tutorialCompetitiveStep === result.stepId) {
     clearTurnTimer();
@@ -5967,8 +6158,8 @@ function renderHome() {
       tab: "shop",
       art: "assets/icones/banner_loja.png",
       eyebrow: "Promocoes",
-      title: "Merreis e cosmeticos",
-      body: "Veja pacotes de Merreis e itens visuais para deixar seu time mais reconhecivel em campo.",
+      title: "Merreis na loja",
+      body: "Veja pacotes de Merreis para abrir pacotinhos, entrar em torneios e acelerar sua colecao.",
       cta: "Ver loja"
     },
     {
@@ -6020,18 +6211,23 @@ function shopPromoItem() {
 function shopPromoAvailable(item = shopPromoItem()) {
   if (!item) return false;
   if (state.shopRewardReveal?.itemId === item.id) return false;
-  return !Boolean(state.save.oneTimePurchases?.[item.id]);
+  return !shopPromoPurchased(item);
+}
+
+function shopPromoPurchased(item = shopPromoItem()) {
+  return Boolean(item?.oneTime && state.save.oneTimePurchases?.[item.id]);
 }
 
 function shopPromoBanner(item = shopPromoItem(), placement = "shop") {
   if (!item) return "";
+  if (shopPromoPurchased(item) || state.shopRewardReveal?.itemId === item.id) return "";
   const payments = state.shopPayments || {};
   const purchased = Boolean(state.save.oneTimePurchases?.[item.id]);
   const paymentUnavailable = item.type === "merreis" && payments.checked && !payments.configured;
   const disabled = purchased || payments.checkoutPending || paymentUnavailable;
-  const status = purchased ? "Promocao resgatada" : "Compra unica por conta";
+  const status = purchased ? "Oferta indisponivel" : "Compra unica por conta";
   const actionLabel = purchased
-    ? "Ja comprado"
+    ? "Ja comprado nesta conta"
     : payments.checkoutPending
     ? "Abrindo checkout..."
     : paymentUnavailable
@@ -7224,51 +7420,66 @@ function renderTutorialCoach() {
   if (!coach) return;
   const current = currentTutorialStep();
   const done = completedTutorialCount();
-  const complete = done === TUTORIAL_STEPS.length;
-  const percent = Math.round((done / TUTORIAL_STEPS.length) * 100);
+  const total = TUTORIAL_STEPS.length;
+  const complete = done === total;
+  const dismissed = complete && state.save.tutorialRewardClaimed;
+  if (dismissed) {
+    state.tutorialExpanded = false;
+    coach.hidden = true;
+    coach.innerHTML = "";
+    coach.classList.remove("is-complete", "is-expanded", "has-reward");
+    return;
+  }
+
+  coach.hidden = false;
+  const percent = total ? Math.round((done / total) * 100) : 100;
   const rewardReady = complete && !state.save.tutorialRewardClaimed;
   const rewardDisabled = !rewardReady || state.tutorialRewardPending;
   const rewardLabel = state.tutorialRewardPending
     ? "Resgatando..."
     : state.save.tutorialRewardClaimed ? "Recompensa resgatada" : "Resgatar";
+  const statusLabel = complete ? "Tutorial completo" : `Tutorial ${done + 1}/${total}`;
+  const title = complete ? "Primeira liga concluida" : current.title;
+  const description = complete ? "O loop principal ja esta validado no seu save." : current.description;
+  const compactMeta = rewardReady ? "Premio pronto" : `${done}/${total}`;
+  const action = complete
+    ? `<button type="button" data-tutorial-reward="true" ${rewardDisabled ? "disabled" : ""}>${rewardLabel}</button>`
+    : `<button type="button" data-tutorial-action="${current.id}">${current.action || "Continuar"}</button>`;
   coach.classList.toggle("is-complete", complete);
+  coach.classList.toggle("is-expanded", state.tutorialExpanded);
+  coach.classList.toggle("has-reward", rewardReady);
   coach.innerHTML = `
-    <div class="tutorial-coach-copy">
-      <span class="eyebrow">${complete ? "Tutorial completo" : `Tutorial ${done + 1}/${TUTORIAL_STEPS.length}`}</span>
-      <strong>${complete ? "Primeira liga concluida" : current.title}</strong>
-      <p>${complete ? "O loop principal ja esta validado no seu save." : current.description}</p>
-      ${complete ? "" : `<span class="tutorial-next-line">${tutorialQuickLine(current)}</span>`}
-    </div>
-    <div class="tutorial-coach-progress" aria-label="Progresso do tutorial">
-      <span style="width:${percent}%"></span>
-    </div>
-    ${complete
-      ? `<button type="button" data-tutorial-reward="true" ${rewardDisabled ? "disabled" : ""}>${rewardLabel}</button>`
-      : `<button type="button" data-tutorial-action="${current.id}">${current.action || "Continuar"}</button>`}
+    <button class="tutorial-coach-orb" type="button" data-tutorial-toggle aria-expanded="${state.tutorialExpanded ? "true" : "false"}" aria-controls="tutorial-coach-card" aria-label="${state.tutorialExpanded ? "Recolher tutorial" : "Abrir tutorial"}">
+      <span class="tutorial-orb-mark" aria-hidden="true">?</span>
+      <span class="tutorial-orb-copy">
+        <strong>Tutorial</strong>
+        <small>${compactMeta}</small>
+      </span>
+      <span class="tutorial-orb-meter" style="--tutorial-percent:${percent}%;" aria-hidden="true"></span>
+    </button>
+    ${state.tutorialExpanded ? `
+      <article class="tutorial-coach-card" id="tutorial-coach-card">
+        <button class="viewer-close tutorial-coach-close" type="button" data-tutorial-collapse aria-label="Recolher tutorial">Fechar</button>
+        <div class="tutorial-coach-copy">
+          <span class="eyebrow">${statusLabel}</span>
+          <strong>${title}</strong>
+          <p>${description}</p>
+          ${complete ? "" : `<span class="tutorial-next-line">${tutorialQuickLine(current)}</span>`}
+        </div>
+        <div class="tutorial-coach-progress" aria-label="Progresso do tutorial">
+          <span style="width:${percent}%"></span>
+        </div>
+        ${action}
+      </article>
+    ` : ""}
   `;
 }
 
 function renderTutorialPopover() {
   const popover = document.getElementById("tutorial-popover");
   if (!popover) return;
-  const current = currentTutorialStep();
-  if (!current) {
-    popover.hidden = true;
-    popover.innerHTML = "";
-    return;
-  }
-
-  popover.hidden = false;
-  popover.innerHTML = `
-    <div class="tutorial-popover-icon">?</div>
-    <div>
-      <span class="eyebrow">Ajuda rapida</span>
-      <strong>${current.title}</strong>
-      <p>${current.tip || current.description}</p>
-      <small>${current.completes || "Siga a instrucao destacada para avancar."}</small>
-    </div>
-    <button type="button" data-tutorial-action="${current.id}">${current.action || "Ir"}</button>
-  `;
+  popover.hidden = true;
+  popover.innerHTML = "";
 }
 
 function smallRow(monster, meta) {
@@ -7696,6 +7907,11 @@ function openPackLocally(pack) {
     packName: pack.name,
     stage: "opening"
   };
+  trackTelemetry("pack:open", {
+    packId: pack.id,
+    cards: pulls.length,
+    source: "local"
+  }, { cooldown: 0 });
   progressMission("pack", 1);
   progressTutorial("pack");
   saveGame();
@@ -7734,6 +7950,11 @@ async function openPackOnServer(pack) {
       packName: payload.pack?.name || pack.name,
       stage: "opening"
     };
+    trackTelemetry("pack:open", {
+      packId: payload.pack?.id || pack.id,
+      cards: state.packReveal.length,
+      source: "server"
+    }, { cooldown: 0 });
     state.packPurchasePending = false;
     state.server.localChangedWhileLoading = false;
     setServerStatus("online", "Salvo");
@@ -8070,11 +8291,6 @@ function rankedChance(extraDifficulty = 0) {
 }
 
 async function runRankedMatch() {
-  if (isCurrentTutorialStep("ranked")) {
-    runRankedMatchLocally();
-    return;
-  }
-
   const savedCompetitive = activeSavedCompetitive();
   if (savedCompetitive?.type === "ranked") {
     resumeSavedCompetitiveBattle(savedCompetitive);
@@ -8099,13 +8315,10 @@ function runRankedMatchLocally() {
     switchTab("battle");
     return;
   }
-  const tutorialReady = isCurrentTutorialStep("ranked");
-  if (teamCost() > 10 && !tutorialReady) return;
+  if (teamCost() > 10) return;
   const rank = currentRank();
   const opponent = rankedOpponentForCurrentRank();
-  const battleOptions = competitiveBattleOptions("ranked");
   progressMission("ranked", 1);
-  progressTutorial("ranked");
   state.competitiveLog.unshift(`Ranqueada ${rank.name} iniciada contra ${opponent.name}.`);
   saveGame();
   switchTab("battle");
@@ -8118,8 +8331,7 @@ function runRankedMatchLocally() {
     actionTime: BATTLE_MODES.ranked.actionTime,
     playerPositions: selectedFormationPositions(),
     ranked: { rank: rank.name, opponent: opponent.name },
-    logIntro: `Ranqueada ${rank.name}: batalha contra ${opponent.name} comecou.`,
-    ...battleOptions
+    logIntro: `Ranqueada ${rank.name}: batalha contra ${opponent.name} comecou.`
   });
 }
 
@@ -8129,7 +8341,7 @@ async function runRankedMatchOnServer() {
     switchTab("battle");
     return;
   }
-  if (teamCost() > 10 && !isCurrentTutorialStep("ranked")) return;
+  if (teamCost() > 10) return;
 
   try {
     startMatchmakingSearch("ranked", "Ranqueada");
@@ -8139,8 +8351,6 @@ async function runRankedMatchOnServer() {
     const rank = payload.rank;
     const match = payload.match;
     if (!opponent || !rank || !match) return;
-    const battleOptions = competitiveBattleOptions("ranked");
-    progressTutorial("ranked");
     const queueText = matchmakingLogText(payload.matchmaking, "bot");
     state.competitiveLog.unshift(`Ranqueada ${rank.name} iniciada contra ${opponent.name}. ${queueText}`);
     switchTab("battle");
@@ -8153,8 +8363,7 @@ async function runRankedMatchOnServer() {
       actionTime: BATTLE_MODES.ranked.actionTime,
       playerPositions: selectedFormationPositions(),
       ranked: { rank: rank.name, opponent: opponent.name, matchId: match.id, matchmaking: payload.matchmaking },
-      logIntro: `Ranqueada ${rank.name}: batalha contra ${opponent.name} comecou. ${queueText}`,
-      ...battleOptions
+      logIntro: `Ranqueada ${rank.name}: batalha contra ${opponent.name} comecou. ${queueText}`
     });
   } catch (error) {
     finishMatchmakingSearch();
@@ -8232,11 +8441,6 @@ async function resolveRankedBattleOnServer(outcome, reason = "") {
 }
 
 async function runTournament(tournamentId) {
-  if (isCurrentTutorialStep("tournament")) {
-    runTournamentLocally(tournamentId);
-    return;
-  }
-
   const savedCompetitive = activeSavedCompetitive();
   if (savedCompetitive?.type === "tournament") {
     resumeSavedCompetitiveBattle(savedCompetitive);
@@ -8257,21 +8461,16 @@ async function runTournament(tournamentId) {
 
 function runTournamentLocally(tournamentId) {
   const tournament = TOURNAMENTS.find((item) => item.id === tournamentId);
-  const tutorialReady = isCurrentTutorialStep("tournament");
-  if (!tournament || (!tutorialReady && (teamCost() > 10 || state.save.merreis < tournament.entry))) return;
+  if (!tournament || teamCost() > 10 || state.save.merreis < tournament.entry) return;
   if (activeLockedBattle()) {
     state.battleSceneOpen = Boolean(state.battle);
     switchTab("battle");
     return;
   }
 
-  if (!tutorialReady) {
-    state.save.merreis -= tournament.entry;
-  }
-  const battleOptions = competitiveBattleOptions("tournament");
+  state.save.merreis -= tournament.entry;
   progressMission("tournament", 1);
-  progressTutorial("tournament");
-  state.competitiveLog.unshift(`Torneio ${tournament.name} iniciado${tutorialReady && state.save.merreis < tournament.entry ? " pelo tutorial" : ""}. Resolva na arena.`);
+  state.competitiveLog.unshift(`Torneio ${tournament.name} iniciado. Resolva na arena.`);
   saveGame();
   const opponent = TOURNAMENT_OPPONENTS[tournament.id];
   switchTab("battle");
@@ -8284,19 +8483,17 @@ function runTournamentLocally(tournamentId) {
     actionTime: BATTLE_MODES.tournament.actionTime,
     playerPositions: selectedFormationPositions(),
     tournamentId: tournament.id,
-    logIntro: `Torneio ${tournament.name}: batalha contra ${opponent.name} comecou.`,
-    ...battleOptions
+    logIntro: `Torneio ${tournament.name}: batalha contra ${opponent.name} comecou.`
   });
 }
 
 async function runTournamentOnServer(tournamentId) {
-  const tutorialReady = isCurrentTutorialStep("tournament");
   if (activeLockedBattle()) {
     state.battleSceneOpen = Boolean(state.battle);
     switchTab("battle");
     return;
   }
-  if (teamCost() > 10 && !tutorialReady) return;
+  if (teamCost() > 10) return;
 
   try {
     startMatchmakingSearch("tournament", "Torneio");
@@ -8306,8 +8503,6 @@ async function runTournamentOnServer(tournamentId) {
     const opponent = payload.opponent;
     const match = payload.match;
     if (!tournament || !opponent || !match) return;
-    const battleOptions = competitiveBattleOptions("tournament");
-    progressTutorial("tournament");
     const queueText = matchmakingLogText(payload.matchmaking, "bot");
     state.competitiveLog.unshift(`Torneio ${tournament.name} iniciado contra ${opponent.name}. ${queueText}`);
     switchTab("battle");
@@ -8322,8 +8517,7 @@ async function runTournamentOnServer(tournamentId) {
       tournamentId: tournament.id,
       competitiveMatchId: match.id,
       matchmaking: payload.matchmaking,
-      logIntro: `Torneio ${tournament.name}: batalha contra ${opponent.name} comecou. ${queueText}`,
-      ...battleOptions
+      logIntro: `Torneio ${tournament.name}: batalha contra ${opponent.name} comecou. ${queueText}`
     });
   } catch (error) {
     finishMatchmakingSearch();

@@ -8,8 +8,6 @@
     const cost = ctx.teamCost();
     const power = Math.round(ctx.teamPower());
     const legal = cost <= 10;
-    const rankedTutorialReady = ctx.isCurrentTutorialStep("ranked");
-    const tournamentTutorialReady = ctx.isCurrentTutorialStep("tournament");
     const chance = Math.round(ctx.rankedChance() * 100);
     const latest = ctx.state.competitiveLog[0] || "Sem partidas competitivas nesta sessao.";
     const rankedOpponent = ctx.rankedOpponentForCurrentRank();
@@ -17,9 +15,8 @@
     const streak = Number(ctx.state.save.competitiveWinStreak) || 0;
     const nextBonus = streak >= 5 ? 8 : streak >= 4 ? 8 : streak >= 3 ? 6 : streak >= 2 ? 4 : 2;
     const savedCompetitive = ctx.activeSavedCompetitive();
-    const competitiveTutorialReady = rankedTutorialReady || tournamentTutorialReady;
-    const savedTournamentId = !competitiveTutorialReady && savedCompetitive?.type === "tournament" ? savedCompetitive.tournamentId : "";
-    const savedRanked = !competitiveTutorialReady && savedCompetitive?.type === "ranked";
+    const savedTournamentId = savedCompetitive?.type === "tournament" ? savedCompetitive.tournamentId : "";
+    const savedRanked = savedCompetitive?.type === "ranked";
     const matchmakingElapsed = searching ? Math.max(0, Date.now() - (Number(ctx.state.matchmaking.startedAt) || Date.now())) : 0;
     const matchmakingRemaining = searching ? Math.max(0, Math.ceil((ctx.COMPETITIVE_MATCHMAKING_TIMEOUT_MS - matchmakingElapsed) / 1000)) : 0;
     const matchmakingLabel = searching
@@ -56,7 +53,7 @@
     const activeTournamentId = ctx.activeTournamentBattle() ? ctx.state.battle.tournamentId : savedTournamentId;
     const activeRanked = ctx.activeRankedBattle() || savedRanked;
     const rankedButton = document.getElementById("ranked-button");
-    rankedButton.disabled = searching || (!savedRanked && ((!legal && !rankedTutorialReady) || Boolean(activeTournamentId)));
+    rankedButton.disabled = searching || (!savedRanked && (!legal || Boolean(activeTournamentId)));
     rankedButton.textContent = searching
       ? `Procurando partida (${matchmakingLabel})`
       : savedRanked
@@ -65,20 +62,15 @@
       ? "Finalize o torneio"
       : activeRanked
       ? "Ranqueada ativa"
-      : !legal && rankedTutorialReady
-      ? "Disputar ranqueada tutorial"
       : "Disputar ranqueada";
 
     document.getElementById("tournament-list").innerHTML = ctx.TOURNAMENTS.map((tournament) => {
       const active = activeTournamentId === tournament.id;
-      const tutorialBypass = tournamentTutorialReady;
-      const disabled = searching || (activeTournamentId && !active) || activeRanked || (!active && !tutorialBypass && (ctx.state.save.merreis < tournament.entry || !legal));
+      const disabled = searching || (activeTournamentId && !active) || activeRanked || (!active && (ctx.state.save.merreis < tournament.entry || !legal));
       const label = searching
         ? `Procurando (${matchmakingLabel})`
         : active
         ? ctx.activeTournamentBattle() ? "Voltar para batalha" : "Retomar torneio"
-        : tutorialBypass && (ctx.state.save.merreis < tournament.entry || !legal)
-        ? "Entrar pelo tutorial"
         : "Entrar e batalhar";
       const opponent = ctx.TOURNAMENT_OPPONENTS[tournament.id];
       return `

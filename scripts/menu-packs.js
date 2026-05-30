@@ -1,15 +1,38 @@
 (function () {
   "use strict";
 
+  function escapeHtml(value) {
+    return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      "\"": "&quot;",
+      "'": "&#39;"
+    }[char]));
+  }
+
+  function cssImageUrl(value) {
+    const url = String(value || "")
+      .replace(/\\/g, "/")
+      .replace(/\s/g, "%20")
+      .replace(/"/g, "%22")
+      .replace(/'/g, "%27")
+      .replace(/\(/g, "%28")
+      .replace(/\)/g, "%29");
+    return `url("${url}")`;
+  }
+
   function renderPackPity(ctx) {
     const pity = ctx.state.save.packPity;
-    const legendaryCount = Math.min(pity.sinceLegendaryPlus, ctx.LEGENDARY_BOOST_MAX_TAZZOS);
-    const boostMultiplier = ctx.legendaryBoostMultiplier(pity.sinceLegendaryPlus);
+    const rawLegendaryCount = Math.max(0, Number(pity.sinceLegendaryPlus) || 0);
+    const legendaryCount = Math.min(rawLegendaryCount, ctx.LEGENDARY_BOOST_MAX_TAZZOS);
+    const boostMultiplier = ctx.legendaryBoostMultiplier(rawLegendaryCount);
     const boostReady = boostMultiplier > 1;
     const boostMaxReady = boostMultiplier >= ctx.LEGENDARY_BOOST_MAX_MULTIPLIER;
     const nextGoal = boostReady ? ctx.LEGENDARY_BOOST_MAX_TAZZOS : ctx.LEGENDARY_BOOST_TAZZOS;
     const nextBoost = boostReady ? ctx.LEGENDARY_BOOST_MAX_MULTIPLIER : ctx.LEGENDARY_BOOST_MULTIPLIER;
-    const remaining = Math.max(0, nextGoal - pity.sinceLegendaryPlus);
+    const remaining = Math.max(0, nextGoal - rawLegendaryCount);
+    const progressPercent = Math.round((legendaryCount / ctx.LEGENDARY_BOOST_MAX_TAZZOS) * 100);
     const headline = boostMaxReady
       ? "Chance 4x ativa para Lendario+"
       : boostReady
@@ -23,8 +46,8 @@
           <strong>${headline}</strong>
           <small>${legendaryCount}/${ctx.LEGENDARY_BOOST_MAX_TAZZOS} sem Lendario+${boostReady && !boostMaxReady ? " - 2x ativo" : ""}</small>
         </div>
-        <div class="progress" aria-label="Progresso para boost lendario">
-          <span style="width:${Math.round((legendaryCount / ctx.LEGENDARY_BOOST_MAX_TAZZOS) * 100)}%"></span>
+        <div class="progress" role="progressbar" aria-label="Progresso para boost lendario" aria-valuemin="0" aria-valuemax="${ctx.LEGENDARY_BOOST_MAX_TAZZOS}" aria-valuenow="${legendaryCount}">
+          <span style="width:${progressPercent}%"></span>
         </div>
       </article>
     `;
@@ -44,9 +67,21 @@
     const gridKey = `packs:${packBusy}:${ctx.state.save.merreis}:${ctx.PACKS.length}:${ctx.state.save.packPity.sinceLegendaryPlus}`;
     if (grid.dataset.renderKey !== gridKey) {
       grid.dataset.renderKey = gridKey;
-      grid.innerHTML = ctx.PACKS.map((pack) => `
-        <article class="pack-card${packBusy ? " is-disabled" : ""}">
-          <img class="pack-card-art" src="${pack.image}" alt="Pacote ${pack.name}">
+      grid.innerHTML = ctx.PACKS.map((pack) => {
+        const storeImage = pack.storeImage || pack.image;
+        const badge = pack.badgeImage
+          ? `
+            <span class="pack-card-badge-wrap rarity-gloss-art" style="--tazzo-gloss-mask: ${escapeHtml(cssImageUrl(pack.badgeImage))};">
+              <img class="pack-card-badge rarity-gloss-image" src="${escapeHtml(pack.badgeImage)}" alt="${escapeHtml(pack.badgeAlt || "")}">
+              <span class="rarity-gloss-sweep" aria-hidden="true"></span>
+            </span>`
+          : "";
+        return `
+        <article class="pack-card is-pack-${pack.id}${pack.badgeImage ? " has-pack-badge" : ""}${packBusy ? " is-disabled" : ""}">
+          <figure class="pack-card-visual">
+            <img class="pack-card-art" src="${escapeHtml(storeImage)}" alt="Pacote ${escapeHtml(pack.name)}">
+            ${badge}
+          </figure>
           <h2>${pack.name}</h2>
           <p>${pack.note}</p>
           <div class="pack-meta">
@@ -55,7 +90,8 @@
           </div>
           <button type="button" data-pack="${pack.id}" ${packBusy || ctx.state.save.merreis < pack.cost ? "disabled" : ""}>Abrir</button>
         </article>
-      `).join("");
+      `;
+      }).join("");
 
       grid.querySelectorAll("button[data-pack]").forEach((button) => {
         button.addEventListener("click", () => ctx.openPack(button.dataset.pack));

@@ -67,6 +67,15 @@ function newBattle(config = null, legacyEnemyName = "IA") {
   }
 
   state.battleSceneOpen = true;
+  if (typeof trackTelemetry === "function") {
+    trackTelemetry("battle:start", {
+      mode: state.battle.mode,
+      ranked: Boolean(state.battle.ranked),
+      tournamentId: state.battle.tournamentId || "",
+      online: Boolean(state.battle.online),
+      tutorial: tutorial?.stepId || ""
+    }, { dedupeKey: `battle:start:${Date.now()}`, cooldown: 0 });
+  }
   playSfx("battle-start", { cooldown: 500 });
   advanceTurn();
   startMatchTimer();
@@ -1062,6 +1071,15 @@ function timeoutWinner() {
 
 function setBattleResult(result) {
   playSfx(result.winner === "player" ? "battle-win" : result.winner === "draw" ? "battle-draw" : "battle-lose");
+  if (typeof trackTelemetry === "function") {
+    trackTelemetry("battle:result", {
+      mode: state.battle?.mode || "",
+      winner: result.winner,
+      reason: result.reason || "",
+      ranked: Boolean(result.ranked),
+      tournamentId: result.tournamentId || null
+    }, { dedupeKey: `battle:result:${Date.now()}`, cooldown: 0 });
+  }
   state.battle.result = {
     winner: result.winner,
     title: result.title,

@@ -35,6 +35,24 @@ FIREBASE_AUTH_PROVIDERS=google
 
 No Firebase Console, ative os provedores desejados em Authentication > Sign-in method e cadastre o dominio publico do jogo em Authorized domains.
 
+### Mercado Pago
+
+Para vender Merreis com Checkout Pro, configure:
+
+```text
+MERCADO_PAGO_ACCESS_TOKEN=<access token de producao do Mercado Pago>
+PUBLIC_BASE_URL=https://seu-dominio.com
+MERCADO_PAGO_WEBHOOK_SECRET=<secret opcional do webhook>
+```
+
+`PUBLIC_BASE_URL` deve ser a URL publica HTTPS do jogo. Se ela ficar vazia, o servidor tenta inferir a URL HTTPS atual do request, mas em producao e mais previsivel deixar configurado.
+
+No painel do Mercado Pago Developers, crie uma notificacao Webhook do evento `payments` apontando para:
+
+```text
+https://seu-dominio.com/api/mercadopago/webhook
+```
+
 ## Deploy com Docker
 
 O repositorio ja inclui `Dockerfile`. Em producao na Railway, o volume persistente deve ser criado no dashboard; o Dockerfile nao usa a instrucao `VOLUME` porque a Railway rejeita essa instrucao no build.

@@ -1,5 +1,10 @@
 server-data/
 node_modules/
+artifacts/
+deployments/
+promo-video/frames*/
+promo-video/.chrome-*-profile/
+promo-video/out/*.crdownload
 .env
 .env.*
 !.env.example

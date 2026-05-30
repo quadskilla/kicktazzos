@@ -1,5 +1,5 @@
 (() => {
-const ASSETS = Array.from({ length: 97 }, (_, index) => `tazzos/${index + 1}.png`);
+const ASSETS = Array.from({ length: 152 }, (_, index) => `tazzos/${index + 1}.webp`);
 
 const BACKS = [
   "tazzos back/back1.png"
@@ -63,7 +63,7 @@ const MONSTERS = [
   mon("rodrigo-de-paul-tazzo", 26, "Rodri de Pau", ["Meia"], "Comum", 89, 79, 83, 82, "Meia"),
   mon("enzo-fernandez-tazzo", 27, "Enzinho", ["Meia"], "Incomum", 87, 84, 82, 81, "Meia"),
   mon("alexis-mac-allister-tazzo", 28, "Alexis Mac Alista", ["Meia"], "Comum", 85, 83, 84, 80, "Meia"),
-  mon("cristian-romero-tazzo", 29, "Cuti Romerão", ["Defensor"], "Raro", 92, 76, 72, 78, "Zagueiro"),
+  mon("cristian-romero-tazzo", 29, "Cuti Romerão", ["Defensor"], "Incomum", 92, 76, 72, 78, "Zagueiro"),
   mon("lisandro-martinez-tazzo", 30, "Licha Martelo", ["Defensor"], "Comum", 90, 74, 73, 77, "Zagueiro"),
   mon("nahuel-molina-tazzo", 31, "Molininha", ["Defensor"], "Incomum", 83, 80, 78, 85, "Zagueiro"),
   mon("nico-tagliaficoo-tazzo", 32, "Nico Tagliaficoo", ["Defensor"], "Raro", 88, 75, 76, 81, "Zagueiro"),
@@ -75,11 +75,11 @@ const MONSTERS = [
   mon("exequiel-palacioso-tazzo", 38, "Exequiel Palacioso", ["Meia"], "Raro", 84, 79, 80, 82, "Meia"),
   mon("german-pesadella-tazzo", 39, "Germán Pesadella", ["Defensor"], "Incomum", 91, 74, 71, 76, "Zagueiro"),
   mon("facu-medinada-tazzo", 40, "Facu Medinada", ["Defensor"], "Incomum", 89, 76, 74, 79, "Zagueiro"),
-  mon("thiaguinho-almadaco-tazzo", 41, "Thiaguinho Almadaço", ["Meia"], "Epico", 78, 82, 86, 84, "Meia"),
+  mon("thiaguinho-almadaco-tazzo", 41, "Messias", ["Meia"], "Mistico Secreto", 90, 90, 99, 97, "Meia"),
   mon("paulo-dibala-tazzo", 42, "Paulo Dibala", ["Atacante"], "Epico", 79, 86, 88, 83, "Atacante", null, 21),
   goalie("emiliana-goleiro-tazzo", 43, "Emilianão", "Comum", "investidaTotal"),
   mon("judao-bellingol-tazzo", 44, "Judão Bellingol", ["Meia"], "Lendario", 84, 88, 91, 87, "Meia"),
-  mon("bukayo-sacada-tazzo", 45, "Bukayo Sacada", ["Atacante"], "Lendario", 83, 86, 92, 91, "Atacante"),
+  mon("bukayo-sacada-tazzo", 45, "Bukayo Sacada", ["Atacante"], "Epico", 83, 86, 92, 91, "Atacante"),
   mon("harri-kane-tazzo", 46, "Harri Kane", ["Atacante"], "Lendario", 88, 93, 85, 77, "Atacante"),
   mon("phil-fodao-tazzo", 47, "Phil Fodão", ["Atacante"], "Epico", 80, 88, 93, 86, "Atacante"),
   mon("declan-arroz-tazzo", 48, "Declan Arroz", ["Meia"], "Raro", 90, 82, 82, 79, "Meia"),
@@ -100,7 +100,7 @@ const MONSTERS = [
   mon("conor-gallagher-tazzo", 63, "Conor Gallagher", ["Meia"], "Incomum", 86, 80, 78, 84, "Meia"),
   mon("noni-madukeke-tazzo", 64, "Noni Madukeke", ["Atacante"], "Raro", 79, 84, 88, 87, "Atacante"),
   goalie("pickford-tazzo", 65, "Pickford", "Lendario", "teamHeal"),
-  mon("ruben-diaszao-tazzo", 66, "Rúben Dibras", ["Defensor"], "Raro", 85, 75, 71, 77, "Zagueiro"),
+  mon("ruben-diaszao-tazzo", 66, "Rúben Dibras", ["Defensor"], "Incomum", 85, 75, 71, 77, "Zagueiro"),
   mon("cristianildo-tazzo", 74, "Cristianildo", ["Atacante"], "Lendario", 89, 96, 88, 86, "Atacante"),
   mon("brunao-fernandes-tazzo", 68, "Brunão das Tabelas", ["Meia"], "Epico", 82, 91, 83, 75, "Meia"),
   mon("bernardao-silva-tazzo", 69, "Bernas Silvaço", ["Meia"], "Raro", 78, 80, 87, 79, "Meia"),
@@ -110,16 +110,16 @@ const MONSTERS = [
   mon("joao-cancel0-tazzo", 73, "João CanceL0", ["Defensor"], "Comum", 79, 78, 82, 83, "Zagueiro"),
   mon("nunao-mendes-tazzo", 67, "Nunão Mendes", ["Defensor"], "Comum", 77, 84, 83, 75, "Zagueiro"),
   mon("vitinhaco-tazzo", 75, "Vitinhaço", ["Meia"], "Comum", 77, 77, 84, 79, "Meia"),
-  mon("gonca-ramos-tazzo", 76, "Gonça Ramos", ["Atacante"], "Raro", 80, 82, 77, 78, "Atacante"),
-  mon("diogo-dalotado-tazzo", 77, "Diogo Dalotado", ["Defensor"], "Incomum", 79, 75, 74, 78, "Zagueiro"),
-  mon("joao-nevez-tazzo", 78, "João Nevez", ["Meia"], "Incomum", 76, 73, 77, 75, "Meia"),
-  mon("ruben-nevasca-tazzo", 79, "Rúben Nevasca", ["Meia"], "Incomum", 78, 77, 74, 71, "Meia"),
-  mon("chico-conceicao-tazzo", 80, "Chico Conceição", ["Atacante"], "Incomum", 71, 74, 80, 79, "Atacante"),
-  mon("pedrao-neto-tazzo", 81, "Pedrão Neto", ["Atacante"], "Incomum", 73, 76, 79, 80, "Atacante"),
+  mon("gonca-ramos-tazzo", 76, "Gonça Ramos", ["Atacante"], "Incomum", 80, 82, 77, 78, "Atacante"),
+  mon("diogo-dalotado-tazzo", 77, "Diogo Dalotado", ["Defensor"], "Comum", 79, 75, 74, 78, "Zagueiro"),
+  mon("joao-nevez-tazzo", 78, "João Nevez", ["Meia"], "Comum", 76, 73, 77, 75, "Meia"),
+  mon("ruben-nevasca-tazzo", 79, "Rúben Nevasca", ["Meia"], "Comum", 78, 77, 74, 71, "Meia"),
+  mon("chico-conceicao-tazzo", 80, "Chico Conceição", ["Atacante"], "Comum", 71, 74, 80, 79, "Atacante"),
+  mon("pedrao-neto-tazzo", 81, "Pedrão Neto", ["Atacante"], "Comum", 73, 76, 79, 80, "Atacante"),
   mon("joao-palhinhaco-tazzo", 82, "João Palhinhaço", ["Meia"], "Comum", 81, 72, 69, 70, "Meia"),
   mon("gonca-inacio-tazzo", 83, "Gonça Inácio", ["Defensor"], "Comum", 79, 71, 70, 72, "Zagueiro"),
   mon("tonho-silva-tazzo", 84, "Tonho Silva", ["Defensor"], "Comum", 77, 70, 69, 71, "Zagueiro"),
-  mon("nelson-sem-medo-tazzo", 85, "Nelson Sem Medo", ["Defensor"], "Incomum", 76, 73, 75, 79, "Zagueiro"),
+  mon("nelson-sem-medo-tazzo", 85, "Nelson Sem Medo", ["Defensor"], "Comum", 76, 73, 75, 79, "Zagueiro"),
   mon("matheusao-nunez-tazzo", 86, "Matheusão Nunez", ["Meia"], "Incomum", 78, 78, 81, 82, "Meia"),
   mon("robozao-cr-7-tazzo", 87, "Robozão CR 7", ["Atacante"], "Mistico Secreto", 90, 97, 89, 87, "Atacante"),
   goalie("diogo-costaco-tazzo", 88, "Diogo Costaço", "Epico", "substitution"),
@@ -131,22 +131,84 @@ const MONSTERS = [
   mon("tchouamago-tazzo", 94, "TchouaMago", ["Meia"], "Raro", 84, 79, 80, 78, "Meia"),
   mon("theo-hernandezao-tazzo", 95, "Theo Hernandezão", ["Defensor"], "Epico", 82, 81, 80, 85, "Zagueiro"),
   mon("jules-konde-tazzo", 96, "Jules Kondê", ["Defensor"], "Raro", 83, 77, 78, 82, "Zagueiro"),
-  mon("salibao-tazzo", 97, "Salibão", ["Defensor"], "Incomum", 84, 74, 77, 80, "Zagueiro")
+  mon("salibao-tazzo", 97, "Salibão", ["Defensor"], "Incomum", 84, 74, 77, 80, "Zagueiro"),
+  mon("dayot-upa-mecano-tazzo", 98, "Dayot Upa-Mecano", ["Defensor"], "Comum", 84, 74, 72, 78, "Zagueiro"),
+  mon("warren-zaire-emery-tazzo", 99, "Warren Zaïre-Emery", ["Meia"], "Incomum", 79, 76, 80, 81, "Meia"),
+  mon("ibrahima-konate-tazzo", 100, "Ibrahima Konate", ["Defensor"], "Incomum", 84, 77, 72, 79, "Zagueiro"),
+  mon("zinedao-sidane-tazzo", 101, "Zinedão Sidane", ["Meia"], "Mistico", 99, 80, 85, 50, "Meia"),
+  mon("lucas-digne-tazzo", 102, "Lucas Digne", ["Defensor"], "Comum", 81, 74, 77, 75, "Zagueiro"),
+  mon("ngolo-kantche-tazzo", 103, "N'Golo Kantche", ["Meia"], "Raro", 85, 73, 81, 80, "Meia"),
+  mon("manu-kone-tazzo", 104, "Manu Kone", ["Meia"], "Incomum", 81, 75, 79, 78, "Meia"),
+  mon("adrien-rabio-tazzo", 105, "Adrien Rabiô", ["Meia"], "Incomum", 82, 78, 79, 76, "Meia"),
+  mon("bradley-barcolaco-tazzo", 106, "Bradley Barcolaço", ["Atacante"], "Epico", 77, 79, 84, 86, "Atacante"),
+  mon("rayan-cheirki-tazzo", 107, "Rayan Cheirki", ["Meia"], "Raro", 76, 78, 85, 81, "Meia"),
+  mon("deseje-doue-tazzo", 108, "Deseje Doue", ["Atacante"], "Raro", 78, 79, 83, 82, "Atacante"),
+  mon("michael-olize-tazzo", 109, "Michael Olize", ["Atacante"], "Raro", 77, 80, 84, 81, "Atacante"),
+  goalie("maignano-tazzo", 110, "Maignano", "Epico", "fullShot"),
+  mon("joshua-kimmix-tazzo", 111, "Joshua Kimmix", ["Meia"], "Raro", 83, 79, 80, 77, "Meia"),
+  mon("toni-rudigao-tazzo", 112, "Toni Rüdigão", ["Defensor"], "Lendario", 90, 85, 60, 90, "Zagueiro"),
+  mon("nico-schlotterzi-tazzo", 113, "Nico Schlötterzi", ["Defensor"], "Comum", 84, 74, 73, 76, "Zagueiro"),
+  mon("david-raumba-tazzo", 114, "David Raumba", ["Defensor"], "Incomum", 79, 75, 79, 81, "Zagueiro"),
+  mon("robin-coque-tazzo", 115, "Robin Coque", ["Defensor"], "Comum", 83, 73, 72, 75, "Zagueiro"),
+  mon("jamal-musiloko-tazzo", 116, "Jamal Musiloko", ["Meia"], "Lendario", 78, 82, 86, 85, "Meia"),
+  mon("florian-wirtzo-tazzo", 117, "Florian Wirtzo", ["Meia"], "Epico", 77, 83, 85, 82, "Meia"),
+  mon("aleksandar-pavlokic-tazzo", 118, "Aleksandar Pavlokic", ["Meia"], "Incomum", 81, 76, 80, 76, "Meia"),
+  mon("leroy-saneca-tazzo", 119, "Leroy Saneca", ["Atacante"], "Epico", 77, 80, 84, 85, "Atacante"),
+  mon("deniz-undavi-tazzo", 120, "Deniz Undavi", ["Atacante"], "Incomum", 80, 81, 79, 76, "Atacante"),
+  mon("kai-havertzz-tazzo", 121, "Kai Havertzz", ["Atacante"], "Raro", 79, 81, 82, 79, "Atacante"),
+  mon("jonathan-tahhh-tazzo", 122, "Jonathan Tahhh", ["Defensor"], "Incomum", 85, 75, 73, 76, "Zagueiro"),
+  mon("robert-andrix-tazzo", 123, "Robert Andrix", ["Meia"], "Incomum", 84, 77, 75, 73, "Meia"),
+  mon("pascal-grosss-tazzo", 124, "Pascal Grosss", ["Meia"], "Incomum", 80, 78, 79, 71, "Meia"),
+  mon("maximilian-mittelstadtz-tazzo", 125, "Maximilian Mittelstadtz", ["Defensor"], "Incomum", 80, 76, 78, 79, "Zagueiro"),
+  mon("benjamin-henricks-tazzo", 126, "Benjamin Henricks", ["Defensor"], "Incomum", 79, 75, 79, 81, "Zagueiro"),
+  mon("waldemar-antonn-tazzo", 127, "Waldemar Antonn", ["Defensor"], "Comum", 83, 74, 72, 75, "Zagueiro"),
+  mon("chris-fuhrick-tazzo", 128, "Chris Führick", ["Atacante"], "Incomum", 76, 79, 82, 81, "Atacante"),
+  mon("serge-gnabryx-tazzo", 129, "Serge Gnabryx", ["Atacante"], "Epico", 77, 81, 83, 83, "Atacante"),
+  mon("nikolai-fullking-tazzo", 130, "Nikolai Fullking", ["Atacante"], "Incomum", 82, 83, 75, 72, "Atacante"),
+  goalie("neuerz-tazzo", 131, "Neuerz", "Lendario", "extraTurn"),
+  mon("laminho-jamal-tazzo", 132, "Laminho Jamal", ["Atacante"], "Mistico", 77, 82, 87, 86, "Atacante"),
+  mon("nicao-williams-tazzo", 133, "Nicão Williams", ["Atacante"], "Lendario", 78, 81, 85, 88, "Atacante"),
+  mon("pedrito-gonzalaz-tazzo", 134, "Pedrito Gonzalaz", ["Meia"], "Epico", 79, 79, 86, 79, "Meia"),
+  mon("gavito-paellaz-tazzo", 135, "Gavito Paellaz", ["Meia"], "Raro", 81, 78, 83, 80, "Meia"),
+  mon("danito-olmito-tazzo", 136, "Danito Olmito", ["Meia"], "Raro", 78, 81, 82, 79, "Meia"),
+  mon("rodrito-hernandes-tazzo", 137, "Rodrito Hernandes", ["Meia"], "Lendario", 85, 80, 81, 75, "Meia"),
+  mon("fabiao-ruizito-tazzo", 138, "Fabião Ruizito", ["Meia"], "Incomum", 82, 79, 81, 76, "Meia"),
+  mon("alvarito-moraton-tazzo", 139, "Alvarito Moraton", ["Atacante"], "Raro", 81, 83, 78, 77, "Atacante"),
+  mon("alejandro-grimaldon-tazzo", 140, "Alejandro Grimaldon", ["Defensor"], "Incomum", 79, 77, 81, 81, "Zagueiro"),
+  mon("andres-iniestion-tazzo", 141, "Andres Iniestión", ["Meia"], "Mistico Secreto", 99, 78, 95, 86, "Meia"),
+  mon("mikeao-oyarzabao-tazzo", 142, "Mikeão Oyarzabão", ["Atacante"], "Raro", 81, 81, 80, 77, "Atacante"),
+  mon("ferrano-torraco-tazzo", 143, "Ferrano Torraço", ["Atacante"], "Raro", 79, 81, 81, 81, "Atacante"),
+  mon("mikelao-merinao-tazzo", 144, "Mikelão Merinão", ["Meia"], "Incomum", 83, 79, 79, 75, "Meia"),
+  mon("aymerico-laporton-tazzo", 145, "Aymerico Laportón", ["Defensor"], "Comum", 84, 75, 74, 74, "Zagueiro"),
+  mon("nacho-fernandao-tazzo", 146, "Nacho Fernandão", ["Defensor"], "Comum", 83, 73, 73, 73, "Zagueiro"),
+  mon("pauzinho-cubarsao-tazzo", 147, "Pauzinho Cubarsão", ["Defensor"], "Comum", 81, 73, 76, 74, "Zagueiro"),
+  mon("jesusao-navaza-tazzo", 148, "Jesusão Navaza", ["Defensor"], "Incomum", 77, 75, 79, 80, "Zagueiro"),
+  mon("marquito-casadao-tazzo", 149, "Marquito Casadão", ["Meia"], "Comum", 80, 74, 77, 75, "Meia"),
+  mon("yerinho-pinudo-tazzo", 150, "Yerinho Pinudo", ["Atacante"], "Raro", 77, 78, 81, 83, "Atacante"),
+  mon("bryano-zaragoza-tazzo", 151, "Bryano Zaragoza", ["Atacante"], "Raro", 76, 77, 83, 85, "Atacante"),
+  goalie("unai-simonz-tazzo", 152, "Unai Simonz", "Epico", "freeSwap")
 ];
 
 const MONSTER_BY_ID = Object.fromEntries(MONSTERS.map((monster) => [monster.id, monster]));
-MONSTER_BY_ID["artilheiro-brasil"].holoImage = "tazzos/1(2).png";
-MONSTER_BY_ID["vinicius-jr-tazzo"].holoImage = "tazzos/3(2).png";
-MONSTER_BY_ID["rodrygo-tazzo"].holoImage = "tazzos/4(2).png";
-MONSTER_BY_ID["endrick-tazzo"].holoImage = "tazzos/14(2).png";
-MONSTER_BY_ID["angel-di-maria-tazzo"].holoImage = "tazzos/25(2).png";
-MONSTER_BY_ID["judao-bellingol-tazzo"].holoImage = "tazzos/44(2).png";
-MONSTER_BY_ID["bukayo-sacada-tazzo"].holoImage = "tazzos/45(2).png";
-MONSTER_BY_ID["harri-kane-tazzo"].holoImage = "tazzos/46(2).png";
-MONSTER_BY_ID["pickford-tazzo"].holoImage = "tazzos/65(2).png";
-MONSTER_BY_ID["robozao-cr-7-tazzo"].holoImage = "tazzos/87(2).png";
-MONSTER_BY_ID["kylian-mbrappe-tazzo"].holoImage = "tazzos/90(2).png";
-MONSTER_BY_ID["dembeletico-tazzo"].holoImage = "tazzos/92(2).png";
+MONSTER_BY_ID["artilheiro-brasil"].holoImage = "tazzos/1 (2).webp";
+MONSTER_BY_ID["vinicius-jr-tazzo"].holoImage = "tazzos/3 (2).webp";
+MONSTER_BY_ID["rodrygo-tazzo"].holoImage = "tazzos/4 (2).webp";
+MONSTER_BY_ID["endrick-tazzo"].holoImage = "tazzos/14 (2).webp";
+MONSTER_BY_ID["angel-di-maria-tazzo"].holoImage = "tazzos/25 (2).webp";
+MONSTER_BY_ID["thiaguinho-almadaco-tazzo"].holoImage = "tazzos/41 (2).webp";
+MONSTER_BY_ID["judao-bellingol-tazzo"].holoImage = "tazzos/44 (2).webp";
+MONSTER_BY_ID["harri-kane-tazzo"].holoImage = "tazzos/46 (2).webp";
+MONSTER_BY_ID["pickford-tazzo"].holoImage = "tazzos/65 (2).webp";
+MONSTER_BY_ID["cristianildo-tazzo"].holoImage = "tazzos/74 (2).webp";
+MONSTER_BY_ID["robozao-cr-7-tazzo"].holoImage = "tazzos/87 (2).webp";
+MONSTER_BY_ID["kylian-mbrappe-tazzo"].holoImage = "tazzos/90 (2).webp";
+MONSTER_BY_ID["dembeletico-tazzo"].holoImage = "tazzos/92 (2).webp";
+MONSTER_BY_ID["zinedao-sidane-tazzo"].holoImage = "tazzos/101 (2).webp";
+MONSTER_BY_ID["toni-rudigao-tazzo"].holoImage = "tazzos/112 (2).webp";
+MONSTER_BY_ID["leroy-saneca-tazzo"].holoImage = "tazzos/119 (2).webp";
+MONSTER_BY_ID["neuerz-tazzo"].holoImage = "tazzos/131 (2).webp";
+MONSTER_BY_ID["laminho-jamal-tazzo"].holoImage = "tazzos/132 (2).webp";
+MONSTER_BY_ID["andres-iniestion-tazzo"].holoImage = "tazzos/141(2).webp";
 
 const RANKS = [
   { name: "Tampinha", min: 0 },
@@ -165,21 +227,17 @@ const TOURNAMENTS = [
 
 const SHOP_ITEMS = [
   { id: "starter-bundle", type: "merreis", featured: true, name: "Pacote Iniciante", merreis: 50000, fragments: 1000, legendaryCards: 3, oneTime: true, priceCents: 990, currency: "BRL", priceLabel: "R$ 9,90", image: "assets/pacote_iniciante.png", bannerImage: "assets/banner_promo.png", note: "Compra unica por conta: 50 mil Merreis, 1000 fragmentos e 3 tazzos lendarios aleatorios." },
-  { id: "merreis-2000", type: "merreis", name: "Bolso de Merreis", merreis: 2000, priceCents: 499, currency: "BRL", priceLabel: "R$ 4,99", image: "assets/4,99.png", note: "Recarga rapida para abrir pacotinhos e entrar em torneios." },
-  { id: "merreis-10000", type: "merreis", name: "Combo Recreio", merreis: 10000, priceCents: 1499, currency: "BRL", priceLabel: "R$ 14,99", image: "assets/14,99.png", note: "Mais folego para comprar pacotinhos e melhorar seu time." },
-  { id: "merreis-30000", type: "merreis", name: "Cofre Campeao", merreis: 30000, priceCents: 2499, currency: "BRL", priceLabel: "R$ 24,99", image: "assets/24,99.png", note: "Pacote grande para colecionadores que querem acelerar a liga." },
-  { id: "frame-holo", type: "cosmetic", cosmeticSlot: "team", slotLabel: "Aro", name: "Aro de Campeao", cost: 380, note: "Aro dourado animado em volta dos seus tazzos no campo, visivel em partidas online." },
-  { id: "album-crocante", type: "cosmetic", cosmeticSlot: "album", slotLabel: "Base", name: "Base de Arquibancada", cost: 460, note: "Base de figurinha de estadio atras dos seus tazzos na arena, tambem vista pelo rival." },
-  { id: "tear-effect", type: "cosmetic", cosmeticSlot: "pack", slotLabel: "Rastro", name: "Rastro de Rasgo", cost: 520, note: "Faixa de energia que corta o tazzo em campo quando ele esta na partida online ou local." },
-  { id: "avatar-master", type: "cosmetic", cosmeticSlot: "profile", slotLabel: "Selo", name: "Selo de Colecionador", cost: 620, note: "Pequeno selo no tazzo em campo para marcar seu time como colecionador veterano." }
+  { id: "merreis-2000", type: "merreis", name: "Bolso de Merreis", merreis: 2000, priceCents: 499, currency: "BRL", priceLabel: "R$ 4,99", image: "assets/icones/4,99 new.png", badgeImage: "assets/icones/oferta especial.png", badgeAlt: "Oferta especial", note: "Recarga rapida para abrir pacotinhos e entrar em torneios." },
+  { id: "merreis-10000", type: "merreis", name: "Combo Recreio", merreis: 10000, priceCents: 1499, currency: "BRL", priceLabel: "R$ 14,99", image: "assets/icones/14,99 new.png", badgeImage: "assets/icones/mais vendido.png", badgeAlt: "Mais vendido", note: "Mais folego para comprar pacotinhos e melhorar seu time." },
+  { id: "merreis-30000", type: "merreis", name: "Cofre Campeao", merreis: 30000, priceCents: 2499, currency: "BRL", priceLabel: "R$ 24,99", image: "assets/icones/24,99 new.png", badgeImage: "assets/icones/melhor custo beneficio.png", badgeAlt: "Melhor custo beneficio", note: "Pacote grande para colecionadores que querem acelerar a liga." }
 ];
 
 const PACKS = [
-  { id: "simples", name: "Simples", cards: 1, cost: 150, note: "1 tazzo", image: "assets/pack-simples.png", openImage: "assets/pack-simples-open.png" },
-  { id: "crocante", name: "Crocante", cards: 3, cost: 400, note: "3 tazzos", image: "assets/pack-crocante.png", openImage: "assets/pack-crocante-open.png" },
-  { id: "recheado", name: "Recheado", cards: 5, cost: 600, note: "5 tazzos, raro garantido", image: "assets/pack-recheado.png", openImage: "assets/pack-recheado-open.png" },
-  { id: "familia", name: "Familia", cards: 8, cost: 800, note: "8 tazzos", image: "assets/pack-familia.png", openImage: "assets/pack-familia-open.png" },
-  { id: "atacado", name: "Atacado", cards: 40, cost: 3500, note: "40 tazzos", image: "assets/bulck_closed.png", openImage: "assets/bulck_opened.png" }
+  { id: "simples", name: "Simples", cards: 1, cost: 150, note: "1 tazzo", image: "assets/pack-simples.png", openImage: "assets/pack-simples-open.png", storeImage: "assets/pacotinhos/simples.png" },
+  { id: "crocante", name: "Crocante", cards: 3, cost: 400, note: "3 tazzos", image: "assets/pack-crocante.png", openImage: "assets/pack-crocante-open.png", storeImage: "assets/pacotinhos/crocante.png", badgeImage: "assets/icones/oferta.png", badgeAlt: "Oferta" },
+  { id: "recheado", name: "Recheado", cards: 5, cost: 600, note: "5 tazzos, raro garantido", image: "assets/pack-recheado.png", openImage: "assets/pack-recheado-open.png", storeImage: "assets/pacotinhos/recheado.png", badgeImage: "assets/icones/raro_garantido.png", badgeAlt: "Raro garantido" },
+  { id: "familia", name: "Familia", cards: 8, cost: 800, note: "8 tazzos", image: "assets/pack-familia.png", openImage: "assets/pack-familia-open.png", storeImage: "assets/pacotinhos/familia.png", badgeImage: "assets/icones/mais popular.png", badgeAlt: "Mais popular" },
+  { id: "atacado", name: "Atacado", cards: 40, cost: 3500, note: "40 tazzos", image: "assets/bulck_closed.png", openImage: "assets/bulck_opened.png", storeImage: "assets/pacotinhos/atacado.png", badgeImage: "assets/icones/melhor_valor.png", badgeAlt: "Melhor valor" }
 ];
 
 const MISSIONS = [
@@ -208,11 +266,13 @@ const MISSIONS = [
   { id: "monthly-tournaments", title: "Entrar em 6 torneios", target: 6, reward: 3800, fragments: 48, period: "monthly", event: "tournament" },
   { id: "monthly-evolve", title: "Melhorar 10 tazzos", target: 10, reward: 4600, fragments: 70, period: "monthly", event: "evolve" },
   { id: "monthly-gifts", title: "Enviar 12 presentes", target: 12, reward: 2600, fragments: 36, period: "monthly", event: "gift" },
-  { id: "album-brasil", title: "Completar selecao do Brasil", target: 22, reward: 1000, period: "album", scope: "album", range: [1, 22] },
-  { id: "album-argentina", title: "Completar selecao da Argentina", target: 21, reward: 1000, period: "album", scope: "album", range: [23, 43] },
-  { id: "album-inglaterra", title: "Completar selecao da Inglaterra", target: 22, reward: 1100, period: "album", scope: "album", range: [44, 65] },
-  { id: "album-portugal", title: "Completar selecao de Portugal", target: 23, reward: 1300, period: "album", scope: "album", range: [66, 88] },
-  { id: "album-franca", title: "Completar selecao da Franca", target: 9, reward: 900, period: "album", scope: "album", range: [89, 97] }
+  { id: "album-brasil", title: "Completar Brazukas", target: 22, reward: 1000, period: "album", scope: "album", range: [1, 22] },
+  { id: "album-argentina", title: "Completar Hermanos", target: 21, reward: 1000, period: "album", scope: "album", range: [23, 43] },
+  { id: "album-inglaterra", title: "Completar Cha United", target: 22, reward: 1100, period: "album", scope: "album", range: [44, 65] },
+  { id: "album-portugal", title: "Completar Porto de Galos", target: 23, reward: 1300, period: "album", scope: "album", range: [66, 88] },
+  { id: "album-franca", title: "Completar Cheirosos", target: 22, reward: 1300, period: "album", scope: "album", range: [89, 110] },
+  { id: "album-alemanha", title: "Completar Cervejeiros", target: 21, reward: 1300, period: "album", scope: "album", range: [111, 131] },
+  { id: "album-espanha", title: "Completar Touros", target: 21, reward: 1300, period: "album", scope: "album", range: [132, 152] }
 ];
 
 const ECONOMY_REWARD_RULES = Object.freeze({
@@ -375,7 +435,7 @@ const TUTORIAL_STEPS = [
     description: "Use Chutar em linha reta para avancar e causar metade do valor de chute como dano.",
     action: "Treinar chute",
     steps: ["O cenario ja deixa um rival em linha reta.", "Clique em Chutar.", "Escolha o alvo destacado no campo."],
-    tip: "Chute causa 50% do atributo. Com a habilidade da Argentina, o proximo chute usa o valor cheio.",
+    tip: "Chute causa 50% do atributo. Com a habilidade dos Hermanos, o proximo chute usa o valor cheio.",
     completes: "Conclui quando voce acerta um Chute."
   },
   {
@@ -469,22 +529,31 @@ const TUTORIAL_STEPS = [
     completes: "Conclui quando voce abre a aba Trocas."
   },
   {
+    id: "clash",
+    title: "Conhecer bater tazzos",
+    description: "Veja onde fica o duelo de bater tazzos, sem precisar convidar alguem durante o tutorial.",
+    action: "Ver bater tazzos",
+    steps: ["Abra Online.", "Veja o painel Bater Tazzos.", "Quando quiser jogar, convide um amigo; se ele aceitar, voces escolhem tazzos de valores iguais e batem na mesa."],
+    tip: "Bater tazzos e opcional e social. O tutorial so apresenta a area e a regra geral.",
+    completes: "Conclui quando voce abre a aba Online."
+  },
+  {
     id: "tournament",
-    title: "Entrar em torneio",
-    description: "Use torneios para encarar uma chave com entrada, premio e batalha resolvida na arena.",
+    title: "Conhecer torneios",
+    description: "Veja onde ficam os torneios, entradas, premios e adversarios sem iniciar uma partida agora.",
     action: "Ver torneios",
-    steps: ["Abra Torneios.", "Escolha um torneio disponivel.", "Entre e veja a batalha ser criada na arena."],
-    tip: "No tutorial, a entrada fica liberada se voce estiver sem Merreis ou com time fora do limite.",
-    completes: "Conclui quando voce inicia qualquer torneio."
+    steps: ["Abra Torneios.", "Veja as entradas, premios e adversarios.", "Volte quando quiser disputar uma chave de verdade."],
+    tip: "Torneios continuam opcionais no tutorial. Voce so precisa conhecer onde eles ficam.",
+    completes: "Conclui quando voce abre a area de Torneios."
   },
   {
     id: "ranked",
-    title: "Ranqueada",
-    description: "Entre na liga competitiva quando seu trio estiver pronto dentro do limite de custo.",
+    title: "Conhecer ranqueada",
+    description: "Veja a liga competitiva e o matchmaking sem precisar entrar na fila durante o tutorial.",
     action: "Ver liga",
-    steps: ["Abra Torneios.", "Confira custo do time e chance estimada.", "Clique em Disputar ranqueada quando estiver pronto."],
-    tip: "Ranqueada usa limite de custo. Raro forte e comum bem posicionado podem valer mais que so raridade alta.",
-    completes: "Conclui quando voce inicia uma ranqueada."
+    steps: ["Abra Torneios.", "Confira custo do time, divisao e chance estimada.", "Quando o trio estiver pronto, dispute ranqueada fora do tutorial."],
+    tip: "Ranqueada usa limite de custo. O tutorial apenas mostra a porta de entrada.",
+    completes: "Conclui quando voce abre a area competitiva."
   }
 ];
 

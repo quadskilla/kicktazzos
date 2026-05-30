@@ -39,6 +39,22 @@ FIREBASE_AUTH_PROVIDERS=google
 
 No Firebase Authentication, adicione o dominio publico do jogo em Authorized domains, por exemplo `www.tazzostrike.com.br`.
 
+### Mercado Pago
+
+Em Variables, adicione tambem:
+
+```text
+MERCADO_PAGO_ACCESS_TOKEN=<access token de producao do Mercado Pago>
+PUBLIC_BASE_URL=https://seu-dominio.com
+MERCADO_PAGO_WEBHOOK_SECRET=<secret opcional do webhook>
+```
+
+No Mercado Pago Developers, configure o webhook de `payments` para:
+
+```text
+https://seu-dominio.com/api/mercadopago/webhook
+```
+
 ## 3. Volume
 
 1. No projeto, crie um Volume.
