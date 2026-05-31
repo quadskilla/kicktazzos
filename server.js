@@ -5788,6 +5788,14 @@ function fallbackCompetitiveOpponent(type, save, tournamentId = "") {
   return rankedOpponentForSave(save);
 }
 
+async function clearPausedTournamentCompetitive(playerId, save) {
+  if (TOURNAMENTS_AVAILABLE !== false) return false;
+  if (save.activeCompetitive?.type !== "tournament" || save.activeCompetitive.resolved) return false;
+  save.activeCompetitive = null;
+  await writeSave(playerId, save);
+  return true;
+}
+
 async function validateCompetitiveTicket(playerId, type, options = {}) {
   const profile = await requireProfileForPlayer(playerId);
   if (type === "tournament" && !TOURNAMENTS_AVAILABLE) {
@@ -5806,13 +5814,14 @@ async function validateCompetitiveTicket(playerId, type, options = {}) {
 
   const record = await readOrCreateSave(playerId);
   const save = normalizeServerSave(record.save);
+  await clearPausedTournamentCompetitive(playerId, save);
   if (save.activeCompetitive && !save.activeCompetitive.resolved) {
     const error = new Error("Ja existe uma partida competitiva ativa.");
     error.status = 409;
     error.save = save;
     throw error;
   }
-  if (serverTeamCost(save) > 10) {
+  if (type === "tournament" && serverTeamCost(save) > 10) {
     const error = new Error("Time acima do custo competitivo.");
     error.status = 400;
     error.save = save;
@@ -5843,13 +5852,14 @@ async function validateCompetitiveTicket(playerId, type, options = {}) {
 async function createCompetitiveMatchForTicket(ticket, opponent, matchmaking) {
   const record = await readOrCreateSave(ticket.playerId);
   const save = normalizeServerSave(record.save);
+  await clearPausedTournamentCompetitive(ticket.playerId, save);
   if (save.activeCompetitive && !save.activeCompetitive.resolved) {
     const error = new Error("Ja existe uma partida competitiva ativa.");
     error.status = 409;
     error.save = save;
     throw error;
   }
-  if (serverTeamCost(save) > 10) {
+  if (ticket.type === "tournament" && serverTeamCost(save) > 10) {
     const error = new Error("Time acima do custo competitivo.");
     error.status = 400;
     error.save = save;

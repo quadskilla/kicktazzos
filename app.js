@@ -5529,11 +5529,27 @@ function activeRankedBattle() {
 
 function activeSavedCompetitive() {
   const match = state.save.activeCompetitive;
+  if (TOURNAMENTS_AVAILABLE === false && match?.type === "tournament" && !match.resolved) return null;
   return match && !match.resolved ? match : null;
 }
 
 function activeLockedBattle() {
-  return activeTournamentBattle() || activeRankedBattle();
+  return (TOURNAMENTS_AVAILABLE !== false && activeTournamentBattle()) || activeRankedBattle();
+}
+
+function clearPausedTournamentCompetitive() {
+  if (TOURNAMENTS_AVAILABLE !== false) return false;
+  let cleared = false;
+  if (state.save.activeCompetitive?.type === "tournament" && !state.save.activeCompetitive.resolved) {
+    state.save.activeCompetitive = null;
+    cleared = true;
+  }
+  if (state.pendingTournament) {
+    state.pendingTournament = null;
+    cleared = true;
+  }
+  if (cleared) saveGame();
+  return cleared;
 }
 
 function startConfiguredBattle() {
@@ -8251,6 +8267,7 @@ function rankedChance(extraDifficulty = 0) {
 }
 
 async function runRankedMatch() {
+  clearPausedTournamentCompetitive();
   const savedCompetitive = activeSavedCompetitive();
   if (savedCompetitive?.type === "ranked") {
     resumeSavedCompetitiveBattle(savedCompetitive);
@@ -8275,7 +8292,6 @@ function runRankedMatchLocally() {
     switchTab("battle");
     return;
   }
-  if (teamCost() > 10) return;
   const rank = currentRank();
   const opponent = rankedOpponentForCurrentRank();
   progressMission("ranked", 1);
@@ -8301,7 +8317,6 @@ async function runRankedMatchOnServer() {
     switchTab("battle");
     return;
   }
-  if (teamCost() > 10) return;
 
   try {
     startMatchmakingSearch("ranked", "Ranqueada");

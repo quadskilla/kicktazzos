@@ -43,7 +43,7 @@
     `;
 
     document.getElementById("ranked-summary").innerHTML = `
-      ${window.TazzoMenuShared.smallSummary("Custo competitivo", `${cost}/10`, legal ? "Time valido" : "Ajuste o time na colecao")}
+      ${window.TazzoMenuShared.smallSummary("Custo do time", `${cost}/10`, legal ? "Ranqueada liberada" : "Ranqueada liberada por agora")}
       ${window.TazzoMenuShared.smallSummary("Forca do trio", power, `${chance}% de chance estimada`)}
       ${window.TazzoMenuShared.smallSummary("Oponente", rankedOpponent.name, `${rankedOpponent.team.map((id) => ctx.MONSTER_BY_ID[id].name).join(", ")} | Goleiro ${ctx.MONSTER_BY_ID[rankedOpponent.goalkeeper]?.name || "sorteado"}`)}
       ${window.TazzoMenuShared.smallSummary("Matchmaking", searching ? "Procurando" : matchmakingLabel, searching ? `${ctx.state.matchmaking.label || "Partida"}: ${matchmakingLabel}` : "Se nao parear em 40s, vem bot")}
@@ -51,10 +51,12 @@
       ${window.TazzoMenuShared.smallSummary("Ultimo resultado", "Liga", latest)}
     `;
 
-    const activeTournamentId = ctx.activeTournamentBattle() ? ctx.state.battle.tournamentId : savedTournamentId;
+    const activeTournamentId = tournamentsAvailable
+      ? ctx.activeTournamentBattle() ? ctx.state.battle.tournamentId : savedTournamentId
+      : "";
     const activeRanked = ctx.activeRankedBattle() || savedRanked;
     const rankedButton = document.getElementById("ranked-button");
-    rankedButton.disabled = searching || (!savedRanked && (!legal || Boolean(activeTournamentId)));
+    rankedButton.disabled = searching || (!savedRanked && Boolean(activeTournamentId));
     rankedButton.textContent = searching
       ? `Procurando partida (${matchmakingLabel})`
       : savedRanked
@@ -65,13 +67,22 @@
       ? "Ranqueada ativa"
       : "Disputar ranqueada";
 
+    if (!tournamentsAvailable) {
+      document.getElementById("tournament-list").innerHTML = `
+        <article class="tournament-card is-active">
+          <h3>Torneios indisponiveis</h3>
+          <p>Por agora, a liga competitiva esta aberta apenas para ranqueadas.</p>
+        </article>
+      `;
+      document.getElementById("leaderboard-list").innerHTML = renderLeaderboardRows(ctx, rank);
+      return;
+    }
+
     document.getElementById("tournament-list").innerHTML = ctx.TOURNAMENTS.map((tournament) => {
       const active = activeTournamentId === tournament.id;
-      const disabled = !tournamentsAvailable || searching || (activeTournamentId && !active) || activeRanked || (!active && (ctx.state.save.merreis < tournament.entry || !legal));
+      const disabled = searching || (activeTournamentId && !active) || activeRanked || (!active && (ctx.state.save.merreis < tournament.entry || !legal));
       const label = searching
         ? `Procurando (${matchmakingLabel})`
-        : !tournamentsAvailable
-        ? "Indisponivel"
         : active
         ? ctx.activeTournamentBattle() ? "Voltar para batalha" : "Retomar torneio"
         : "Entrar e batalhar";
@@ -79,7 +90,7 @@
       return `
         <article class="tournament-card${active ? " is-active" : ""}">
           <h3>${tournament.name}</h3>
-          <p>${tournamentsAvailable ? `Entrada ${ctx.formatNumber(tournament.entry)} Merreis. Premio: ${tournament.prize}.` : "Torneios pausados por agora. Ranqueadas seguem liberadas."}</p>
+          <p>Entrada ${ctx.formatNumber(tournament.entry)} Merreis. Premio: ${tournament.prize}.</p>
           <div class="tournament-opponent">
             <span class="eyebrow">Oponente</span>
             <strong>${opponent.name}</strong>
