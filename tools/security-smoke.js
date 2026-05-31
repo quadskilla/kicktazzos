@@ -154,6 +154,7 @@ async function main() {
     assert.match(headerValue(health.headers, "content-security-policy"), /default-src 'self'/);
     assert.match(headerValue(health.headers, "content-security-policy"), /frame-ancestors 'none'/);
     assert.match(headerValue(health.headers, "content-security-policy"), /https:\/\/www\.gstatic\.com/);
+    assert.match(headerValue(health.headers, "content-security-policy"), /https:\/\/apis\.google\.com/);
     assert.match(headerValue(health.headers, "content-security-policy"), /https:\/\/www\.mercadopago\.com/);
     const initialCookie = headerValue(health.headers, "set-cookie");
     assert.match(initialCookie, /kick_tazzos_player=v1\./);

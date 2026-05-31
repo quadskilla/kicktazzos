@@ -171,7 +171,7 @@ const BASE_CONTENT_SECURITY_POLICY = [
   "object-src 'none'",
   "frame-ancestors 'none'",
   "form-action 'self'",
-  "script-src 'self' https://www.gstatic.com https://*.gstatic.com https://www.mercadopago.com https://*.mercadopago.com https://*.mercadolibre.com https://*.mlstatic.com",
+  "script-src 'self' https://www.gstatic.com https://*.gstatic.com https://apis.google.com https://www.mercadopago.com https://*.mercadopago.com https://*.mercadolibre.com https://*.mlstatic.com",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https://lh3.googleusercontent.com https://*.googleusercontent.com https://graph.facebook.com https://platform-lookaside.fbsbx.com https://*.fbcdn.net https://www.mercadopago.com https://*.mercadopago.com https://*.mercadolibre.com https://*.mlstatic.com",
   "font-src 'self' data:",
