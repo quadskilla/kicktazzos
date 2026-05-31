@@ -137,6 +137,7 @@ async function main() {
       RATE_LIMIT_WINDOW_MS: "60000",
       RATE_LIMIT_MAX: "50",
       RATE_LIMIT_SENSITIVE_MAX: "1",
+      COMPETITIVE_MIN_POSITIVE_RESOLVE_MS: "2000",
       MERCADO_PAGO_WEBHOOK_SECRET: ""
     },
     stdio: ["ignore", "pipe", "pipe"]
@@ -276,6 +277,91 @@ async function main() {
     assert.equal(shareClaim.status, 200);
     const shareClaimPayload = JSON.parse(shareClaim.body);
     assert.equal(shareClaimPayload.save.merreis, 1250 + Number(shareClaimPayload.network.reward));
+
+    const rankedPlayerA = crypto.randomUUID();
+    const rankedPlayerB = crypto.randomUUID();
+    seedProfile(dataDir, rankedPlayerA, "ranked-a-smoke", "Ranked A Smoke");
+    seedProfile(dataDir, rankedPlayerB, "ranked-b-smoke", "Ranked B Smoke");
+    const rankedCookieA = signedPlayerCookie(rankedPlayerA);
+    const rankedCookieB = signedPlayerCookie(rankedPlayerB);
+    const rankedStartARequest = request(port, {
+      method: "POST",
+      pathname: "/api/ranked/start",
+      headers: {
+        Cookie: rankedCookieA,
+        Origin: sameOrigin,
+        "Content-Type": "application/json",
+        "X-Forwarded-For": "203.0.113.21"
+      },
+      body: "{}"
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const rankedStartBRequest = request(port, {
+      method: "POST",
+      pathname: "/api/ranked/start",
+      headers: {
+        Cookie: rankedCookieB,
+        Origin: sameOrigin,
+        "Content-Type": "application/json",
+        "X-Forwarded-For": "203.0.113.22"
+      },
+      body: "{}"
+    });
+    const [rankedStartA, rankedStartB] = await Promise.all([rankedStartARequest, rankedStartBRequest]);
+    assert.equal(rankedStartA.status, 200);
+    assert.equal(rankedStartB.status, 200);
+    const rankedPayloadA = JSON.parse(rankedStartA.body);
+    const rankedPayloadB = JSON.parse(rankedStartB.body);
+    assert.equal(rankedPayloadA.match.id, rankedPayloadB.match.id);
+    assert.equal(rankedPayloadA.match.requiresResolveCookie, true);
+    const competitiveCookieA = responseCookie(rankedStartA.headers, "kick_tazzos_competitive");
+    assert.match(competitiveCookieA, /^kick_tazzos_competitive=v1\./);
+    assert.match(headerValue(rankedStartA.headers, "set-cookie"), /kick_tazzos_competitive=.*HttpOnly/);
+
+    const forgedCompetitiveResolve = await request(port, {
+      method: "POST",
+      pathname: "/api/competitive/resolve",
+      headers: {
+        Cookie: rankedCookieA,
+        Origin: sameOrigin,
+        "Content-Type": "application/json",
+        "X-Forwarded-For": "203.0.113.23"
+      },
+      body: JSON.stringify({ matchId: rankedPayloadA.match.id, outcome: "win" })
+    });
+    assert.equal(forgedCompetitiveResolve.status, 403);
+
+    const tooFastCompetitiveResolve = await request(port, {
+      method: "POST",
+      pathname: "/api/competitive/resolve",
+      headers: {
+        Cookie: `${rankedCookieA}; ${competitiveCookieA}`,
+        Origin: sameOrigin,
+        "Content-Type": "application/json",
+        "X-Forwarded-For": "203.0.113.24"
+      },
+      body: JSON.stringify({ matchId: rankedPayloadA.match.id, outcome: "win" })
+    });
+    assert.equal(tooFastCompetitiveResolve.status, 409);
+
+    await new Promise((resolve) => setTimeout(resolve, 2100));
+    const acceptedCompetitiveResolve = await request(port, {
+      method: "POST",
+      pathname: "/api/competitive/resolve",
+      headers: {
+        Cookie: `${rankedCookieA}; ${competitiveCookieA}`,
+        Origin: sameOrigin,
+        "Content-Type": "application/json",
+        "X-Forwarded-For": "203.0.113.25"
+      },
+      body: JSON.stringify({ matchId: rankedPayloadA.match.id, outcome: "win" })
+    });
+    assert.equal(acceptedCompetitiveResolve.status, 200);
+    const acceptedCompetitivePayload = JSON.parse(acceptedCompetitiveResolve.body);
+    assert.equal(acceptedCompetitivePayload.save.rankedWins, 1);
+    assert.equal(acceptedCompetitivePayload.save.activeCompetitive, null);
+    assert.ok(acceptedCompetitivePayload.save.trophies > 0);
+    assert.match(headerValue(acceptedCompetitiveResolve.headers, "set-cookie"), /kick_tazzos_competitive=;/);
 
     const legacyPlayerId = crypto.randomUUID();
     const legacyProfile = await request(port, {

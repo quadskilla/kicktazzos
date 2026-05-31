@@ -48,7 +48,9 @@ const LOBBIES_FILE = path.join(DATA_DIR, "lobbies.json");
 const DB_FILE = path.join(DATA_DIR, "kick-tazzos.db");
 const ROOT_PREFIX = `${ROOT_DIR}${path.sep}`;
 const PLAYER_COOKIE = "kick_tazzos_player";
+const COMPETITIVE_COOKIE = "kick_tazzos_competitive";
 const PLAYER_SESSION_TTL_SECONDS = 60 * 60 * 24 * 365;
+const COMPETITIVE_RESOLVE_TTL_SECONDS = 2 * 60 * 60;
 const MAX_SAVE_BYTES = 1024 * 1024 * 2;
 const RATE_LIMIT_WINDOW_MS = Math.max(1000, Math.floor(Number(process.env.RATE_LIMIT_WINDOW_MS)) || 60000);
 const RATE_LIMIT_MAX = Math.max(1, Math.floor(Number(process.env.RATE_LIMIT_MAX)) || 240);
@@ -68,6 +70,9 @@ const MERCADO_PAGO_ACCESS_TOKEN = String(process.env.MERCADO_PAGO_ACCESS_TOKEN |
 const MERCADO_PAGO_WEBHOOK_SECRET = String(process.env.MERCADO_PAGO_WEBHOOK_SECRET || "").trim();
 const MERCADO_PAGO_API_BASE = "https://api.mercadopago.com";
 const COMPETITIVE_MATCHMAKING_TIMEOUT_MS = 40000;
+const COMPETITIVE_MIN_POSITIVE_RESOLVE_MS = Number.isFinite(Number(process.env.COMPETITIVE_MIN_POSITIVE_RESOLVE_MS))
+  ? Math.max(0, Math.floor(Number(process.env.COMPETITIVE_MIN_POSITIVE_RESOLVE_MS)))
+  : 45000;
 const COMPETITIVE_MATCHMAKING_RANK_WINDOWS = Object.freeze([
   { waitMs: 0, trophies: 120 },
   { waitMs: 12000, trophies: 260 },
@@ -379,6 +384,42 @@ function playerCookie(playerId, req = null) {
 
 function clearPlayerCookie(req = null) {
   return `${PLAYER_COOKIE}=; ${playerCookieFlags(req, 0)}`;
+}
+
+function signCompetitiveSession(playerId, matchId) {
+  return crypto.createHmac("sha256", playerSessionSecret())
+    .update(`competitive.v1.${playerId}.${matchId}`)
+    .digest("hex");
+}
+
+function encodeCompetitiveSession(playerId, matchId) {
+  return `v1.${playerId}.${matchId}.${signCompetitiveSession(playerId, matchId)}`;
+}
+
+function decodeCompetitiveSession(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const [version, playerId, matchId, signature, ...extra] = raw.split(".");
+  if (version !== "v1" || extra.length || !isValidPlayerId(playerId) || !isValidPlayerId(matchId) || !signature) {
+    return null;
+  }
+  return safeEqualText(signature, signCompetitiveSession(playerId, matchId))
+    ? { playerId, matchId }
+    : null;
+}
+
+function competitiveCookie(playerId, matchId, req = null) {
+  return `${COMPETITIVE_COOKIE}=${encodeURIComponent(encodeCompetitiveSession(playerId, matchId))}; ${playerCookieFlags(req, COMPETITIVE_RESOLVE_TTL_SECONDS)}`;
+}
+
+function clearCompetitiveCookie(req = null) {
+  return `${COMPETITIVE_COOKIE}=; ${playerCookieFlags(req, 0)}`;
+}
+
+function hasCompetitiveResolveCookie(req, playerId, matchId) {
+  const cookies = parseCookies(req?.headers?.cookie || "");
+  const session = decodeCompetitiveSession(cookies[COMPETITIVE_COOKIE]);
+  return Boolean(session && session.playerId === playerId && session.matchId === matchId);
 }
 
 function isHttpsRequest(req) {
@@ -5943,6 +5984,7 @@ function activeCompetitiveMatch(type, extra = {}) {
     type,
     startedAt: new Date().toISOString(),
     resolved: false,
+    requiresResolveCookie: true,
     ...extra
   };
 }
@@ -6928,7 +6970,27 @@ function tournamentResolution(save, tournament, won, reason = "") {
   };
 }
 
-async function resolveCompetitiveForPlayer(playerId, payload = {}) {
+function enforceCompetitiveResolveCookie(req, playerId, match, save) {
+  if (!match?.requiresResolveCookie) return;
+  if (hasCompetitiveResolveCookie(req, playerId, match.id)) return;
+  const error = new Error("Sessao da partida competitiva invalida. Reinicie a busca para jogar uma nova partida.");
+  error.status = 403;
+  error.save = save;
+  throw error;
+}
+
+function enforceCompetitiveResolveTiming(match, isPositiveOutcome, save) {
+  if (!isPositiveOutcome || !COMPETITIVE_MIN_POSITIVE_RESOLVE_MS) return;
+  const startedAt = Date.parse(match?.startedAt || "");
+  const elapsedMs = Number.isFinite(startedAt) ? Date.now() - startedAt : 0;
+  if (elapsedMs >= COMPETITIVE_MIN_POSITIVE_RESOLVE_MS) return;
+  const error = new Error("Resultado competitivo chegou cedo demais. Termine a partida antes de validar.");
+  error.status = 409;
+  error.save = save;
+  throw error;
+}
+
+async function resolveCompetitiveForPlayer(playerId, payload = {}, req = null) {
   await requireProfileForPlayer(playerId);
   const record = await readOrCreateSave(playerId);
   const save = normalizeServerSave(record.save);
@@ -6940,12 +7002,14 @@ async function resolveCompetitiveForPlayer(playerId, payload = {}) {
     throw error;
   }
 
+  enforceCompetitiveResolveCookie(req, playerId, match, save);
   const reason = String(payload.reason || "").slice(0, 80);
   let result;
   let eventOutcome = "loss";
   let eventTournament = null;
   if (match.type === "ranked") {
     const outcome = ["win", "draw", "loss"].includes(payload.outcome) ? payload.outcome : "loss";
+    enforceCompetitiveResolveTiming(match, outcome !== "loss", save);
     eventOutcome = outcome;
     result = rankedResolution(save, outcome, reason);
   } else if (match.type === "tournament") {
@@ -6957,6 +7021,7 @@ async function resolveCompetitiveForPlayer(playerId, payload = {}) {
       throw error;
     }
     eventOutcome = payload.won ? "win" : "loss";
+    enforceCompetitiveResolveTiming(match, eventOutcome === "win", save);
     eventTournament = { id: tournament.id, name: tournament.name };
     result = tournamentResolution(save, tournament, Boolean(payload.won), reason);
   } else {
@@ -7650,7 +7715,10 @@ async function handleApi(req, res, url) {
     }
     const profile = await profileForPlayer(playerId);
     if (profile) recordAccountEvent(playerId, "account:logout", {});
-    json(res, 200, { ok: true }, appendSetCookie(headers, clearPlayerCookie(req)));
+    json(res, 200, { ok: true }, appendSetCookie(
+      appendSetCookie(headers, clearPlayerCookie(req)),
+      clearCompetitiveCookie(req)
+    ));
     return;
   }
 
@@ -8262,6 +8330,9 @@ async function handleApi(req, res, url) {
       const body = await readBody(req);
       const payload = body ? JSON.parse(body) : {};
       const result = await startRankedForPlayer(playerId);
+      const resultHeaders = result.match?.id
+        ? appendSetCookie(headers, competitiveCookie(playerId, result.match.id, req))
+        : headers;
       json(res, 200, {
         ok: true,
         playerId,
@@ -8270,7 +8341,7 @@ async function handleApi(req, res, url) {
         rank: result.rank,
         opponent: result.opponent,
         matchmaking: result.matchmaking
-      }, headers);
+      }, resultHeaders);
     } catch (error) {
       json(res, error.status || 500, {
         ok: false,
@@ -8294,6 +8365,9 @@ async function handleApi(req, res, url) {
       const body = await readBody(req);
       const payload = body ? JSON.parse(body) : {};
       const result = await startTournamentForPlayer(playerId, payload.tournamentId);
+      const resultHeaders = result.match?.id
+        ? appendSetCookie(headers, competitiveCookie(playerId, result.match.id, req))
+        : headers;
       json(res, 200, {
         ok: true,
         playerId,
@@ -8302,7 +8376,7 @@ async function handleApi(req, res, url) {
         tournament: result.tournament,
         opponent: result.opponent,
         matchmaking: result.matchmaking
-      }, headers);
+      }, resultHeaders);
     } catch (error) {
       json(res, error.status || 500, {
         ok: false,
@@ -8325,14 +8399,14 @@ async function handleApi(req, res, url) {
     try {
       const body = await readBody(req);
       const payload = body ? JSON.parse(body) : {};
-      const result = await resolveCompetitiveForPlayer(playerId, payload);
+      const result = await resolveCompetitiveForPlayer(playerId, payload, req);
       json(res, 200, {
         ok: true,
         playerId,
         save: result.save,
         match: result.match,
         result: result.result
-      }, headers);
+      }, appendSetCookie(headers, clearCompetitiveCookie(req)));
     } catch (error) {
       json(res, error.status || 500, {
         ok: false,
