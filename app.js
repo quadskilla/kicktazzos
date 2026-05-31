@@ -1642,7 +1642,7 @@ async function migrateServerSave(save) {
       persistLocalSave();
     }
     state.server.localChangedWhileLoading = false;
-    setServerStatus("online", "Migrado");
+    setServerStatus("online", payload.ignoredProtectedFields?.length ? "Protegido" : "Migrado");
     renderAll();
     trackTelemetry("session:migrated", {
       source: payload.profile ? "profile" : "guest",

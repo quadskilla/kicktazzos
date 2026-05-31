@@ -25,6 +25,12 @@ function headerValue(headers, name) {
   return Array.isArray(value) ? value.join("; ") : String(value || "");
 }
 
+function responseCookie(headers, name) {
+  const values = headers["set-cookie"];
+  const cookies = Array.isArray(values) ? values : [String(values || "")];
+  return cookies.map((cookie) => cookie.split(";")[0]).find((cookie) => cookie.startsWith(`${name}=`)) || "";
+}
+
 function request(port, { method = "GET", pathname = "/", headers = {}, body = "" } = {}) {
   return new Promise((resolve, reject) => {
     const req = http.request({
@@ -117,6 +123,8 @@ async function main() {
     assert.match(initialCookie, /kick_tazzos_player=v1\./);
     assert.match(initialCookie, /HttpOnly/);
     assert.match(initialCookie, /SameSite=Lax/);
+    const playerCookie = responseCookie(health.headers, "kick_tazzos_player");
+    assert.match(playerCookie, /^kick_tazzos_player=v1\./);
 
     const evilPost = await request(port, {
       method: "POST",
@@ -140,6 +148,42 @@ async function main() {
       body: "{\"type\":\"smoke\",\"data\":{}}"
     });
     assert.equal(goodPost.status, 200);
+
+    const migrationAttempt = await request(port, {
+      method: "POST",
+      pathname: "/api/save/migrate",
+      headers: {
+        Cookie: playerCookie,
+        Origin: sameOrigin,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        save: {
+          merreis: 9999999,
+          fragments: 999999,
+          trophies: 99999,
+          collection: { "vinicius-jr-tazzo": 50 },
+          musicVolume: 0.2
+        }
+      })
+    });
+    assert.equal(migrationAttempt.status, 200);
+    const migrationPayload = JSON.parse(migrationAttempt.body);
+    assert.deepEqual(migrationPayload.ignoredProtectedFields.sort(), ["collection", "fragments", "merreis", "trophies"]);
+    assert.equal(migrationPayload.save.merreis, 1250);
+    assert.equal(migrationPayload.save.fragments, 0);
+    assert.equal(migrationPayload.save.trophies, 0);
+    assert.equal(migrationPayload.save.collection["vinicius-jr-tazzo"], undefined);
+    assert.equal(migrationPayload.save.musicVolume, 0.2);
+
+    const migratedSave = await request(port, {
+      pathname: "/api/save",
+      headers: { Cookie: playerCookie }
+    });
+    assert.equal(migratedSave.status, 200);
+    const migratedSavePayload = JSON.parse(migratedSave.body);
+    assert.equal(migratedSavePayload.save.merreis, 1250);
+    assert.equal(migratedSavePayload.save.collection["vinicius-jr-tazzo"], undefined);
 
     const legacyPlayerId = crypto.randomUUID();
     const legacyProfile = await request(port, {

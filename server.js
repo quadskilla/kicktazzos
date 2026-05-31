@@ -5054,10 +5054,10 @@ async function guestMigrationSaveForPlayer(currentPlayerId) {
     return { save: defaultServerSave(), migratedGuestSave: false };
   }
   const currentRecord = await readSave(currentPlayerId);
-  const save = normalizeServerSave(currentRecord?.save || defaultServerSave());
+  if (!currentRecord) return { save: defaultServerSave(), migratedGuestSave: false };
   return {
-    save,
-    migratedGuestSave: Boolean(currentRecord && hasServerEconomyProgress(save))
+    save: mergeClientSafeSave(defaultServerSave(), currentRecord.save),
+    migratedGuestSave: false
   };
 }
 
@@ -5153,11 +5153,14 @@ async function loginFirebaseProfile({ currentPlayerId, decodedToken }) {
 
     if (existingFirebaseEntry && !currentProfileEntry && currentPlayerId && currentPlayerId !== profile.playerId) {
       const guestRecord = await readSave(currentPlayerId);
-      const guestSave = normalizeServerSave(guestRecord?.save || defaultServerSave());
-      if (guestRecord && hasServerEconomyProgress(guestSave) && (!record || !hasServerEconomyProgress(save))) {
-        save = { ...guestSave, migratedFromLocalAt: now };
-        await writeSave(profile.playerId, save);
-        migratedGuestSave = true;
+      if (guestRecord && !record) {
+        const safeGuestSave = mergeClientSafeSave(save, guestRecord.save);
+        const changedSafePreferences = JSON.stringify(normalizeServerSave(safeGuestSave)) !== JSON.stringify(normalizeServerSave(save));
+        if (changedSafePreferences) {
+          save = safeGuestSave;
+          save.migratedFromLocalAt = now;
+          await writeSave(profile.playerId, save);
+        }
       }
     }
 
@@ -5666,17 +5669,12 @@ async function migrateSaveForPlayer(playerId, incomingSave) {
   }
 
   const record = await readSave(playerId);
-  const currentSave = record?.save || defaultServerSave();
-  if (currentSave.migratedFromLocalAt || (record && hasServerEconomyProgress(currentSave))) {
-    const error = new Error("Este jogador ja tem progresso no servidor. A importacao local foi ignorada.");
-    error.status = 409;
-    error.save = currentSave;
-    throw error;
-  }
-
-  const migrated = normalizeServerSave(incomingSave);
+  const currentSave = normalizeServerSave(record?.save || defaultServerSave());
+  const ignoredFields = changedProtectedFields(currentSave, incomingSave);
+  const migrated = mergeClientSafeSave(currentSave, incomingSave);
   migrated.migratedFromLocalAt = new Date().toISOString();
-  return writeSave(playerId, migrated);
+  const saved = await writeSave(playerId, migrated);
+  return { ...saved, ignoredFields };
 }
 
 function sanitizePackPity(packPity = {}) {
@@ -8363,7 +8361,11 @@ async function handleApi(req, res, url) {
         profile: publicProfile(profile),
         save: record.save,
         updatedAt: record.updatedAt,
-        migrated: true
+        migrated: true,
+        ignoredProtectedFields: record.ignoredFields,
+        message: record.ignoredFields.length
+          ? "Campos protegidos da migracao local foram ignorados."
+          : "Migracao local aplicada."
       }, headers);
     } catch (error) {
       json(res, error.status || 500, {
