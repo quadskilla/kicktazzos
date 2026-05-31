@@ -5865,9 +5865,8 @@ function completeTutorialScenario(action, details = {}) {
   tutorial.completed = true;
   state.battle.pendingAction = null;
   state.battle.validTargets = [];
-  state.battle.status = "Tutorial: veja o resultado no campo e continue pelo popup.";
-  progressTutorial(tutorial.stepId);
-  renderBattle();
+  state.battle.status = "Tutorial: acao concluida.";
+  completeTutorialStep(tutorial.stepId, { closeBattle: true, switchToBattle: true });
   return true;
 }
 
@@ -6055,41 +6054,47 @@ function queueTutorialResult(stepId) {
   return true;
 }
 
-function confirmTutorialResult() {
-  const result = state.tutorialResult;
-  if (!result) return;
-  state.tutorialResult = null;
-  let newlyCompleted = false;
-  if (state.save.tutorial && !state.save.tutorial[result.stepId]) {
-    state.save.tutorial[result.stepId] = true;
-    newlyCompleted = true;
-  }
-  if (newlyCompleted) {
-    trackTelemetry("tutorial:complete", {
-      stepId: result.stepId,
-      completed: completedTutorialCount(),
-      total: TUTORIAL_STEPS.length
-    }, {
-      dedupeKey: `tutorial:complete:${result.stepId}`,
-      cooldown: 0
-    });
-  }
-  if (state.battle?.tutorial?.stepId === result.stepId || state.battle?.tutorialCompetitiveStep === result.stepId) {
+function completeTutorialStep(stepId, options = {}) {
+  const current = currentTutorialStep();
+  if (!current || current.id !== stepId || !state.save.tutorial || state.save.tutorial[stepId]) return false;
+  if (state.tutorialResult?.stepId === stepId) state.tutorialResult = null;
+  state.save.tutorial[stepId] = true;
+  trackTelemetry("tutorial:complete", {
+    stepId,
+    completed: completedTutorialCount(),
+    total: TUTORIAL_STEPS.length
+  }, {
+    dedupeKey: `tutorial:complete:${stepId}`,
+    cooldown: 0
+  });
+
+  const closesTutorialBattle = state.battle?.tutorial?.stepId === stepId || state.battle?.tutorialCompetitiveStep === stepId;
+  if (options.closeBattle && closesTutorialBattle) {
     clearTurnTimer();
     clearMatchTimer();
-    if (state.battle?.tutorialCompetitiveStep === result.stepId) {
+    if (state.battle?.tutorialCompetitiveStep === stepId) {
       state.pendingTournament = null;
       state.pendingRanked = null;
     }
     state.battle = null;
     state.battleSceneOpen = false;
-    switchTab("battle");
-    saveGame();
-    renderTutorialResultPopup();
-    return;
   }
+
   saveGame();
-  renderAll();
+  if (options.switchToBattle) switchTab("battle");
+  else renderAll();
+  return true;
+}
+
+function confirmTutorialResult() {
+  const result = state.tutorialResult;
+  if (!result) return;
+  state.tutorialResult = null;
+  const closesTutorialBattle = state.battle?.tutorial?.stepId === result.stepId || state.battle?.tutorialCompetitiveStep === result.stepId;
+  completeTutorialStep(result.stepId, {
+    closeBattle: closesTutorialBattle,
+    switchToBattle: closesTutorialBattle
+  });
 }
 
 function renderTutorialResultPopup() {
@@ -6348,6 +6353,7 @@ function menuViewContext() {
     toggleWishlist,
     setGoalkeeper,
     decorateImageButtons,
+    currentRankForPoints,
     currentRank,
     nextRank,
     teamCost,

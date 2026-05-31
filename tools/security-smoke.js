@@ -240,6 +240,18 @@ async function main() {
     assert.equal(migratedSavePayload.save.merreis, 1250);
     assert.equal(migratedSavePayload.save.collection["vinicius-jr-tazzo"], undefined);
 
+    const leaderboard = await request(port, {
+      pathname: "/api/leaderboard?limit=20",
+      headers: { Cookie: playerCookie }
+    });
+    assert.equal(leaderboard.status, 200);
+    const leaderboardPayload = JSON.parse(leaderboard.body);
+    assert.equal(leaderboardPayload.rows.length, 20);
+    assert.equal(leaderboardPayload.rows[0].fictional, true);
+    assert.equal(leaderboardPayload.rows[0].name, "Mestre Kiko");
+    assert.equal(leaderboardPayload.rows[0].rank, "Mestre dos Tazzos");
+    assert.ok(leaderboardPayload.rows[0].onlineTrophies >= 2000);
+
     const ownerPlayerId = crypto.randomUUID();
     const visitorPlayerId = crypto.randomUUID();
     seedProfile(dataDir, ownerPlayerId, "owner-smoke", "Owner Smoke");

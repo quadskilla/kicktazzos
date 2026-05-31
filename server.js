@@ -5994,6 +5994,54 @@ function currentRankForSave(save) {
   return currentRankForPoints(protectedPoints);
 }
 
+const FICTIONAL_LEADERBOARD_ROWS = Object.freeze([
+  ["Mestre Kiko", 2920, 148, 19, 12, 2710, 92, 15, 5, 146],
+  ["Duda Holo", 2760, 136, 21, 9, 2635, 86, 18, 4, 143],
+  ["Juninho Caps", 2595, 128, 24, 8, 2510, 79, 16, 6, 141],
+  ["Bia do Recreio", 2440, 121, 22, 7, 2385, 74, 14, 7, 139],
+  ["Tio Crocante", 2315, 115, 26, 7, 2260, 69, 18, 5, 137],
+  ["Nina Lamina", 2190, 109, 25, 6, 2135, 66, 17, 4, 136],
+  ["Gui Tampinha", 2075, 101, 24, 6, 2040, 61, 16, 6, 134],
+  ["Lari Chuteira", 1960, 96, 23, 5, 1925, 57, 15, 5, 132],
+  ["Pepe Album", 1850, 89, 22, 5, 1810, 52, 14, 6, 130],
+  ["Madu Hologol", 1740, 84, 21, 4, 1715, 49, 13, 5, 128],
+  ["Caio Caneta", 1650, 79, 20, 4, 1620, 45, 12, 5, 126],
+  ["Tata Borda", 1565, 74, 19, 4, 1530, 42, 11, 6, 124],
+  ["Lipe Snack", 1480, 70, 18, 3, 1450, 39, 10, 4, 122],
+  ["Rafa Drible", 1395, 66, 18, 3, 1360, 36, 10, 5, 120],
+  ["Pri Recheado", 1320, 62, 17, 3, 1285, 34, 9, 4, 118],
+  ["Zeca Goleiro", 1245, 58, 16, 2, 1210, 31, 8, 4, 116],
+  ["Sol Merreis", 1165, 54, 15, 2, 1130, 28, 8, 3, 114],
+  ["Nando Tabelinha", 1080, 49, 14, 2, 1055, 25, 7, 4, 112],
+  ["Bel Clash", 995, 44, 13, 1, 970, 22, 7, 3, 110],
+  ["Ivo Colecao", 920, 40, 12, 1, 900, 20, 6, 3, 108]
+]);
+
+function fictionalLeaderboardRows() {
+  const now = Date.now();
+  return FICTIONAL_LEADERBOARD_ROWS.map((row, index) => {
+    const [name, trophies, rankedWins, rankedLosses, tournamentWins, onlineTrophies, onlineWins, onlineLosses, onlineDraws, album] = row;
+    return {
+      playerId: `fictional-${index + 1}`,
+      name,
+      trophies,
+      rankedWins,
+      rankedLosses,
+      tournamentWins,
+      onlineTrophies,
+      onlineWins,
+      onlineLosses,
+      onlineDraws,
+      album,
+      albumTotal: MONSTERS.length,
+      rank: currentRankForPoints(trophies).name,
+      updatedAt: new Date(now - index * 37 * 60 * 1000).toISOString(),
+      guest: false,
+      fictional: true
+    };
+  });
+}
+
 function rankedOpponentForSave(save) {
   const rank = currentRankForSave(save);
   return RANKED_OPPONENTS.find((opponent) => opponent.rank === rank.name) || RANKED_OPPONENTS[0];
@@ -6378,7 +6426,7 @@ async function leaderboardRows(limit = 20) {
       // Ignore a single corrupt save row so the leaderboard still loads.
     }
   }
-  return rows
+  return [...rows, ...fictionalLeaderboardRows()]
     .sort((a, b) => b.onlineTrophies - a.onlineTrophies || b.trophies - a.trophies || b.onlineWins - a.onlineWins || b.album - a.album)
     .slice(0, limit);
 }

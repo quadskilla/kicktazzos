@@ -5869,6 +5869,76 @@ button.image-button:focus-visible {
   margin-top: 14px;
 }
 
+.matchmaking-search-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  color: var(--ink);
+  background:
+    linear-gradient(135deg, rgba(22, 132, 111, 0.16), rgba(240, 180, 41, 0.18)),
+    var(--recess-panel) center / cover no-repeat;
+  border: 1px solid rgba(22, 132, 111, 0.28);
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.46);
+}
+
+.matchmaking-search-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.matchmaking-search-head strong {
+  font-size: 0.92rem;
+}
+
+.matchmaking-search-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.matchmaking-search-grid span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 6px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(28, 36, 48, 0.1);
+  border-radius: 6px;
+  text-align: center;
+}
+
+.matchmaking-search-grid strong {
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.matchmaking-search-grid small,
+.matchmaking-search-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.25;
+}
+
+.matchmaking-search-meter {
+  height: 10px;
+  overflow: hidden;
+  background: rgba(28, 36, 48, 0.12);
+  border: 1px solid rgba(28, 36, 48, 0.12);
+  border-radius: 999px;
+}
+
+.matchmaking-search-meter span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-3));
+  border-radius: inherit;
+  transition: width 0.3s ease;
+}
+
 .tournament-list,
 .shop-grid {
   display: grid;

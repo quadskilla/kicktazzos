@@ -19,12 +19,30 @@
     const savedRanked = savedCompetitive?.type === "ranked";
     const tournamentsAvailable = ctx.TOURNAMENTS_AVAILABLE !== false;
     const matchmakingElapsed = searching ? Math.max(0, Date.now() - (Number(ctx.state.matchmaking.startedAt) || Date.now())) : 0;
+    const matchmakingElapsedSeconds = Math.floor(matchmakingElapsed / 1000);
+    const matchmakingEstimateSeconds = Math.ceil(ctx.COMPETITIVE_MATCHMAKING_TIMEOUT_MS / 1000);
     const matchmakingRemaining = searching ? Math.max(0, Math.ceil((ctx.COMPETITIVE_MATCHMAKING_TIMEOUT_MS - matchmakingElapsed) / 1000)) : 0;
+    const matchmakingProgress = searching ? ctx.clamp(Math.round((matchmakingElapsed / ctx.COMPETITIVE_MATCHMAKING_TIMEOUT_MS) * 100), 0, 100) : 0;
     const matchmakingLabel = searching
       ? matchmakingRemaining
         ? `Bot em ${matchmakingRemaining}s`
         : "Chamando bot"
       : "Fila real";
+    const matchmakingPanel = searching ? `
+      <div class="matchmaking-search-card" role="status" aria-live="polite">
+        <div class="matchmaking-search-head">
+          <span class="eyebrow">${ctx.state.matchmaking.label || "Busca"}</span>
+          <strong>Procurando adversario</strong>
+        </div>
+        <div class="matchmaking-search-grid">
+          <span><strong>${matchmakingElapsedSeconds}s</strong><small>decorridos</small></span>
+          <span><strong>~${matchmakingEstimateSeconds}s</strong><small>estimativa</small></span>
+          <span><strong>${matchmakingRemaining || 0}s</strong><small>ate bot</small></span>
+        </div>
+        <div class="matchmaking-search-meter" aria-hidden="true"><span style="width:${matchmakingProgress}%"></span></div>
+        <p>Primeiro tentamos parear com jogador real. Se a fila passar da estimativa, a partida entra com bot automaticamente.</p>
+      </div>
+    ` : "";
 
     document.getElementById("rank-card").innerHTML = `
       <span class="eyebrow">Divisao atual</span>
@@ -43,10 +61,11 @@
     `;
 
     document.getElementById("ranked-summary").innerHTML = `
+      ${matchmakingPanel}
       ${window.TazzoMenuShared.smallSummary("Custo do time", `${cost}/10`, legal ? "Ranqueada liberada" : "Ranqueada liberada por agora")}
       ${window.TazzoMenuShared.smallSummary("Forca do trio", power, `${chance}% de chance estimada`)}
       ${window.TazzoMenuShared.smallSummary("Oponente", rankedOpponent.name, `${rankedOpponent.team.map((id) => ctx.MONSTER_BY_ID[id].name).join(", ")} | Goleiro ${ctx.MONSTER_BY_ID[rankedOpponent.goalkeeper]?.name || "sorteado"}`)}
-      ${window.TazzoMenuShared.smallSummary("Matchmaking", searching ? "Procurando" : matchmakingLabel, searching ? `${ctx.state.matchmaking.label || "Partida"}: ${matchmakingLabel}` : "Se nao parear em 40s, vem bot")}
+      ${window.TazzoMenuShared.smallSummary("Matchmaking", searching ? "Procurando" : matchmakingLabel, searching ? `${matchmakingElapsedSeconds}s de busca | estimativa ~${matchmakingEstimateSeconds}s` : "Se nao parear em 40s, vem bot")}
       ${window.TazzoMenuShared.smallSummary("Pontuacao", "+10 / -5", streak ? `Proximo bonus ate +${nextBonus}` : "2V seguidas ativam bonus")}
       ${window.TazzoMenuShared.smallSummary("Ultimo resultado", "Liga", latest)}
     `;
@@ -58,7 +77,7 @@
     const rankedButton = document.getElementById("ranked-button");
     rankedButton.disabled = searching || (!savedRanked && Boolean(activeTournamentId));
     rankedButton.textContent = searching
-      ? `Procurando partida (${matchmakingLabel})`
+      ? `Procurando ${matchmakingElapsedSeconds}s/~${matchmakingEstimateSeconds}s`
       : savedRanked
       ? "Retomar ranqueada"
       : activeTournamentId
@@ -82,7 +101,7 @@
       const active = activeTournamentId === tournament.id;
       const disabled = searching || (activeTournamentId && !active) || activeRanked || (!active && (ctx.state.save.merreis < tournament.entry || !legal));
       const label = searching
-        ? `Procurando (${matchmakingLabel})`
+        ? `Procurando ${matchmakingElapsedSeconds}s/~${matchmakingEstimateSeconds}s`
         : active
         ? ctx.activeTournamentBattle() ? "Voltar para batalha" : "Retomar torneio"
         : "Entrar e batalhar";
@@ -102,6 +121,49 @@
     }).join("");
 
     document.getElementById("leaderboard-list").innerHTML = renderLeaderboardRows(ctx, rank);
+  }
+
+  function fallbackLeaderboardRows(ctx) {
+    return [
+      ["Mestre Kiko", 2920, 148, 19, 12, 2710, 92, 15, 5, 146],
+      ["Duda Holo", 2760, 136, 21, 9, 2635, 86, 18, 4, 143],
+      ["Juninho Caps", 2595, 128, 24, 8, 2510, 79, 16, 6, 141],
+      ["Bia do Recreio", 2440, 121, 22, 7, 2385, 74, 14, 7, 139],
+      ["Tio Crocante", 2315, 115, 26, 7, 2260, 69, 18, 5, 137],
+      ["Nina Lamina", 2190, 109, 25, 6, 2135, 66, 17, 4, 136],
+      ["Gui Tampinha", 2075, 101, 24, 6, 2040, 61, 16, 6, 134],
+      ["Lari Chuteira", 1960, 96, 23, 5, 1925, 57, 15, 5, 132],
+      ["Pepe Album", 1850, 89, 22, 5, 1810, 52, 14, 6, 130],
+      ["Madu Hologol", 1740, 84, 21, 4, 1715, 49, 13, 5, 128],
+      ["Caio Caneta", 1650, 79, 20, 4, 1620, 45, 12, 5, 126],
+      ["Tata Borda", 1565, 74, 19, 4, 1530, 42, 11, 6, 124],
+      ["Lipe Snack", 1480, 70, 18, 3, 1450, 39, 10, 4, 122],
+      ["Rafa Drible", 1395, 66, 18, 3, 1360, 36, 10, 5, 120],
+      ["Pri Recheado", 1320, 62, 17, 3, 1285, 34, 9, 4, 118],
+      ["Zeca Goleiro", 1245, 58, 16, 2, 1210, 31, 8, 4, 116],
+      ["Sol Merreis", 1165, 54, 15, 2, 1130, 28, 8, 3, 114],
+      ["Nando Tabelinha", 1080, 49, 14, 2, 1055, 25, 7, 4, 112],
+      ["Bel Clash", 995, 44, 13, 1, 970, 22, 7, 3, 110],
+      ["Ivo Colecao", 920, 40, 12, 1, 900, 20, 6, 3, 108]
+    ].map((row, index) => {
+      const [name, trophies, rankedWins, rankedLosses, tournamentWins, onlineTrophies, onlineWins, onlineLosses, onlineDraws, album] = row;
+      return {
+        playerId: `fictional-local-${index + 1}`,
+        name,
+        trophies,
+        rank: ctx.currentRankForPoints ? ctx.currentRankForPoints(trophies).name : "Mestre dos Tazzos",
+        rankedWins,
+        rankedLosses,
+        tournamentWins,
+        onlineTrophies,
+        onlineWins,
+        onlineLosses,
+        onlineDraws,
+        album,
+        albumTotal: ctx.MONSTERS.length,
+        fictional: true
+      };
+    });
   }
 
   function renderLeaderboardRows(ctx, currentPlayerRank) {
@@ -124,16 +186,7 @@
       album: visibleMonsters.filter((monster) => ctx.state.save.collection[monster.id] > 0).length,
       albumTotal: visibleMonsters.length
     };
-    const rows = serverRows.length
-      ? serverRows
-      : [
-        { name: "Nina Holo", trophies: 1180, rank: "Lendario", rankedWins: 12, rankedLosses: 3, tournamentWins: 4 },
-        { name: "Tio Croc", trophies: 910, rank: "Lendario", rankedWins: 9, rankedLosses: 4, tournamentWins: 2 },
-        { name: "Bia Caps", trophies: 640, rank: "Holografico", rankedWins: 7, rankedLosses: 5, tournamentWins: 1 },
-        currentRow,
-        { name: "Lipe Snack", trophies: 350, rank: "Crocante", rankedWins: 4, rankedLosses: 4, tournamentWins: 0 },
-        { name: "Madu Tazo", trophies: 210, rank: "Recreio", rankedWins: 2, rankedLosses: 2, tournamentWins: 0 }
-      ];
+    const rows = serverRows.length ? serverRows : fallbackLeaderboardRows(ctx);
     const hasCurrent = rows.some((row) => row.playerId && currentPlayerId && row.playerId === currentPlayerId);
     const withCurrent = hasCurrent ? rows : [...rows, currentRow];
     const sorted = [...withCurrent].sort((a, b) => (b.onlineTrophies || 0) - (a.onlineTrophies || 0) || b.trophies - a.trophies || (b.onlineWins || 0) - (a.onlineWins || 0) || (b.album || 0) - (a.album || 0));
