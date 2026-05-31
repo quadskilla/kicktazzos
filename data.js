@@ -144,7 +144,7 @@ const MONSTERS = [
   mon("rayan-cheirki-tazzo", 107, "Rayan Cheirki", ["Meia"], "Raro", 76, 78, 85, 81, "Meia"),
   mon("deseje-doue-tazzo", 108, "Deseje Doue", ["Atacante"], "Raro", 78, 79, 83, 82, "Atacante"),
   mon("michael-olize-tazzo", 109, "Michael Olize", ["Atacante"], "Raro", 77, 80, 84, 81, "Atacante"),
-  goalie("maignano-tazzo", 110, "Maignano", "Epico", "fullShot"),
+  goalie("maignano-tazzo", 110, "Maignano", "Epico", "attackerFieldBonus"),
   mon("joshua-kimmix-tazzo", 111, "Joshua Kimmix", ["Meia"], "Raro", 83, 79, 80, 77, "Meia"),
   mon("toni-rudigao-tazzo", 112, "Toni Rüdigão", ["Defensor"], "Lendario", 90, 85, 60, 90, "Zagueiro"),
   mon("nico-schlotterzi-tazzo", 113, "Nico Schlötterzi", ["Defensor"], "Comum", 84, 74, 73, 76, "Zagueiro"),
@@ -165,7 +165,7 @@ const MONSTERS = [
   mon("chris-fuhrick-tazzo", 128, "Chris Führick", ["Atacante"], "Incomum", 76, 79, 82, 81, "Atacante"),
   mon("serge-gnabryx-tazzo", 129, "Serge Gnabryx", ["Atacante"], "Epico", 77, 81, 83, 83, "Atacante"),
   mon("nikolai-fullking-tazzo", 130, "Nikolai Fullking", ["Atacante"], "Incomum", 82, 83, 75, 72, "Atacante"),
-  goalie("neuerz-tazzo", 131, "Neuerz", "Lendario", "extraTurn"),
+  goalie("neuerz-tazzo", 131, "Neuerz", "Lendario", "reviveRandom"),
   mon("laminho-jamal-tazzo", 132, "Laminho Jamal", ["Atacante"], "Mistico", 77, 82, 87, 86, "Atacante"),
   mon("nicao-williams-tazzo", 133, "Nicão Williams", ["Atacante"], "Lendario", 78, 81, 85, 88, "Atacante"),
   mon("pedrito-gonzalaz-tazzo", 134, "Pedrito Gonzalaz", ["Meia"], "Epico", 79, 79, 86, 79, "Meia"),
@@ -186,7 +186,7 @@ const MONSTERS = [
   mon("marquito-casadao-tazzo", 149, "Marquito Casadão", ["Meia"], "Comum", 80, 74, 77, 75, "Meia"),
   mon("yerinho-pinudo-tazzo", 150, "Yerinho Pinudo", ["Atacante"], "Raro", 77, 78, 81, 83, "Atacante"),
   mon("bryano-zaragoza-tazzo", 151, "Bryano Zaragoza", ["Atacante"], "Raro", 76, 77, 83, 85, "Atacante"),
-  goalie("unai-simonz-tazzo", 152, "Unai Simonz", "Epico", "freeSwap")
+  goalie("unai-simonz-tazzo", 152, "Unai Simonz", "Epico", "resetEnemies")
 ];
 
 const MONSTER_BY_ID = Object.fromEntries(MONSTERS.map((monster) => [monster.id, monster]));
@@ -205,9 +205,12 @@ MONSTER_BY_ID["kylian-mbrappe-tazzo"].holoImage = "tazzos/90 (2).webp";
 MONSTER_BY_ID["dembeletico-tazzo"].holoImage = "tazzos/92 (2).webp";
 MONSTER_BY_ID["zinedao-sidane-tazzo"].holoImage = "tazzos/101 (2).webp";
 MONSTER_BY_ID["toni-rudigao-tazzo"].holoImage = "tazzos/112 (2).webp";
+MONSTER_BY_ID["jamal-musiloko-tazzo"].holoImage = "tazzos/116(2).webp";
 MONSTER_BY_ID["leroy-saneca-tazzo"].holoImage = "tazzos/119 (2).webp";
 MONSTER_BY_ID["neuerz-tazzo"].holoImage = "tazzos/131 (2).webp";
 MONSTER_BY_ID["laminho-jamal-tazzo"].holoImage = "tazzos/132 (2).webp";
+MONSTER_BY_ID["nicao-williams-tazzo"].holoImage = "tazzos/133(2).webp";
+MONSTER_BY_ID["rodrito-hernandes-tazzo"].holoImage = "tazzos/137(2).webp";
 MONSTER_BY_ID["andres-iniestion-tazzo"].holoImage = "tazzos/141(2).webp";
 
 const RANKS = [

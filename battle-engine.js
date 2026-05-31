@@ -42,8 +42,8 @@ function newBattle(config = null, legacyEnemyName = "IA") {
     ranked: options.ranked,
     online: options.online || null,
     effects: {
-      player: { fullShot: 0, freeSwap: false, substitution: false, extraTurnId: null },
-      cpu: { fullShot: 0, freeSwap: false, substitution: false, extraTurnId: null }
+      player: { fullShot: 0, freeSwap: false, substitution: false, extraTurnId: null, attackerFieldBonus: false },
+      cpu: { fullShot: 0, freeSwap: false, substitution: false, extraTurnId: null, attackerFieldBonus: false }
     },
     goalkeepers: {
       player: createGoalkeeperState(playerGoalkeeper, "player"),
@@ -148,6 +148,8 @@ function createPiece(monsterId, side, pos) {
     side,
     x: pos.x,
     y: pos.y,
+    startingX: pos.x,
+    startingY: pos.y,
     hp: stats.vitality,
     maxHp: stats.vitality,
     shot: stats.shot,
@@ -423,6 +425,7 @@ function incomingDamageAfterPosition(piece, damage) {
 
 function hasPositionalRoleBonus(piece) {
   const monster = piece ? monsterOf(piece) : null;
+  if (monster?.types?.includes("Atacante") && state.battle?.effects?.[piece.side]?.attackerFieldBonus) return true;
   const bonusType = positionalBonusType(piece);
   return Boolean(monster && bonusType && monster.types.includes(bonusType));
 }
@@ -508,7 +511,30 @@ function canUseKeeperAbility(sideOrPiece) {
   const keeper = battleGoalkeeper(side);
   const active = activePiece();
   const monster = keeper ? MONSTER_BY_ID[keeper.monsterId] : null;
-  return Boolean(side && active && active.side === side && active.hp > 0 && monster?.keeperAbility && !keeper.used);
+  return Boolean(
+    side
+    && active
+    && active.side === side
+    && active.hp > 0
+    && monster?.keeperAbility
+    && !keeper.used
+    && keeperAbilityCanResolve(side, monster.keeperAbility)
+  );
+}
+
+function keeperAbilityCanResolve(side, ability) {
+  if (ability === "attackerFieldBonus") {
+    return !state.battle.effects[side]?.attackerFieldBonus
+      && state.battle.pieces.some((ally) => ally.side === side && ally.hp > 0 && monsterOf(ally).types.includes("Atacante"));
+  }
+  if (ability === "reviveRandom") return defeatedPieces(side).length > 0;
+  if (ability === "resetEnemies") {
+    return alivePieces().some((piece) => (
+      piece.side !== side
+      && (piece.x !== startingX(piece) || piece.y !== startingY(piece))
+    ));
+  }
+  return true;
 }
 
 function useKeeperAbility(sideOrPiece) {
@@ -535,6 +561,26 @@ function useKeeperAbility(sideOrPiece) {
   if (monster.keeperAbility === "fullShot") {
     state.battle.effects[side].fullShot = 1;
     logBattle(`${monster.name} armou o chute perfeito: o proximo chute causa dano cheio.`);
+    return true;
+  }
+
+  if (monster.keeperAbility === "attackerFieldBonus") {
+    state.battle.effects[side].attackerFieldBonus = true;
+    logBattle(`${monster.name} abriu o campo: atacantes contam como em zona ideal ate o fim da partida.`);
+    return true;
+  }
+
+  if (monster.keeperAbility === "reviveRandom") {
+    const revived = reviveRandomDefeatedPiece(side);
+    if (!revived) return false;
+    logBattle(`${monster.name} chamou reforco: ${monsterOf(revived).name} voltou para a arena.`);
+    return true;
+  }
+
+  if (monster.keeperAbility === "resetEnemies") {
+    const moved = resetEnemyPiecesToStart(side);
+    logBattle(`${monster.name} reorganizou o rival: ${moved} jogador(es) voltaram para a formacao inicial.`);
+    finishTurn();
     return true;
   }
 
@@ -686,6 +732,18 @@ function shouldUseKeeperAbility(piece) {
       .filter((ally) => ally.side === piece.side && ally.hp > 0)
       .reduce((sum, ally) => sum + (ally.maxHp - ally.hp), 0);
     return missingHp >= 40;
+  }
+  if (ability === "attackerFieldBonus") {
+    return keeperAbilityCanResolve(piece.side, ability);
+  }
+  if (ability === "reviveRandom") {
+    return defeatedPieces(piece.side).length > 0;
+  }
+  if (ability === "resetEnemies") {
+    return alivePieces().some((enemy) => (
+      enemy.side !== piece.side
+      && (enemy.x !== startingX(enemy) || enemy.y !== startingY(enemy))
+    ));
   }
   if (ability === "fullShot" || ability === "investidaTotal") return validTargetsFor(piece, "shot").length > 0;
   if (ability === "extraTurn") return validTargetsFor(piece, "dribble").length > 0 || validTargetsFor(piece, "shot").length > 0;
@@ -1244,6 +1302,60 @@ function distance(a, b) {
 
 function coordKey(x, y) {
   return `${x},${y}`;
+}
+
+function startingX(piece) {
+  return Number.isFinite(Number(piece?.startingX)) ? Number(piece.startingX) : Number(piece?.x) || 0;
+}
+
+function startingY(piece) {
+  return Number.isFinite(Number(piece?.startingY)) ? Number(piece.startingY) : Number(piece?.y) || 0;
+}
+
+function defeatedPieces(side) {
+  return state.battle.pieces.filter((piece) => piece.side === side && piece.hp <= 0);
+}
+
+function pieceAtExcept(x, y, exceptId = "") {
+  return state.battle.pieces.find((piece) => piece.hp > 0 && piece.id !== exceptId && piece.x === x && piece.y === y);
+}
+
+function openCellNear(x, y, movingPiece = null) {
+  const base = { x: Math.max(0, Math.min(6, Math.round(Number(x) || 0))), y: Math.max(0, Math.min(4, Math.round(Number(y) || 0))) };
+  const candidates = [
+    base,
+    ...[-1, 0, 1].flatMap((dx) => [-1, 0, 1].map((dy) => ({ x: base.x + dx, y: base.y + dy })))
+      .filter((cell) => cell.x !== base.x || cell.y !== base.y)
+      .sort((a, b) => distance(a, base) - distance(b, base) || a.y - b.y || a.x - b.x)
+  ];
+  return candidates.find((cell) => (
+    insideArena(cell.x, cell.y)
+    && !pieceAtExcept(cell.x, cell.y, movingPiece?.id || "")
+  )) || { x: movingPiece?.x ?? base.x, y: movingPiece?.y ?? base.y };
+}
+
+function reviveRandomDefeatedPiece(side) {
+  const defeated = defeatedPieces(side);
+  if (!defeated.length) return null;
+  const piece = defeated[Math.floor(Math.random() * defeated.length)];
+  const cell = openCellNear(startingX(piece), startingY(piece), piece);
+  piece.x = cell.x;
+  piece.y = cell.y;
+  piece.hp = piece.maxHp;
+  return piece;
+}
+
+function resetEnemyPiecesToStart(side) {
+  let moved = 0;
+  state.battle.pieces
+    .filter((piece) => piece.side !== side && piece.hp > 0)
+    .forEach((piece) => {
+      const cell = openCellNear(startingX(piece), startingY(piece), piece);
+      if (piece.x !== cell.x || piece.y !== cell.y) moved += 1;
+      piece.x = cell.x;
+      piece.y = cell.y;
+    });
+  return moved;
 }
 
 function pieceAt(x, y) {

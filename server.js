@@ -3224,6 +3224,8 @@ function publicOnlineBattleState(lobby, viewerId) {
       side: piece.slot === viewerSlot ? "player" : "cpu",
       x: publicCellForSlot(piece, viewerSlot).x,
       y: piece.y,
+      startingX: publicCellForSlot({ x: onlineStartingX(piece), y: onlineStartingY(piece) }, viewerSlot).x,
+      startingY: onlineStartingY(piece),
       hp: piece.hp,
       maxHp: piece.maxHp,
       shot: piece.shot,
@@ -3359,7 +3361,8 @@ function cloneOnlineEffects(effects = {}) {
     fullShot: Math.max(0, Number(effects.fullShot) || 0),
     freeSwap: Boolean(effects.freeSwap),
     substitution: Boolean(effects.substitution),
-    extraTurnId: effects.extraTurnId || null
+    extraTurnId: effects.extraTurnId || null,
+    attackerFieldBonus: Boolean(effects.attackerFieldBonus)
   };
 }
 
@@ -3408,6 +3411,8 @@ function createOnlineBattlePieces(slot, loadout, positions) {
       monsterId,
       x: pos.x,
       y: pos.y,
+      startingX: pos.x,
+      startingY: pos.y,
       hp: stats.vitality,
       maxHp: stats.vitality,
       shot: stats.shot,
@@ -3447,6 +3452,63 @@ function onlineAlivePieces(battleState) {
 
 function onlinePieceAt(battleState, x, y) {
   return battleState.pieces.find((piece) => piece.hp > 0 && piece.x === x && piece.y === y);
+}
+
+function onlineStartingX(piece) {
+  return Number.isFinite(Number(piece?.startingX)) ? Number(piece.startingX) : Number(piece?.x) || 0;
+}
+
+function onlineStartingY(piece) {
+  return Number.isFinite(Number(piece?.startingY)) ? Number(piece.startingY) : Number(piece?.y) || 0;
+}
+
+function onlinePieceAtExcept(battleState, x, y, exceptId = "") {
+  return battleState.pieces.find((piece) => piece.hp > 0 && piece.id !== exceptId && piece.x === x && piece.y === y);
+}
+
+function onlineOpenCellNear(battleState, x, y, movingPiece = null) {
+  const base = {
+    x: Math.max(0, Math.min(6, Math.round(Number(x) || 0))),
+    y: Math.max(0, Math.min(4, Math.round(Number(y) || 0)))
+  };
+  const candidates = [
+    base,
+    ...[-1, 0, 1].flatMap((dx) => [-1, 0, 1].map((dy) => ({ x: base.x + dx, y: base.y + dy })))
+      .filter((cell) => cell.x !== base.x || cell.y !== base.y)
+      .sort((a, b) => onlineDistance(a, base) - onlineDistance(b, base) || a.y - b.y || a.x - b.x)
+  ];
+  return candidates.find((cell) => (
+    onlineInsideArena(cell.x, cell.y)
+    && !onlinePieceAtExcept(battleState, cell.x, cell.y, movingPiece?.id || "")
+  )) || { x: movingPiece?.x ?? base.x, y: movingPiece?.y ?? base.y };
+}
+
+function onlineDefeatedPieces(battleState, slot) {
+  return battleState.pieces.filter((piece) => piece.slot === slot && piece.hp <= 0);
+}
+
+function onlineReviveRandomDefeatedPiece(battleState, slot) {
+  const defeated = onlineDefeatedPieces(battleState, slot);
+  if (!defeated.length) return null;
+  const piece = defeated[Math.floor(Math.random() * defeated.length)];
+  const cell = onlineOpenCellNear(battleState, onlineStartingX(piece), onlineStartingY(piece), piece);
+  piece.x = cell.x;
+  piece.y = cell.y;
+  piece.hp = piece.maxHp;
+  return piece;
+}
+
+function onlineResetEnemyPiecesToStart(battleState, slot) {
+  let moved = 0;
+  battleState.pieces
+    .filter((piece) => piece.slot !== slot && piece.hp > 0)
+    .forEach((piece) => {
+      const cell = onlineOpenCellNear(battleState, onlineStartingX(piece), onlineStartingY(piece), piece);
+      if (piece.x !== cell.x || piece.y !== cell.y) moved += 1;
+      piece.x = cell.x;
+      piece.y = cell.y;
+    });
+  return moved;
 }
 
 function onlineActivePiece(battleState) {
@@ -3602,8 +3664,8 @@ function onlineCalculateDamage(battleState, attacker, defender, isDash) {
   const base = isDash ? attacker.shot * (fullShot ? 1 : 0.5) : attacker.dribble;
   const surrounded = onlineIsSurrounded(battleState, defender) ? 1.25 : 1;
   const matchup = onlineTypeMultiplier(MONSTER_BY_ID[attacker.monsterId].types, MONSTER_BY_ID[defender.monsterId].types);
-  const positionalAttack = onlinePositionalMultiplier(attacker, true);
-  const positionalDefense = onlinePositionalMultiplier(defender, false);
+  const positionalAttack = onlinePositionalMultiplier(battleState, attacker, true);
+  const positionalDefense = onlinePositionalMultiplier(battleState, defender, false);
   return Math.max(1, Math.round(base * surrounded * matchup * positionalAttack * positionalDefense));
 }
 
@@ -3615,7 +3677,7 @@ function onlinePushPiece(battleState, target, attacker, steps, force = attacker.
   for (let i = 0; i < steps; i += 1) {
     const next = { x: target.x + dx, y: target.y + dy };
     if (!onlineInsideArena(next.x, next.y)) {
-      const damage = onlineIncomingDamageAfterPosition(target, Math.round(force * 0.5));
+      const damage = onlineIncomingDamageAfterPosition(battleState, target, Math.round(force * 0.5));
       onlineApplyDamage(battleState, target, damage, attacker.slot, { precalculated: true });
       onlineLog(battleState, `${MONSTER_BY_ID[target.monsterId].name} bateu na borda: ${damage} dano extra.`);
       result.out = true;
@@ -3624,8 +3686,8 @@ function onlinePushPiece(battleState, target, attacker, steps, force = attacker.
     const blocker = onlinePieceAt(battleState, next.x, next.y);
     if (blocker) {
       const baseDamage = Math.round(force * 0.25);
-      const targetDamage = onlineIncomingDamageAfterPosition(target, baseDamage);
-      const blockerDamage = onlineIncomingDamageAfterPosition(blocker, baseDamage);
+      const targetDamage = onlineIncomingDamageAfterPosition(battleState, target, baseDamage);
+      const blockerDamage = onlineIncomingDamageAfterPosition(battleState, blocker, baseDamage);
       onlineApplyDamage(battleState, target, targetDamage, attacker.slot, { precalculated: true });
       onlineApplyDamage(battleState, blocker, blockerDamage, attacker.slot, { precalculated: true });
       onlineLog(battleState, `Colisao entre ${MONSTER_BY_ID[target.monsterId].name} e ${MONSTER_BY_ID[blocker.monsterId].name}: ${targetDamage}/${blockerDamage} dano.`);
@@ -3640,7 +3702,7 @@ function onlinePushPiece(battleState, target, attacker, steps, force = attacker.
 }
 
 function onlineApplyDamage(battleState, piece, damage, sourceSlot, options = {}) {
-  const finalDamage = options.precalculated ? damage : onlineIncomingDamageAfterPosition(piece, damage);
+  const finalDamage = options.precalculated ? damage : onlineIncomingDamageAfterPosition(battleState, piece, damage);
   piece.hp = Math.max(0, piece.hp - finalDamage);
   battleState.damage[sourceSlot] = (battleState.damage[sourceSlot] || 0) + finalDamage;
   if (piece.hp <= 0) onlineLog(battleState, `${MONSTER_BY_ID[piece.monsterId].name} saiu da arena.`);
@@ -3661,7 +3723,31 @@ function onlineCanUseKeeperAbility(lobby, slot) {
   const keeper = state?.goalkeepers?.[slot];
   const monster = keeper ? MONSTER_BY_ID[keeper.monsterId] : null;
   const active = onlineActivePiece(state);
-  return Boolean(state && keeper && monster?.keeperAbility && !keeper.used && active?.slot === slot && active.hp > 0);
+  return Boolean(
+    state
+    && keeper
+    && monster?.keeperAbility
+    && !keeper.used
+    && active?.slot === slot
+    && active.hp > 0
+    && onlineKeeperAbilityCanResolve(state, slot, monster.keeperAbility)
+  );
+}
+
+function onlineKeeperAbilityCanResolve(state, slot, ability) {
+  if (ability === "attackerFieldBonus") {
+    return !state.effects[slot]?.attackerFieldBonus
+      && state.pieces.some((ally) => ally.slot === slot && ally.hp > 0 && MONSTER_BY_ID[ally.monsterId]?.types?.includes("Atacante"));
+  }
+  if (ability === "reviveRandom") return onlineDefeatedPieces(state, slot).length > 0;
+  if (ability === "resetEnemies") {
+    return state.pieces.some((piece) => (
+      piece.slot !== slot
+      && piece.hp > 0
+      && (piece.x !== onlineStartingX(piece) || piece.y !== onlineStartingY(piece))
+    ));
+  }
+  return true;
 }
 
 function onlineUseKeeperAbility(lobby, slot) {
@@ -3688,6 +3774,28 @@ function onlineUseKeeperAbility(lobby, slot) {
     const message = `${monster.name} armou o chute perfeito: o proximo chute causa dano cheio.`;
     onlineLog(state, message);
     return { keepTurn: true, message };
+  }
+
+  if (monster.keeperAbility === "attackerFieldBonus") {
+    state.effects[slot].attackerFieldBonus = true;
+    const message = `${monster.name} abriu o campo: atacantes contam como em zona ideal ate o fim da partida.`;
+    onlineLog(state, message);
+    return { keepTurn: true, message };
+  }
+
+  if (monster.keeperAbility === "reviveRandom") {
+    const revived = onlineReviveRandomDefeatedPiece(state, slot);
+    if (!revived) return { keepTurn: true, message: `${monster.name} tentou chamar reforco, mas nao havia aliado derrotado.` };
+    const message = `${monster.name} chamou reforco: ${MONSTER_BY_ID[revived.monsterId].name} voltou para a arena.`;
+    onlineLog(state, message);
+    return { keepTurn: true, message };
+  }
+
+  if (monster.keeperAbility === "resetEnemies") {
+    const moved = onlineResetEnemyPiecesToStart(state, slot);
+    const message = `${monster.name} reorganizou o rival: ${moved} jogador(es) voltaram para a formacao inicial.`;
+    onlineLog(state, message);
+    return { keepTurn: false, message };
   }
 
   if (monster.keeperAbility === "investidaTotal") {
@@ -3868,15 +3976,22 @@ function onlineTypeMultiplier(attackerTypes = [], defenderTypes = []) {
   return attackerTypes.some((type) => defenderTypes.includes(advantages[type])) ? 1.25 : 1;
 }
 
-function onlinePositionalMultiplier(piece, attacking) {
-  const monster = MONSTER_BY_ID[piece.monsterId];
-  const bonus = onlinePositionalBonusType(piece);
-  if (!monster || !bonus || !monster.types.includes(bonus)) return 1;
+function onlinePositionalMultiplier(battleState, piece, attacking) {
+  if (!onlineHasPositionalRoleBonus(battleState, piece)) return 1;
   return attacking ? 1.1 : 0.9;
 }
 
-function onlineIncomingDamageAfterPosition(piece, damage) {
-  return Math.max(1, Math.round(damage * onlinePositionalMultiplier(piece, false)));
+function onlineHasPositionalRoleBonus(battleState, piece) {
+  const monster = MONSTER_BY_ID[piece.monsterId];
+  if (!monster) return false;
+  const effects = battleState?.effects?.[piece.slot] || {};
+  if (effects.attackerFieldBonus && monster.types.includes("Atacante")) return true;
+  const bonus = onlinePositionalBonusType(piece);
+  return Boolean(bonus && monster.types.includes(bonus));
+}
+
+function onlineIncomingDamageAfterPosition(battleState, piece, damage) {
+  return Math.max(1, Math.round(damage * onlinePositionalMultiplier(battleState, piece, false)));
 }
 
 function onlinePositionalBonusType(piece) {

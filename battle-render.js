@@ -609,6 +609,7 @@ function renderCommands() {
     const extraTurnReady = state.battle.effects[active.side]?.extraTurnId === active.id;
     const fullShotReady = fullShotCharges(active.side);
     const substitutionReady = state.battle.effects[active.side]?.substitution;
+    const attackerFieldBonusReady = state.battle.effects[active.side]?.attackerFieldBonus && monster.types.includes("Atacante");
     card.innerHTML = `
       <img src="${monster.image}" alt="${monster.name}"${viewerAttr}>
       <div>
@@ -619,6 +620,7 @@ function renderCommands() {
           ${keeperMonster && active.side === "player" && !keeper.used ? `<span class="rarity-chip">Goleiro pronto</span>` : ""}
           ${extraTurnReady ? `<span class="rarity-chip">Turno extra</span>` : ""}
           ${fullShotReady ? `<span class="rarity-chip">Chute cheio x${fullShotReady}</span>` : ""}
+          ${attackerFieldBonusReady ? `<span class="rarity-chip">Zona ideal</span>` : ""}
           ${substitutionReady ? `<span class="rarity-chip">Substituicao livre</span>` : ""}
         </div>
         <div class="stat-line">

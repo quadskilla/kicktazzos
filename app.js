@@ -130,7 +130,10 @@ const KEEPER_ABILITY_LABELS = {
   teamHeal: "Recuperar Vitalidade",
   freeSwap: "Proxima troca em qualquer casa",
   substitution: "Duas estrelas: Substituicao",
-  investidaTotal: "Investida total - 2 chutes cheios"
+  investidaTotal: "Investida total - 2 chutes cheios",
+  attackerFieldBonus: "Atacantes em zona ideal",
+  reviveRandom: "Volta surpresa",
+  resetEnemies: "Recuo rival"
 };
 const MUSIC_TRACKS = [
   { file: "Bate no Tambor.mp3", name: "Bate no Tambor" },
@@ -4023,6 +4026,8 @@ function applyOnlineBattleSnapshot(snapshot, options = {}) {
     side: piece.side,
     x: Number(piece.x) || 0,
     y: Number(piece.y) || 0,
+    startingX: Number.isFinite(Number(piece.startingX)) ? Number(piece.startingX) : Number(piece.x) || 0,
+    startingY: Number.isFinite(Number(piece.startingY)) ? Number(piece.startingY) : Number(piece.y) || 0,
     hp: Math.max(0, Number(piece.hp) || 0),
     maxHp: Math.max(0, Number(piece.maxHp) || 0),
     shot: Math.max(0, Number(piece.shot) || 0),
@@ -4070,7 +4075,8 @@ function cloneOnlineEffects(effects = {}) {
     fullShot: Math.max(0, Number(effects.fullShot) || 0),
     freeSwap: Boolean(effects.freeSwap),
     substitution: Boolean(effects.substitution),
-    extraTurnId: effects.extraTurnId || null
+    extraTurnId: effects.extraTurnId || null,
+    attackerFieldBonus: Boolean(effects.attackerFieldBonus)
   };
 }
 
@@ -7451,7 +7457,10 @@ function keeperAbilityText(monster) {
     teamHeal: "Habilidade: Recuperar Vitalidade recupera toda a vitalidade do time.",
     freeSwap: "Habilidade: a proxima troca pode ser feita em qualquer casa.",
     substitution: "Habilidade duas estrelas: Substituicao permite trocar jogadores em qualquer lugar do campo ate o final da partida.",
-    investidaTotal: "Habilidade: investida total, os proximos 2 chutes do time causam dano cheio."
+    investidaTotal: "Habilidade: investida total, os proximos 2 chutes do time causam dano cheio.",
+    attackerFieldBonus: "Habilidade: atacantes jogam em zona ideal ate o fim da partida.",
+    reviveRandom: "Habilidade: traz um aliado derrotado de volta sem gastar o turno.",
+    resetEnemies: "Habilidade: manda o trio rival de volta para a formacao inicial."
   };
   return monster.keeperAbility ? labels[monster.keeperAbility] : "";
 }
