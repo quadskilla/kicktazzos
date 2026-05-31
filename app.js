@@ -156,7 +156,7 @@ const MUSIC_TRACKS = [
 const SFX_NAMES = Object.freeze([
   "ui-click", "ui-back", "ui-confirm", "ui-error", "ui-disabled", "tab-switch", "modal-open", "modal-close", "wallet-pop",
   "pack-buy", "pack-rustle", "pack-tear", "pack-open", "snack-burst", "card-flip", "card-zoom",
-  "reveal-common", "reveal-uncommon", "reveal-rare", "reveal-epic", "reveal-legendary", "reveal-mystic", "fragment-pop",
+  "reveal-common", "reveal-uncommon", "reveal-rare", "reveal-epic", "reveal-legendary", "reveal-mystic", "lendario", "fragment-pop",
   "battle-start", "turn-start", "action-select", "target-select", "move-slide", "retreat-slide", "swap", "dribble-hit",
   "shot-kick", "pressure-push", "collision", "wall-bump", "ko", "pass-turn", "keeper-charge", "keeper-activate",
   "battle-win", "battle-lose", "battle-draw", "timer-warning",
@@ -166,13 +166,18 @@ const SFX_NAMES = Object.freeze([
   "reward-shake", "reward-open", "friend-invite", "friend-message", "trade-offer", "trade-accept", "trade-decline",
   "online-lobby", "matchmaking", "notification"
 ]);
-const SFX_FILES = Object.freeze(Object.fromEntries(SFX_NAMES.map((name) => [name, `assets/sfx/${name}.wav`])));
+const SFX_FILES = Object.freeze({
+  ...Object.fromEntries(SFX_NAMES.map((name) => [name, `assets/sfx/${name}.wav`])),
+  "pack-open": "assets/abre_pacote.mp3",
+  lendario: "assets/lendario.weba"
+});
 const SFX_VOLUME = Object.freeze({
   "battle-start": 0.86,
   "battle-win": 0.9,
   "battle-lose": 0.72,
   "reveal-legendary": 0.9,
   "reveal-mystic": 0.92,
+  lendario: 0.95,
   "tazzo-clash-hit": 0.88,
   "tazzo-clash-perfect": 0.94,
   collision: 0.82,
@@ -189,6 +194,7 @@ const SFX_COOLDOWN_MS = Object.freeze({
   "target-select": 80,
   "turn-start": 220,
   "timer-warning": 900,
+  lendario: 900,
   notification: 260
 });
 const DEFAULT_SFX_VOLUME = 1;
@@ -4907,8 +4913,7 @@ function buttonSfx(button) {
 
 function revealSfxForRarity(rarity) {
   const normalized = normalizeRarity(rarity, "Comum");
-  if (normalized === "Mistico" || normalized === "Mistico Secreto") return "reveal-mystic";
-  if (normalized === "Lendario") return "reveal-legendary";
+  if (isAtLeastRarity(normalized, "Lendario")) return "lendario";
   if (normalized === "Epico") return "reveal-epic";
   if (normalized === "Raro") return "reveal-rare";
   if (normalized === "Incomum") return "reveal-uncommon";
@@ -7760,8 +7765,12 @@ async function openStarterOnboardingPack() {
     }
     state.starter.reveal = pulls.map((pull) => ({ ...pull, revealed: true }));
     state.starter.opening = true;
+    playSfx("pack-rustle", { cooldown: 180, pitch: 0.04 });
+    const starterHasLegendaryPlus = pulls.some((pull) => isAtLeastRarity(MONSTER_BY_ID[pull.monsterId]?.rarity, "Lendario"));
     window.setTimeout(() => {
       state.starter.opening = false;
+      playSfx("pack-open", { pitch: 0.04 });
+      if (starterHasLegendaryPlus) window.setTimeout(() => playSfx("lendario"), 140);
       renderAll();
     }, PACK_OPENING_DURATION_MS);
     renderAll();

@@ -141,6 +141,7 @@ const MIME_TYPES = {
   ".webp": "image/webp",
   ".mp3": "audio/mpeg",
   ".wav": "audio/wav",
+  ".weba": "audio/webm",
   ".ogg": "audio/ogg",
   ".pdf": "application/pdf"
 };
@@ -157,7 +158,7 @@ const PUBLIC_STATIC_FILES = new Set([
   "styles.css"
 ]);
 const PUBLIC_STATIC_DIRS = Object.freeze({
-  "assets": new Set([".gif", ".jpg", ".jpeg", ".mp3", ".ogg", ".png", ".svg", ".wav", ".webp"]),
+  "assets": new Set([".gif", ".jpg", ".jpeg", ".mp3", ".ogg", ".png", ".svg", ".wav", ".weba", ".webp"]),
   "musics": new Set([".mp3", ".ogg", ".wav"]),
   "scripts": new Set([".js"]),
   "tazzos": new Set([".png", ".webp"]),

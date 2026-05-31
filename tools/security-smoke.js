@@ -171,6 +171,12 @@ async function main() {
     const publicTazzo = await request(port, { method: "HEAD", pathname: "/tazzos/1.webp" });
     assert.equal(publicTazzo.status, 200);
     assert.match(headerValue(publicTazzo.headers, "content-type"), /image\/webp/);
+    const publicPackOpenSfx = await request(port, { method: "HEAD", pathname: "/assets/abre_pacote.mp3" });
+    assert.equal(publicPackOpenSfx.status, 200);
+    assert.match(headerValue(publicPackOpenSfx.headers, "content-type"), /audio\/mpeg/);
+    const publicLegendarySfx = await request(port, { method: "HEAD", pathname: "/assets/lendario.weba" });
+    assert.equal(publicLegendarySfx.status, 200);
+    assert.match(headerValue(publicLegendarySfx.headers, "content-type"), /audio\/webm/);
 
     const blockedPackage = await request(port, { pathname: "/package.json" });
     assert.equal(blockedPackage.status, 404);
