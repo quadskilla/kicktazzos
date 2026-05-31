@@ -108,6 +108,11 @@ async function main() {
   try {
     const health = await waitForServer(child, port, logs);
     assert.equal(headerValue(health.headers, "x-content-type-options"), "nosniff");
+    assert.equal(headerValue(health.headers, "x-frame-options"), "DENY");
+    assert.match(headerValue(health.headers, "content-security-policy"), /default-src 'self'/);
+    assert.match(headerValue(health.headers, "content-security-policy"), /frame-ancestors 'none'/);
+    assert.match(headerValue(health.headers, "content-security-policy"), /https:\/\/www\.gstatic\.com/);
+    assert.match(headerValue(health.headers, "content-security-policy"), /https:\/\/www\.mercadopago\.com/);
     const initialCookie = headerValue(health.headers, "set-cookie");
     assert.match(initialCookie, /kick_tazzos_player=v1\./);
     assert.match(initialCookie, /HttpOnly/);

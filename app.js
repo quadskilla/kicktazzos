@@ -93,6 +93,12 @@ const COMPETITIVE_STREAK_BONUSES = Object.freeze({
   4: 6,
   5: 8
 });
+const TRUSTED_PROFILE_IMAGE_HOSTS = new Set([
+  "googleusercontent.com",
+  "graph.facebook.com",
+  "platform-lookaside.fbsbx.com"
+]);
+const TRUSTED_PROFILE_IMAGE_SUFFIXES = [".googleusercontent.com", ".fbcdn.net"];
 const STARTER_PACK_ID = "recheado";
 const STARTER_PROMO_ITEM_ID = "starter-bundle";
 const STARTER_FIELD_SLOTS = [
@@ -1288,10 +1294,20 @@ function profileAvatarUrl(profile) {
   if (!value) return "";
   try {
     const url = new URL(value);
-    return url.protocol === "https:" ? url.href : "";
+    if (url.protocol !== "https:" || !isTrustedProfileImageHost(url.hostname)) return "";
+    url.username = "";
+    url.password = "";
+    url.hash = "";
+    return url.href;
   } catch (error) {
     return "";
   }
+}
+
+function isTrustedProfileImageHost(hostname) {
+  const host = String(hostname || "").trim().toLowerCase();
+  return TRUSTED_PROFILE_IMAGE_HOSTS.has(host)
+    || TRUSTED_PROFILE_IMAGE_SUFFIXES.some((suffix) => host.endsWith(suffix) && host.length > suffix.length);
 }
 
 function renderProfileAvatar(element, profile) {

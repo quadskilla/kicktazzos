@@ -135,14 +135,39 @@ const MIME_TYPES = {
   ".pdf": "application/pdf"
 };
 
+const BASE_CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "script-src 'self' https://www.gstatic.com https://*.gstatic.com https://www.mercadopago.com https://*.mercadopago.com https://*.mercadolibre.com https://*.mlstatic.com",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https://lh3.googleusercontent.com https://*.googleusercontent.com https://graph.facebook.com https://platform-lookaside.fbsbx.com https://*.fbcdn.net https://www.mercadopago.com https://*.mercadopago.com https://*.mercadolibre.com https://*.mlstatic.com",
+  "font-src 'self' data:",
+  "media-src 'self' data: blob:",
+  "connect-src 'self' ws: wss: https://www.googleapis.com https://*.googleapis.com https://securetoken.googleapis.com https://identitytoolkit.googleapis.com https://firebaseinstallations.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://*.gstatic.com https://www.mercadopago.com https://*.mercadopago.com https://*.mercadolibre.com https://*.mlstatic.com",
+  "frame-src https://accounts.google.com https://*.firebaseapp.com https://www.mercadopago.com https://*.mercadopago.com",
+  "worker-src 'self' blob:",
+  "manifest-src 'self'"
+].join("; ");
+
 const SECURITY_HEADERS = Object.freeze({
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "strict-origin-when-cross-origin",
   "X-Frame-Options": "DENY",
   "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
+  "Cross-Origin-Resource-Policy": "same-origin",
   "Origin-Agent-Cluster": "?1",
   "Permissions-Policy": "camera=(), microphone=(), geolocation=()"
 });
+
+const TRUSTED_PROFILE_IMAGE_HOSTS = new Set([
+  "googleusercontent.com",
+  "graph.facebook.com",
+  "platform-lookaside.fbsbx.com"
+]);
+const TRUSTED_PROFILE_IMAGE_SUFFIXES = [".googleusercontent.com", ".fbcdn.net"];
 
 const SAFE_HTTP_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const ORIGIN_CHECK_EXEMPT_PATHS = new Set(["/api/mercadopago/webhook"]);
@@ -360,8 +385,16 @@ function isHttpsRequest(req) {
   return req.socket?.encrypted || String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https";
 }
 
+function contentSecurityPolicy(req = null) {
+  return [
+    BASE_CONTENT_SECURITY_POLICY,
+    req && isHttpsRequest(req) ? "upgrade-insecure-requests" : ""
+  ].filter(Boolean).join("; ");
+}
+
 function securityHeaders(req = null) {
   const headers = { ...SECURITY_HEADERS };
+  headers["Content-Security-Policy"] = contentSecurityPolicy(req);
   if (req && isHttpsRequest(req)) {
     headers["Strict-Transport-Security"] = "max-age=15552000; includeSubDomains";
   }
@@ -853,10 +886,10 @@ function firebaseDisplayName(decodedToken) {
 function firebaseAuthProfile(decodedToken, now = new Date().toISOString()) {
   return {
     uid: String(decodedToken.uid || ""),
-    email: String(decodedToken.email || "").slice(0, 160),
+    email: safeText(decodedToken.email, "", 160),
     emailVerified: Boolean(decodedToken.email_verified),
     provider: normalizeFirebaseProviderId(decodedToken.firebase?.sign_in_provider || "firebase").slice(0, 40),
-    picture: String(decodedToken.picture || "").slice(0, 500),
+    picture: safeProfileImageUrl(decodedToken.picture),
     lastLoginAt: now
   };
 }
@@ -870,10 +903,20 @@ function firebaseProfileEntry(profiles, uid) {
 function safeProfileImageUrl(value) {
   try {
     const url = new URL(String(value || ""));
-    return url.protocol === "https:" ? url.href.slice(0, 500) : "";
+    if (url.protocol !== "https:" || !isTrustedProfileImageHost(url.hostname)) return "";
+    url.username = "";
+    url.password = "";
+    url.hash = "";
+    return url.href.slice(0, 500);
   } catch (error) {
     return "";
   }
+}
+
+function isTrustedProfileImageHost(hostname) {
+  const host = String(hostname || "").trim().toLowerCase();
+  return TRUSTED_PROFILE_IMAGE_HOSTS.has(host)
+    || TRUSTED_PROFILE_IMAGE_SUFFIXES.some((suffix) => host.endsWith(suffix) && host.length > suffix.length);
 }
 
 function profileEntryForPlayer(profiles, playerId) {
@@ -887,7 +930,7 @@ function publicProfile(profile) {
   const firebaseAuth = profile.authProviders?.firebase || null;
   return {
     playerId: profile.playerId,
-    name: profile.name,
+    name: safeText(profile.name, "Jogador", 24),
     createdAt: profile.createdAt,
     lastLoginAt: profile.lastLoginAt || profile.createdAt,
     authProvider: firebaseAuth ? "firebase" : "pin",
