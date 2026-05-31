@@ -39,6 +39,7 @@ function newBattle(config = null, legacyEnemyName = "IA") {
     mode: options.mode,
     tournamentId: options.tournamentId,
     competitiveMatchId: options.competitiveMatchId || null,
+    trainingAi: options.trainingAi || null,
     ranked: options.ranked,
     online: options.online || null,
     effects: {
@@ -115,6 +116,7 @@ function normalizeBattleConfig(config, legacyEnemyName) {
     enemyPositions: config?.enemyPositions || null,
     tournamentId: config?.tournamentId || null,
     competitiveMatchId: config?.competitiveMatchId || null,
+    trainingAi: config?.trainingAi || null,
     ranked: config?.ranked || null,
     online: config?.online || null,
     preservePlayerLoadout: Boolean(config?.preservePlayerLoadout),

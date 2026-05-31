@@ -138,6 +138,7 @@ async function main() {
       RATE_LIMIT_MAX: "50",
       RATE_LIMIT_SENSITIVE_MAX: "1",
       COMPETITIVE_MIN_POSITIVE_RESOLVE_MS: "2000",
+      TRAINING_AI_MIN_RESOLVE_MS: "1000",
       MERCADO_PAGO_WEBHOOK_SECRET: ""
     },
     stdio: ["ignore", "pipe", "pipe"]
@@ -277,6 +278,73 @@ async function main() {
     assert.equal(shareClaim.status, 200);
     const shareClaimPayload = JSON.parse(shareClaim.body);
     assert.equal(shareClaimPayload.save.merreis, 1250 + Number(shareClaimPayload.network.reward));
+
+    const trainingPlayerId = crypto.randomUUID();
+    seedProfile(dataDir, trainingPlayerId, "training-smoke", "Training Smoke");
+    const trainingPlayerCookie = signedPlayerCookie(trainingPlayerId);
+    const trainingStart = await request(port, {
+      method: "POST",
+      pathname: "/api/training-ai/start",
+      headers: {
+        Cookie: trainingPlayerCookie,
+        Origin: sameOrigin,
+        "Content-Type": "application/json",
+        "X-Forwarded-For": "203.0.113.31"
+      },
+      body: "{}"
+    });
+    assert.equal(trainingStart.status, 200);
+    const trainingPayload = JSON.parse(trainingStart.body);
+    assert.match(trainingPayload.session.id, /^[a-f0-9-]{36}$/i);
+    assert.equal(trainingPayload.save.activeTrainingAi.id, trainingPayload.session.id);
+    const trainingCookie = responseCookie(trainingStart.headers, "kick_tazzos_training_ai");
+    assert.match(trainingCookie, /^kick_tazzos_training_ai=v1\./);
+    assert.match(headerValue(trainingStart.headers, "set-cookie"), /kick_tazzos_training_ai=.*HttpOnly/);
+
+    const forgedTrainingResolve = await request(port, {
+      method: "POST",
+      pathname: "/api/training-ai/resolve",
+      headers: {
+        Cookie: trainingPlayerCookie,
+        Origin: sameOrigin,
+        "Content-Type": "application/json",
+        "X-Forwarded-For": "203.0.113.32"
+      },
+      body: JSON.stringify({ sessionId: trainingPayload.session.id, outcome: "loss" })
+    });
+    assert.equal(forgedTrainingResolve.status, 403);
+
+    const tooFastTrainingResolve = await request(port, {
+      method: "POST",
+      pathname: "/api/training-ai/resolve",
+      headers: {
+        Cookie: `${trainingPlayerCookie}; ${trainingCookie}`,
+        Origin: sameOrigin,
+        "Content-Type": "application/json",
+        "X-Forwarded-For": "203.0.113.33"
+      },
+      body: JSON.stringify({ sessionId: trainingPayload.session.id, outcome: "loss" })
+    });
+    assert.equal(tooFastTrainingResolve.status, 409);
+
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const acceptedTrainingResolve = await request(port, {
+      method: "POST",
+      pathname: "/api/training-ai/resolve",
+      headers: {
+        Cookie: `${trainingPlayerCookie}; ${trainingCookie}`,
+        Origin: sameOrigin,
+        "Content-Type": "application/json",
+        "X-Forwarded-For": "203.0.113.34"
+      },
+      body: JSON.stringify({ sessionId: trainingPayload.session.id, outcome: "loss" })
+    });
+    assert.equal(acceptedTrainingResolve.status, 200);
+    const acceptedTrainingPayload = JSON.parse(acceptedTrainingResolve.body);
+    assert.equal(acceptedTrainingPayload.save.merreis, 1275);
+    assert.equal(acceptedTrainingPayload.save.dailyEconomy.trainingAiMatches, 1);
+    assert.equal(acceptedTrainingPayload.save.activeTrainingAi, null);
+    assert.match(headerValue(acceptedTrainingResolve.headers, "set-cookie"), /kick_tazzos_training_ai=;/);
 
     const rankedPlayerA = crypto.randomUUID();
     const rankedPlayerB = crypto.randomUUID();

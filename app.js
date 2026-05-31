@@ -45,6 +45,7 @@ const SERVER_TUTORIAL_REWARD_ENDPOINT = "/api/tutorial-reward";
 const SERVER_SHARE_LINK_ENDPOINT = "/api/share-link";
 const SERVER_SHARE_VISIT_ENDPOINT = "/api/share-visit";
 const SERVER_SHARE_REWARD_ENDPOINT = "/api/share-reward";
+const SERVER_TRAINING_AI_START_ENDPOINT = "/api/training-ai/start";
 const SERVER_TRAINING_AI_RESOLVE_ENDPOINT = "/api/training-ai/resolve";
 const SERVER_TRADE_ENDPOINT = "/api/trade";
 const SERVER_FRIEND_GIFT_ENDPOINT = "/api/friend-gift";
@@ -420,6 +421,7 @@ function defaultSave() {
     onlineLosses: 0,
     onlineDraws: 0,
     activeCompetitive: null,
+    activeTrainingAi: null,
     cosmetics: {},
     equippedCosmetics: {},
     selectedCosmetic: null,
@@ -754,7 +756,8 @@ function awardTrainingAiMerreis() {
 async function resolveTrainingAiBattleRewards(outcome) {
   if (hasOnlineProfile()) {
     try {
-      const payload = await postServerMutation(SERVER_TRAINING_AI_RESOLVE_ENDPOINT, { outcome }, "Treino");
+      const sessionId = state.battle?.trainingAi?.id || state.save.activeTrainingAi?.id || "";
+      const payload = await postServerMutation(SERVER_TRAINING_AI_RESOLVE_ENDPOINT, { outcome, sessionId }, "Treino");
       return payload.result || {
         status: "Treino contra IA concluido.",
         rewards: []
@@ -778,6 +781,11 @@ async function resolveTrainingAiBattleRewards(outcome) {
     status: "Treino contra IA concluido. Limite diario de Merreis atingido.",
     rewards: ["Limite diario de treino atingido"]
   };
+}
+
+async function startTrainingAiOnServer() {
+  const payload = await postServerMutation(SERVER_TRAINING_AI_START_ENDPOINT, {}, "Treino");
+  return payload.session || null;
 }
 
 function awardRankedWinMerreis() {
@@ -5571,7 +5579,7 @@ function clearPausedTournamentCompetitive() {
   return cleared;
 }
 
-function startConfiguredBattle() {
+async function startConfiguredBattle() {
   if (activeLockedBattle()) {
     state.battleSceneOpen = Boolean(state.battle);
     switchTab("battle");
@@ -5581,6 +5589,16 @@ function startConfiguredBattle() {
   const mode = state.battleSetup.mode;
   const modeData = BATTLE_MODES[mode];
   const opponent = selectedBattleOpponent();
+  let trainingAi = null;
+  if (mode === "training" && hasOnlineProfile()) {
+    try {
+      trainingAi = await startTrainingAiOnServer();
+    } catch (error) {
+      setServerStatus("online", "Treino recusado");
+      renderAll();
+      return;
+    }
+  }
   state.pendingTournament = null;
   newBattle({
     enemyTeam: opponent.team,
@@ -5590,6 +5608,7 @@ function startConfiguredBattle() {
     matchTime: modeData.matchTime,
     actionTime: modeData.actionTime,
     playerPositions: selectedFormationPositions(),
+    trainingAi,
     logIntro: `${modeData.name}: batalha contra ${opponent.name} comecou.`
   });
 }

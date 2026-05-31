@@ -49,8 +49,10 @@ const DB_FILE = path.join(DATA_DIR, "kick-tazzos.db");
 const ROOT_PREFIX = `${ROOT_DIR}${path.sep}`;
 const PLAYER_COOKIE = "kick_tazzos_player";
 const COMPETITIVE_COOKIE = "kick_tazzos_competitive";
+const TRAINING_AI_COOKIE = "kick_tazzos_training_ai";
 const PLAYER_SESSION_TTL_SECONDS = 60 * 60 * 24 * 365;
 const COMPETITIVE_RESOLVE_TTL_SECONDS = 2 * 60 * 60;
+const TRAINING_AI_SESSION_TTL_SECONDS = 45 * 60;
 const MAX_SAVE_BYTES = 1024 * 1024 * 2;
 const RATE_LIMIT_WINDOW_MS = Math.max(1000, Math.floor(Number(process.env.RATE_LIMIT_WINDOW_MS)) || 60000);
 const RATE_LIMIT_MAX = Math.max(1, Math.floor(Number(process.env.RATE_LIMIT_MAX)) || 240);
@@ -73,6 +75,9 @@ const COMPETITIVE_MATCHMAKING_TIMEOUT_MS = 40000;
 const COMPETITIVE_MIN_POSITIVE_RESOLVE_MS = Number.isFinite(Number(process.env.COMPETITIVE_MIN_POSITIVE_RESOLVE_MS))
   ? Math.max(0, Math.floor(Number(process.env.COMPETITIVE_MIN_POSITIVE_RESOLVE_MS)))
   : 45000;
+const TRAINING_AI_MIN_RESOLVE_MS = Number.isFinite(Number(process.env.TRAINING_AI_MIN_RESOLVE_MS))
+  ? Math.max(0, Math.floor(Number(process.env.TRAINING_AI_MIN_RESOLVE_MS)))
+  : 10000;
 const COMPETITIVE_MATCHMAKING_RANK_WINDOWS = Object.freeze([
   { waitMs: 0, trophies: 120 },
   { waitMs: 12000, trophies: 260 },
@@ -420,6 +425,42 @@ function hasCompetitiveResolveCookie(req, playerId, matchId) {
   const cookies = parseCookies(req?.headers?.cookie || "");
   const session = decodeCompetitiveSession(cookies[COMPETITIVE_COOKIE]);
   return Boolean(session && session.playerId === playerId && session.matchId === matchId);
+}
+
+function signTrainingAiSession(playerId, sessionId) {
+  return crypto.createHmac("sha256", playerSessionSecret())
+    .update(`training-ai.v1.${playerId}.${sessionId}`)
+    .digest("hex");
+}
+
+function encodeTrainingAiSession(playerId, sessionId) {
+  return `v1.${playerId}.${sessionId}.${signTrainingAiSession(playerId, sessionId)}`;
+}
+
+function decodeTrainingAiSession(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const [version, playerId, sessionId, signature, ...extra] = raw.split(".");
+  if (version !== "v1" || extra.length || !isValidPlayerId(playerId) || !isValidPlayerId(sessionId) || !signature) {
+    return null;
+  }
+  return safeEqualText(signature, signTrainingAiSession(playerId, sessionId))
+    ? { playerId, sessionId }
+    : null;
+}
+
+function trainingAiCookie(playerId, sessionId, req = null) {
+  return `${TRAINING_AI_COOKIE}=${encodeURIComponent(encodeTrainingAiSession(playerId, sessionId))}; ${playerCookieFlags(req, TRAINING_AI_SESSION_TTL_SECONDS)}`;
+}
+
+function clearTrainingAiCookie(req = null) {
+  return `${TRAINING_AI_COOKIE}=; ${playerCookieFlags(req, 0)}`;
+}
+
+function hasTrainingAiResolveCookie(req, playerId, sessionId) {
+  const cookies = parseCookies(req?.headers?.cookie || "");
+  const session = decodeTrainingAiSession(cookies[TRAINING_AI_COOKIE]);
+  return Boolean(session && session.playerId === playerId && session.sessionId === sessionId);
 }
 
 function isHttpsRequest(req) {
@@ -5280,6 +5321,7 @@ function defaultServerSave() {
     onlineLosses: 0,
     onlineDraws: 0,
     activeCompetitive: null,
+    activeTrainingAi: null,
     cosmetics: {},
     equippedCosmetics: {},
     selectedCosmetic: null,
@@ -5472,6 +5514,19 @@ function sanitizeServerOneTimePurchases(purchases = {}) {
   );
 }
 
+function sanitizeActiveTrainingAiSession(session = null) {
+  if (!session || typeof session !== "object" || Array.isArray(session)) return null;
+  const id = String(session.id || "").trim();
+  const startedAt = safeText(session.startedAt, "", 64);
+  if (!isValidPlayerId(id) || !Number.isFinite(Date.parse(startedAt))) return null;
+  return {
+    id,
+    startedAt,
+    resolved: Boolean(session.resolved),
+    requiresResolveCookie: session.requiresResolveCookie !== false
+  };
+}
+
 function equipServerCosmetic(save, itemId) {
   const item = shopItemById(itemId);
   if (!item || item.type === "merreis" || !save.cosmetics?.[item.id]) return false;
@@ -5526,6 +5581,7 @@ function normalizeServerSave(rawSave = {}) {
     onlineWins: Math.max(0, Math.floor(Number(save.onlineWins ?? fresh.onlineWins)) || 0),
     onlineLosses: Math.max(0, Math.floor(Number(save.onlineLosses ?? fresh.onlineLosses)) || 0),
     onlineDraws: Math.max(0, Math.floor(Number(save.onlineDraws ?? fresh.onlineDraws)) || 0),
+    activeTrainingAi: sanitizeActiveTrainingAiSession(save.activeTrainingAi || fresh.activeTrainingAi),
     collection,
     starterOnboardingComplete,
     starterPackOpenedAt: safeText(save.starterPackOpenedAt, "", 64) || fresh.starterPackOpenedAt,
@@ -5586,6 +5642,7 @@ function economicSaveFingerprint(save) {
     onlineLosses: normalized.onlineLosses,
     onlineDraws: normalized.onlineDraws,
     activeCompetitive: normalized.activeCompetitive,
+    activeTrainingAi: normalized.activeTrainingAi,
     cosmetics: normalized.cosmetics,
     oneTimePurchases: normalized.oneTimePurchases,
     friendGifts: normalized.friendGifts,
@@ -5623,6 +5680,7 @@ const PROTECTED_SAVE_FIELDS = [
   "onlineLosses",
   "onlineDraws",
   "activeCompetitive",
+  "activeTrainingAi",
   "cosmetics",
   "oneTimePurchases",
   "friendGifts",
@@ -6366,6 +6424,7 @@ async function openStarterPackForPlayer(playerId) {
     save.upgrades = {};
     save.wishlist = {};
     save.activeCompetitive = null;
+    save.activeTrainingAi = null;
   }
   starter.pulls.forEach((pull) => {
     save.collection[pull.monsterId] = (save.collection[pull.monsterId] || 0) + 1;
@@ -6756,11 +6815,64 @@ async function claimShareRewardForPlayer(playerId, networkId) {
   return { save, network };
 }
 
-async function resolveTrainingAiForPlayer(playerId, payload = {}) {
+function activeTrainingAiSession() {
+  return {
+    id: crypto.randomUUID(),
+    startedAt: new Date().toISOString(),
+    resolved: false,
+    requiresResolveCookie: true
+  };
+}
+
+async function startTrainingAiForPlayer(playerId) {
+  await requireProfileForPlayer(playerId);
+  const record = await readOrCreateSave(playerId);
+  const save = normalizeServerSave(record.save);
+  const session = activeTrainingAiSession();
+  save.activeTrainingAi = session;
+  await writeSave(playerId, save);
+  recordAccountEvent(playerId, "training-ai:start", {
+    sessionId: session.id,
+    balances: accountEventBalance(save)
+  });
+  return { save, session };
+}
+
+function enforceTrainingAiResolveCookie(req, playerId, session, save) {
+  if (!session?.requiresResolveCookie) return;
+  if (hasTrainingAiResolveCookie(req, playerId, session.id)) return;
+  const error = new Error("Sessao de treino invalida. Inicie um novo treino antes de receber recompensa.");
+  error.status = 403;
+  error.save = save;
+  throw error;
+}
+
+function enforceTrainingAiResolveTiming(session, save) {
+  if (!TRAINING_AI_MIN_RESOLVE_MS) return;
+  const startedAt = Date.parse(session?.startedAt || "");
+  const elapsedMs = Number.isFinite(startedAt) ? Date.now() - startedAt : 0;
+  if (elapsedMs >= TRAINING_AI_MIN_RESOLVE_MS) return;
+  const error = new Error("Treino concluido cedo demais para validar recompensa.");
+  error.status = 409;
+  error.save = save;
+  throw error;
+}
+
+async function resolveTrainingAiForPlayer(playerId, payload = {}, req = null) {
   await requireProfileForPlayer(playerId);
   const outcome = ["win", "draw", "loss"].includes(payload.outcome) ? payload.outcome : "loss";
   const record = await readOrCreateSave(playerId);
   const save = normalizeServerSave(record.save);
+  const session = save.activeTrainingAi;
+  if (!session || session.resolved || session.id !== payload.sessionId) {
+    const error = new Error("Treino contra IA nao encontrado. Inicie um novo treino.");
+    error.status = 409;
+    error.save = save;
+    throw error;
+  }
+
+  enforceTrainingAiResolveCookie(req, playerId, session, save);
+  enforceTrainingAiResolveTiming(session, save);
   progressServerMission(save, "battle", 1);
   if (outcome === "win") progressServerMission(save, "win", 1);
 
@@ -6778,8 +6890,10 @@ async function resolveTrainingAiForPlayer(playerId, payload = {}) {
     rewards.push("Limite diario de treino atingido");
   }
 
+  save.activeTrainingAi = null;
   await writeSave(playerId, save);
   recordAccountEvent(playerId, "training-ai:resolve", {
+    sessionId: session.id,
     outcome,
     merreis,
     trainingAiMatches: save.dailyEconomy.trainingAiMatches,
@@ -7716,8 +7830,11 @@ async function handleApi(req, res, url) {
     const profile = await profileForPlayer(playerId);
     if (profile) recordAccountEvent(playerId, "account:logout", {});
     json(res, 200, { ok: true }, appendSetCookie(
-      appendSetCookie(headers, clearPlayerCookie(req)),
-      clearCompetitiveCookie(req)
+      appendSetCookie(
+        appendSetCookie(headers, clearPlayerCookie(req)),
+        clearCompetitiveCookie(req)
+      ),
+      clearTrainingAiCookie(req)
     ));
     return;
   }
@@ -8288,6 +8405,34 @@ async function handleApi(req, res, url) {
     return;
   }
 
+  if (url.pathname === "/api/training-ai/start") {
+    if (req.method !== "POST") {
+      json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
+        ...headers,
+        Allow: "POST"
+      });
+      return;
+    }
+
+    try {
+      await readBody(req);
+      const result = await startTrainingAiForPlayer(playerId);
+      json(res, 200, {
+        ok: true,
+        playerId,
+        save: result.save,
+        session: result.session
+      }, appendSetCookie(headers, trainingAiCookie(playerId, result.session.id, req)));
+    } catch (error) {
+      json(res, error.status || 500, {
+        ok: false,
+        error: error.message || "Erro ao iniciar treino contra IA.",
+        save: error.save || null
+      }, headers);
+    }
+    return;
+  }
+
   if (url.pathname === "/api/training-ai/resolve") {
     if (req.method !== "POST") {
       json(res, 405, { ok: false, error: "Metodo nao permitido." }, {
@@ -8300,13 +8445,13 @@ async function handleApi(req, res, url) {
     try {
       const body = await readBody(req);
       const payload = body ? JSON.parse(body) : {};
-      const result = await resolveTrainingAiForPlayer(playerId, payload);
+      const result = await resolveTrainingAiForPlayer(playerId, payload, req);
       json(res, 200, {
         ok: true,
         playerId,
         save: result.save,
         result: result.result
-      }, headers);
+      }, appendSetCookie(headers, clearTrainingAiCookie(req)));
     } catch (error) {
       json(res, error.status || 500, {
         ok: false,
