@@ -6625,12 +6625,13 @@ async function recordShareVisitForPlayer(visitorPlayerId, ownerPlayerId, network
     error.status = 404;
     throw error;
   }
+  const visitorProfile = await requireProfileForPlayer(visitorPlayerId);
   if (!isValidPlayerId(ownerPlayerId)) {
     const error = new Error("Convite invalido.");
     error.status = 400;
     throw error;
   }
-  if (ownerPlayerId === visitorPlayerId) {
+  if (ownerPlayerId === visitorProfile.playerId) {
     const error = new Error("Visita propria nao valida recompensa.");
     error.status = 400;
     throw error;
@@ -6668,7 +6669,7 @@ async function recordShareVisitForPlayer(visitorPlayerId, ownerPlayerId, network
   await writeSave(ownerPlayerId, save);
   recordAccountEvent(ownerPlayerId, "share:validated", {
     network: { id: network.id, name: network.name, reward: network.reward },
-    visitorPlayerId
+    visitorPlayerId: visitorProfile.playerId
   });
   return { network, ownerPlayerId, validation };
 }

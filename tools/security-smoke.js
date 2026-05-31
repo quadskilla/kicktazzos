@@ -6,8 +6,10 @@ const http = require("node:http");
 const net = require("node:net");
 const os = require("node:os");
 const path = require("node:path");
+const { DatabaseSync } = require("node:sqlite");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
+const SESSION_SECRET = "security-smoke-session-secret";
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -29,6 +31,38 @@ function responseCookie(headers, name) {
   const values = headers["set-cookie"];
   const cookies = Array.isArray(values) ? values : [String(values || "")];
   return cookies.map((cookie) => cookie.split(";")[0]).find((cookie) => cookie.startsWith(`${name}=`)) || "";
+}
+
+function signedPlayerCookie(playerId) {
+  const payload = `v1.${playerId}`;
+  const signature = crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("hex");
+  return `kick_tazzos_player=${encodeURIComponent(`${payload}.${signature}`)}`;
+}
+
+function seedProfile(dataDir, playerId, key, name) {
+  const database = new DatabaseSync(path.join(dataDir, "kick-tazzos.db"));
+  const now = new Date().toISOString();
+  const profile = {
+    playerId,
+    key,
+    name,
+    createdAt: now,
+    lastLoginAt: now,
+    authProviders: {
+      firebase: {
+        uid: `smoke-${playerId}`,
+        email: `${key}@example.test`,
+        emailVerified: true,
+        provider: "google",
+        picture: ""
+      }
+    }
+  };
+  database.prepare(`
+    INSERT INTO profiles (profile_key, player_id, name, data_json)
+    VALUES (?, ?, ?, ?)
+  `).run(key, playerId, name, JSON.stringify(profile));
+  database.close();
 }
 
 function request(port, { method = "GET", pathname = "/", headers = {}, body = "" } = {}) {
@@ -99,7 +133,7 @@ async function main() {
       HOST: "127.0.0.1",
       PORT: String(port),
       DATA_DIR: dataDir,
-      SESSION_SECRET: "security-smoke-session-secret",
+      SESSION_SECRET,
       RATE_LIMIT_WINDOW_MS: "60000",
       RATE_LIMIT_MAX: "50",
       RATE_LIMIT_SENSITIVE_MAX: "1",
@@ -184,6 +218,64 @@ async function main() {
     const migratedSavePayload = JSON.parse(migratedSave.body);
     assert.equal(migratedSavePayload.save.merreis, 1250);
     assert.equal(migratedSavePayload.save.collection["vinicius-jr-tazzo"], undefined);
+
+    const ownerPlayerId = crypto.randomUUID();
+    const visitorPlayerId = crypto.randomUUID();
+    seedProfile(dataDir, ownerPlayerId, "owner-smoke", "Owner Smoke");
+    seedProfile(dataDir, visitorPlayerId, "visitor-smoke", "Visitor Smoke");
+    const ownerCookie = signedPlayerCookie(ownerPlayerId);
+    const visitorCookie = signedPlayerCookie(visitorPlayerId);
+
+    const shareLink = await request(port, {
+      method: "POST",
+      pathname: "/api/share-link",
+      headers: {
+        Cookie: ownerCookie,
+        Origin: sameOrigin,
+        "Content-Type": "application/json"
+      },
+      body: "{\"networkId\":\"discord\"}"
+    });
+    assert.equal(shareLink.status, 200);
+
+    const guestShareVisit = await request(port, {
+      method: "POST",
+      pathname: "/api/share-visit",
+      headers: {
+        Cookie: playerCookie,
+        Origin: sameOrigin,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ ownerPlayerId, networkId: "discord" })
+    });
+    assert.equal(guestShareVisit.status, 401);
+
+    const visitorShareVisit = await request(port, {
+      method: "POST",
+      pathname: "/api/share-visit",
+      headers: {
+        Cookie: visitorCookie,
+        Origin: sameOrigin,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ ownerPlayerId, networkId: "discord" })
+    });
+    assert.equal(visitorShareVisit.status, 200);
+    assert.equal(JSON.parse(visitorShareVisit.body).validated, true);
+
+    const shareClaim = await request(port, {
+      method: "POST",
+      pathname: "/api/share-reward",
+      headers: {
+        Cookie: ownerCookie,
+        Origin: sameOrigin,
+        "Content-Type": "application/json"
+      },
+      body: "{\"networkId\":\"discord\"}"
+    });
+    assert.equal(shareClaim.status, 200);
+    const shareClaimPayload = JSON.parse(shareClaim.body);
+    assert.equal(shareClaimPayload.save.merreis, 1250 + Number(shareClaimPayload.network.reward));
 
     const legacyPlayerId = crypto.randomUUID();
     const legacyProfile = await request(port, {

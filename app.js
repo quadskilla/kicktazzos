@@ -913,15 +913,16 @@ function incomingShareVisit() {
 
 async function registerIncomingShareVisit() {
   const visit = incomingShareVisit();
-  if (!visit || state.incomingShareHandled || !canUseServerSave()) return;
-  state.incomingShareHandled = true;
+  if (!visit || state.incomingShareHandled || !canUseServerSave() || !state.server.profile) return;
   try {
-    await fetch(SERVER_SHARE_VISIT_ENDPOINT, {
+    const response = await fetch(SERVER_SHARE_VISIT_ENDPOINT, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(visit)
     });
+    if (!response.ok) return;
+    state.incomingShareHandled = true;
     const url = new URL(window.location.href);
     url.searchParams.delete("ref");
     url.searchParams.delete("share");
@@ -4526,6 +4527,7 @@ async function loginWithFirebase(providerId = "google") {
       state.save = normalizeSave(payload.save);
       persistLocalSave();
     }
+    await registerIncomingShareVisit();
     setServerStatus("online", payload.migratedGuestSave ? "Migrado" : "Salvo");
     reconnectOnlineSocket();
     closeProfileModal();
@@ -4671,6 +4673,7 @@ async function submitProfileForm(event) {
       state.save = normalizeSave(payload.save);
       persistLocalSave();
     }
+    await registerIncomingShareVisit();
     setServerStatus("online", "Salvo");
     reconnectOnlineSocket();
     closeProfileModal();
