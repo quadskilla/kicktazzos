@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tazzo Strike Collection Clash Ad Render</title>
+  <style>
+    html, body {
+      background: #07131c;
+      color: #fff;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      height: 100vh;
+      margin: 0 auto;
+      width: auto;
+    }
+  </style>
+</head>
+<body>
+<canvas id="stage" width="1080" height="1920"></canvas>
+<script>
+const canvas = document.getElementById("stage");
+const ctx = canvas.getContext("2d");
+const WIDTH = canvas.width;
+const HEIGHT = canvas.height;
+const DURATION = 15;
+const SHOTS = [
+  ["collection", "shots-collection-clash/01-collection-grid.png"],
+  ["holoZoom", "shots-collection-clash/02-holographic-zoom.png"],
+  ["clashTable", "shots-collection-clash/03-tazzo-clash-table.png"],
+  ["clashImpact", "shots-collection-clash/04-tazzo-clash-impact.png"],
+  ["discBack", "../tazzos back/back1.png"],
+  ["ney", "../tazzos/1.png"],
+  ["neyHolo", "../tazzos/1(2).png"],
+  ["vini", "../tazzos/3.png"],
+  ["viniHolo", "../tazzos/3(2).png"],
+  ["rodrygo", "../tazzos/4.png"],
+  ["dimagia", "../tazzos/25.png"],
+  ["judao", "../tazzos/44.png"]
+];
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = reject;
+    image.src = src;
+  });
+}
+
+function clamp(value, min = 0, max = 1) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function ease(value) {
+  const t = clamp(value);
+  return t * t * (3 - 2 * t);
+}
+
+function easeOutBack(value) {
+  const t = clamp(value) - 1;
+  return 1 + t * t * ((1.7 + 1) * t + 1.7);
+}
+
+function activeScene(time) {
+  const scenes = [
+    { key: "collection", start: 0, end: 3.35, title: "COLECAO DE TAZZOS", sub: "Album cheio, raridades e holograficos em destaque", shot: "collection", zoom: 1.03 },
+    { key: "holo", start: 3.35, end: 6.75, title: "HOLOGRAFICOS", sub: "Tazzos que brilham quando voce olha de perto", shot: "holoZoom", zoom: 1.08 },
+    { key: "clash", start: 6.75, end: 10.45, title: "BATER TAZZOS", sub: "Escolha a aposta, bata na mesa e tente virar", shot: "clashTable", zoom: 1.1 },
+    { key: "impact", start: 10.45, end: 13.25, title: "BATIDA PERFEITA", sub: "Timing bom aumenta sua chance de virar a pilha", shot: "clashImpact", zoom: 1.1 },
+    { key: "cta", start: 13.25, end: 15, title: "TAZZO STRIKE", sub: "Colecione, desafie amigos e jogue agora", shot: "collection", zoom: 1.02 }
+  ];
+  return scenes.find((scene) => time >= scene.start && time < scene.end) || scenes[scenes.length - 1];
+}
+
+function roundedRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function fillRoundRect(x, y, w, h, r, fillStyle) {
+  roundedRect(x, y, w, h, r);
+  ctx.fillStyle = fillStyle;
+  ctx.fill();
+}
+
+function strokeRoundRect(x, y, w, h, r, strokeStyle, lineWidth) {
+  roundedRect(x, y, w, h, r);
+  ctx.strokeStyle = strokeStyle;
+  ctx.lineWidth = lineWidth;
+  ctx.stroke();
+}
+
+function drawImageCover(image, x, y, w, h, panX = 0, panY = 0, zoom = 1) {
+  const scale = Math.max(w / image.width, h / image.height) * zoom;
+  const drawW = image.width * scale;
+  const drawH = image.height * scale;
+  ctx.drawImage(image, x + (w - drawW) / 2 + panX, y + (h - drawH) / 2 + panY, drawW, drawH);
+}
+
+function drawBackground(time, scene) {
+  const gradient = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT);
+  gradient.addColorStop(0, "#061d25");
+  gradient.addColorStop(0.36, "#10243b");
+  gradient.addColorStop(0.68, "#1f2a24");
+  gradient.addColorStop(1, "#371a19");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  ctx.save();
+  ctx.globalAlpha = 0.16;
+  ctx.strokeStyle = "#6ee7d8";
+  ctx.lineWidth = 3;
+  for (let y = 260; y < HEIGHT; y += 190) {
+    ctx.beginPath();
+    ctx.moveTo(-60, y + Math.sin(time * 0.8 + y) * 18);
+    ctx.lineTo(WIDTH + 60, y - 94 + Math.cos(time * 0.7 + y) * 18);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  if (scene.key === "clash" || scene.key === "impact") {
+    ctx.save();
+    ctx.globalAlpha = 0.42;
+    ctx.translate(WIDTH / 2, 1478);
+    ctx.rotate(-0.035);
+    fillRoundRect(-480, -128, 960, 256, 18, "#8b4a20");
+    ctx.strokeStyle = "rgba(255, 231, 172, 0.28)";
+    ctx.lineWidth = 5;
+    for (let x = -450; x <= 450; x += 130) {
+      ctx.beginPath();
+      ctx.moveTo(x, -126);
+      ctx.lineTo(x - 30, 126);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+function drawPhone(image, time, scene, progress) {
+  const phoneW = 654;
+  const phoneH = 1412;
+  const x = (WIDTH - phoneW) / 2;
+  const y = 306 + Math.sin(time * 1.9) * 7;
+  const inset = 24;
+  const screenX = x + inset;
+  const screenY = y + 44;
+  const screenW = phoneW - inset * 2;
+  const screenH = phoneH - 82;
+  const intro = easeOutBack(progress / 0.28);
+
+  ctx.save();
+  ctx.translate(WIDTH / 2, y + phoneH / 2);
+  ctx.scale(0.92 + intro * 0.08, 0.92 + intro * 0.08);
+  ctx.translate(-WIDTH / 2, -(y + phoneH / 2));
+  ctx.shadowColor = "rgba(0, 0, 0, 0.58)";
+  ctx.shadowBlur = 48;
+  ctx.shadowOffsetY = 26;
+  fillRoundRect(x, y, phoneW, phoneH, 72, "#05070b");
+  strokeRoundRect(x + 5, y + 5, phoneW - 10, phoneH - 10, 66, "#2dd4bf", 3);
+  ctx.shadowColor = "transparent";
+  fillRoundRect(screenX, screenY, screenW, screenH, 46, "#07111c");
+  ctx.save();
+  roundedRect(screenX, screenY, screenW, screenH, 46);
+  ctx.clip();
+  const basePan = scene.key === "collection" ? -72 : (scene.key === "clash" || scene.key === "impact" ? -40 : 0);
+  const scenePan = basePan + (progress - 0.5) * (scene.key === "collection" ? 64 : 34);
+  drawImageCover(image, screenX, screenY, screenW, screenH, 0, scenePan, scene.zoom);
+  ctx.restore();
+  fillRoundRect(x + phoneW / 2 - 76, y + 20, 152, 18, 9, "#111827");
+  ctx.restore();
+}
+
+function drawCopy(scene, time) {
+  const local = ease((time - scene.start) / 0.55);
+  const y = 118 + (1 - local) * 34;
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "900 72px Arial, sans-serif";
+  ctx.shadowColor = "rgba(0,0,0,0.48)";
+  ctx.shadowBlur = 18;
+  ctx.fillText(scene.title, WIDTH / 2, y);
+  ctx.font = "700 34px Arial, sans-serif";
+  ctx.fillStyle = "#c6fff4";
+  wrapText(scene.sub, WIDTH / 2, y + 54, 790, 40);
+  ctx.restore();
+}
+
+function wrapText(text, x, y, maxWidth, lineHeight) {
+  const words = text.split(" ");
+  let line = "";
+  words.forEach((word, index) => {
+    const test = line ? `${line} ${word}` : word;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      ctx.fillText(line, x, y);
+      line = word;
+      y += lineHeight;
+    } else {
+      line = test;
+    }
+    if (index === words.length - 1) ctx.fillText(line, x, y);
+  });
+}
+
+function drawDisc(image, x, y, size, rotation, alpha = 1, holo = false, holoImage = null, flip = 0) {
+  const faceSwitch = Math.cos(flip) >= 0;
+  const scaleX = Math.max(0.08, Math.abs(Math.cos(flip)));
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  ctx.rotate(rotation);
+  ctx.scale(scaleX, 1);
+  ctx.shadowColor = "rgba(0,0,0,0.42)";
+  ctx.shadowBlur = 22;
+  ctx.shadowOffsetY = 14;
+  ctx.beginPath();
+  ctx.arc(0, 0, size / 2, 0, Math.PI * 2);
+  ctx.clip();
+  const current = faceSwitch ? image : (holoImage || image);
+  drawImageCover(current, -size / 2, -size / 2, size, size);
+  if (holo) {
+    const sweep = ((performance.now() / 1000) * 0.9 + x * 0.001) % 1;
+    const gradient = ctx.createLinearGradient(-size, -size, size, size);
+    gradient.addColorStop(0, "rgba(255,255,255,0)");
+    gradient.addColorStop(clamp(sweep - 0.16), "rgba(255,255,255,0)");
+    gradient.addColorStop(clamp(sweep), "rgba(255,255,255,0.7)");
+    gradient.addColorStop(clamp(sweep + 0.18), "rgba(42,241,255,0.25)");
+    gradient.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = gradient;
+    ctx.fillRect(-size / 2, -size / 2, size, size);
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  ctx.rotate(rotation);
+  ctx.scale(scaleX, 1);
+  ctx.strokeStyle = holo ? "#f8e15f" : "#ffffff";
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(0, 0, size / 2 - 3, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawFloatingDiscs(loaded, time, scene, progress) {
+  if (scene.key === "collection") {
+    drawDisc(loaded.ney, 148, 1500 + Math.sin(time * 2) * 10, 188, -0.22, 0.96, true, loaded.neyHolo, 0);
+    drawDisc(loaded.vini, 916, 1440 + Math.cos(time * 2.1) * 12, 172, 0.2, 0.95, true, loaded.viniHolo, 0);
+    drawDisc(loaded.rodrygo, 190, 1710 + Math.sin(time * 2.3) * 9, 142, 0.18, 0.9, true, null, 0);
+  }
+
+  if (scene.key === "holo") {
+    drawDisc(loaded.ney, 160, 1430, 232, -0.14, 0.98, true, loaded.neyHolo, Math.sin(time * 2.2) * 0.18);
+    drawDisc(loaded.vini, 914, 1608, 214, 0.22, 0.96, true, loaded.viniHolo, Math.sin(time * 2.5) * 0.22);
+  }
+
+  if (scene.key === "clash" || scene.key === "impact") {
+    const hit = scene.key === "impact" ? ease(progress) : Math.max(0, Math.sin((time - scene.start) * Math.PI * 1.2));
+    const flip = scene.key === "impact" ? time * 8.2 : time * 4.5;
+    drawDisc(loaded.discBack, 442, 1532, 188, -0.18, 0.95, false, null, scene.key === "impact" ? flip : 0);
+    drawDisc(loaded.discBack, 514, 1498, 188, 0.14, 0.95, false, null, 0);
+    drawDisc(scene.key === "impact" ? loaded.dimagia : loaded.discBack, 600 + hit * 70, 1514 - hit * 92, 188, 0.24 + hit * 1.1, 0.97, scene.key === "impact", loaded.dimagia, flip + Math.PI);
+    if (scene.key === "impact") {
+      ctx.save();
+      ctx.globalAlpha = (1 - progress) * 0.45;
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.arc(540, 1518, 130 + progress * 230, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+}
+
+function drawBadges(scene, time) {
+  const items = scene.key === "clash" || scene.key === "impact"
+    ? [
+      { text: "MESA", x: 146, y: 1640, color: "#f59e0b" },
+      { text: "TIMING", x: 892, y: 1650, color: "#22c55e" },
+      { text: "AMIGOS", x: 540, y: 1760, color: "#38bdf8" }
+    ]
+    : [
+      { text: "ALBUM", x: 138, y: 1640, color: "#38bdf8" },
+      { text: "HOLO", x: 900, y: 1630, color: "#f8e15f" },
+      { text: "RAROS+", x: 540, y: 1760, color: "#fb7185" }
+    ];
+  items.forEach((badge, index) => {
+    const bob = Math.sin(time * 2.4 + index) * 7;
+    ctx.save();
+    ctx.translate(badge.x, badge.y + bob);
+    ctx.rotate(Math.sin(time + index) * 0.05);
+    fillRoundRect(-86, -35, 172, 70, 24, "rgba(3, 7, 18, 0.84)");
+    strokeRoundRect(-86, -35, 172, 70, 24, badge.color, 4);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "900 27px Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(badge.text, 0, 2);
+    ctx.restore();
+  });
+}
+
+function drawFinalCta(time) {
+  if (time < 13.15) return;
+  const a = ease((time - 13.15) / 0.55);
+  ctx.save();
+  ctx.globalAlpha = a;
+  fillRoundRect(144, 1664, 792, 124, 38, "#f8e15f");
+  ctx.fillStyle = "#07131c";
+  ctx.font = "900 45px Arial, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("TAZZOSTRIKE.COM.BR", WIDTH / 2, 1740);
+  ctx.restore();
+}
+
+let loadedShotsPromise = null;
+
+function loadShots() {
+  if (!loadedShotsPromise) {
+    loadedShotsPromise = Promise.all(SHOTS.map(async ([key, src]) => [key, await loadImage(src)]))
+      .then((entries) => Object.fromEntries(entries));
+  }
+  return loadedShotsPromise;
+}
+
+function drawPromoFrame(loaded, time) {
+  const scene = activeScene(time);
+  const progress = clamp((time - scene.start) / (scene.end - scene.start));
+  drawBackground(time, scene);
+  drawCopy(scene, time);
+  drawPhone(loaded[scene.shot], time, scene, progress);
+  drawFloatingDiscs(loaded, time, scene, progress);
+  drawBadges(scene, time);
+  drawFinalCta(time);
+}
+
+async function drawPromoFrameAt(time) {
+  const loaded = await loadShots();
+  drawPromoFrame(loaded, Math.max(0, Math.min(DURATION, Number(time) || 0)));
+  return true;
+}
+
+window.drawPromoFrameAt = drawPromoFrameAt;
+</script>
+</body>
+</html>

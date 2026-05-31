@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tazzo Strike Mobile Ad Render</title>
+  <style>
+    html, body {
+      background: #081521;
+      color: #fff;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+      height: 100vh;
+      margin: 0 auto;
+      width: auto;
+    }
+  </style>
+</head>
+<body>
+<canvas id="stage" width="1080" height="1920"></canvas>
+<script>
+const canvas = document.getElementById("stage");
+const ctx = canvas.getContext("2d");
+const WIDTH = canvas.width;
+const HEIGHT = canvas.height;
+const FPS = 30;
+const DURATION = 13.5;
+const SHOTS = [
+  ["home", "shots/01-home.png"],
+  ["packs", "shots/02-packs.png"],
+  ["opening", "shots/03-pack-opening.png"],
+  ["reveal", "shots/04-pack-reveal.png"],
+  ["collection", "shots/05-collection.png"],
+  ["battle", "shots/06-battle.png"],
+  ["online", "shots/07-online.png"]
+];
+
+function loadImage(src) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = reject;
+    image.src = src;
+  });
+}
+
+function clamp(value, min = 0, max = 1) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function ease(value) {
+  const t = clamp(value);
+  return t * t * (3 - 2 * t);
+}
+
+function activeScene(time) {
+  const scenes = [
+    { key: "home", start: 0, end: 2.2, title: "TAZZO STRIKE", sub: "Monte seu time de tazzos no celular" },
+    { key: "packs", start: 2.2, end: 4.1, title: "ABRA PACOTINHOS", sub: "Colecione discos, raridades e holograficos" },
+    { key: "reveal", start: 4.1, end: 6.2, title: "ENCONTRE CRAQUES", sub: "Cada abertura pode mudar seu elenco" },
+    { key: "collection", start: 6.2, end: 8.1, title: "COLECAO VIVA", sub: "Favoritos, stats e time sempre a mao" },
+    { key: "battle", start: 8.1, end: 10.6, title: "DUELE EM CAMPO", sub: "3v3 rapido, visual e cheio de viradas" },
+    { key: "online", start: 10.6, end: 12.4, title: "JOGUE COM AMIGOS", sub: "Online, trocas e bater tazzos" },
+    { key: "home", start: 12.4, end: 13.5, title: "JOGUE AGORA", sub: "tazzostrike.com.br" }
+  ];
+  return scenes.find((scene) => time >= scene.start && time < scene.end) || scenes[scenes.length - 1];
+}
+
+function roundedRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function fillRoundRect(x, y, w, h, r, fillStyle) {
+  roundedRect(x, y, w, h, r);
+  ctx.fillStyle = fillStyle;
+  ctx.fill();
+}
+
+function strokeRoundRect(x, y, w, h, r, strokeStyle, lineWidth) {
+  roundedRect(x, y, w, h, r);
+  ctx.strokeStyle = strokeStyle;
+  ctx.lineWidth = lineWidth;
+  ctx.stroke();
+}
+
+function drawBackground(time) {
+  const gradient = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT);
+  gradient.addColorStop(0, "#062838");
+  gradient.addColorStop(0.42, "#0b1d32");
+  gradient.addColorStop(1, "#111827");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+  ctx.save();
+  ctx.globalAlpha = 0.18;
+  ctx.strokeStyle = "#6ee7d8";
+  ctx.lineWidth = 3;
+  for (let y = 240; y < HEIGHT; y += 170) {
+    ctx.beginPath();
+    ctx.moveTo(-40, y + Math.sin(time + y) * 18);
+    ctx.lineTo(WIDTH + 40, y - 90 + Math.cos(time * 0.7 + y) * 18);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.translate(WIDTH / 2, HEIGHT / 2 + 180);
+  ctx.rotate(-0.08);
+  ctx.globalAlpha = 0.16;
+  ctx.strokeStyle = "#f8e15f";
+  ctx.lineWidth = 5;
+  ctx.strokeRect(-420, -610, 840, 1220);
+  ctx.beginPath();
+  ctx.moveTo(0, -610);
+  ctx.lineTo(0, 610);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(0, 0, 168, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPhone(image, time, sceneProgress) {
+  const phoneW = 640;
+  const phoneH = 1384;
+  const x = (WIDTH - phoneW) / 2;
+  const y = 300 + Math.sin(time * 2) * 8;
+  const inset = 24;
+  const screenX = x + inset;
+  const screenY = y + 42;
+  const screenW = phoneW - inset * 2;
+  const screenH = phoneH - 78;
+
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.55)";
+  ctx.shadowBlur = 46;
+  ctx.shadowOffsetY = 24;
+  fillRoundRect(x, y, phoneW, phoneH, 72, "#05070b");
+  strokeRoundRect(x + 5, y + 5, phoneW - 10, phoneH - 10, 66, "#2dd4bf", 3);
+  ctx.restore();
+
+  fillRoundRect(screenX, screenY, screenW, screenH, 46, "#07111c");
+  ctx.save();
+  roundedRect(screenX, screenY, screenW, screenH, 46);
+  ctx.clip();
+  const scale = Math.max(screenW / image.width, screenH / image.height);
+  const drawW = image.width * scale;
+  const drawH = image.height * scale;
+  const pan = (sceneProgress - 0.5) * 42;
+  ctx.drawImage(image, screenX + (screenW - drawW) / 2, screenY + (screenH - drawH) / 2 + pan, drawW, drawH);
+  ctx.restore();
+
+  fillRoundRect(x + phoneW / 2 - 76, y + 20, 152, 18, 9, "#111827");
+
+  const tap = Math.sin(sceneProgress * Math.PI);
+  if (tap > 0.04) {
+    ctx.save();
+    ctx.globalAlpha = tap * 0.7;
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 5;
+    const cx = screenX + screenW * (0.68 + Math.sin(time * 1.7) * 0.08);
+    const cy = screenY + screenH * (0.72 + Math.cos(time * 1.2) * 0.07);
+    ctx.beginPath();
+    ctx.arc(cx, cy, 22 + (1 - tap) * 52, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function drawCopy(scene, time) {
+  const local = ease((time - scene.start) / 0.55);
+  const y = 118 + (1 - local) * 34;
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#fefefe";
+  ctx.font = "900 74px Arial, sans-serif";
+  ctx.shadowColor = "rgba(0,0,0,0.45)";
+  ctx.shadowBlur = 18;
+  ctx.fillText(scene.title, WIDTH / 2, y);
+  ctx.font = "700 34px Arial, sans-serif";
+  ctx.fillStyle = "#bff8ef";
+  wrapText(scene.sub, WIDTH / 2, y + 54, 760, 40);
+  ctx.restore();
+}
+
+function wrapText(text, x, y, maxWidth, lineHeight) {
+  const words = text.split(" ");
+  let line = "";
+  words.forEach((word, index) => {
+    const test = line ? `${line} ${word}` : word;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      ctx.fillText(line, x, y);
+      line = word;
+      y += lineHeight;
+    } else {
+      line = test;
+    }
+    if (index === words.length - 1) ctx.fillText(line, x, y);
+  });
+}
+
+function drawBadges(time) {
+  const badges = [
+    { text: "PIX", x: 136, y: 1550, color: "#22c55e" },
+    { text: "ONLINE", x: 850, y: 1530, color: "#38bdf8" },
+    { text: "RAROS+", x: 180, y: 1715, color: "#facc15" },
+    { text: "3v3", x: 830, y: 1710, color: "#fb7185" }
+  ];
+  badges.forEach((badge, index) => {
+    const bob = Math.sin(time * 2.5 + index) * 8;
+    ctx.save();
+    ctx.translate(badge.x, badge.y + bob);
+    ctx.rotate(Math.sin(time + index) * 0.06);
+    fillRoundRect(-82, -33, 164, 66, 24, "rgba(3, 7, 18, 0.82)");
+    strokeRoundRect(-82, -33, 164, 66, 24, badge.color, 4);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "900 27px Arial, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(badge.text, 0, 2);
+    ctx.restore();
+  });
+}
+
+function drawFinalCta(time) {
+  if (time < 12.1) return;
+  const a = ease((time - 12.1) / 0.55);
+  ctx.save();
+  ctx.globalAlpha = a;
+  fillRoundRect(150, 1682, 780, 116, 38, "#f8e15f");
+  ctx.fillStyle = "#081521";
+  ctx.font = "900 44px Arial, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("TAZZOSTRIKE.COM.BR", WIDTH / 2, 1754);
+  ctx.restore();
+}
+
+let loadedShotsPromise = null;
+
+function loadShots() {
+  if (!loadedShotsPromise) {
+    loadedShotsPromise = Promise.all(SHOTS.map(async ([key, src]) => [key, await loadImage(src)]))
+      .then((entries) => Object.fromEntries(entries));
+  }
+  return loadedShotsPromise;
+}
+
+function drawPromoFrame(loaded, time) {
+  const scene = activeScene(time);
+  const sceneProgress = clamp((time - scene.start) / (scene.end - scene.start));
+  drawBackground(time);
+  drawCopy(scene, time);
+  const shotKey = scene.key === "reveal" && time < 4.75 ? "opening" : scene.key;
+  drawPhone(loaded[shotKey] || loaded.home, time, sceneProgress);
+  drawBadges(time);
+  drawFinalCta(time);
+}
+
+async function drawPromoFrameAt(time) {
+  const loaded = await loadShots();
+  drawPromoFrame(loaded, Math.max(0, Math.min(DURATION, Number(time) || 0)));
+  return true;
+}
+
+async function renderPromoVideo() {
+  const loaded = await loadShots();
+  const stream = canvas.captureStream(0);
+  const videoTrack = stream.getVideoTracks()[0];
+  const candidates = [
+    "video/webm;codecs=vp9",
+    "video/webm;codecs=vp8",
+    "video/webm",
+    "video/mp4;codecs=avc1.42E01E"
+  ];
+  const mimeType = candidates.find((type) => MediaRecorder.isTypeSupported(type)) || "";
+  const recorder = new MediaRecorder(stream, mimeType ? { mimeType, videoBitsPerSecond: 8500000 } : { videoBitsPerSecond: 8500000 });
+  const chunks = [];
+  recorder.ondataavailable = (event) => {
+    if (event.data?.size) chunks.push(event.data);
+  };
+
+  let start = 0;
+  let stopped = false;
+  const done = new Promise((resolve) => {
+    recorder.onstop = () => {
+      stopped = true;
+      resolve(new Blob(chunks, { type: recorder.mimeType || mimeType || "video/webm" }));
+    };
+  });
+
+  function draw(now) {
+    if (!start) start = now;
+    const time = Math.min((now - start) / 1000, DURATION);
+    drawPromoFrame(loaded, time);
+    if (videoTrack?.requestFrame) videoTrack.requestFrame();
+    if (time < DURATION) {
+      requestAnimationFrame(draw);
+    } else if (!stopped) {
+      stopped = true;
+      recorder.requestData();
+      setTimeout(() => recorder.stop(), 350);
+    }
+  }
+
+  recorder.start();
+  requestAnimationFrame(draw);
+  return done;
+}
+
+window.renderPromoVideo = renderPromoVideo;
+window.drawPromoFrameAt = drawPromoFrameAt;
+</script>
+</body>
+</html>

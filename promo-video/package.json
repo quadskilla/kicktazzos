@@ -1,0 +1,22 @@
+{
+  "name": "promo-video",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "capture": "node tools/capture-game-screens.js",
+    "capture:collection-clash": "node tools/capture-collection-clash-screens.js",
+    "render": "node tools/render-frames-video.js",
+    "render:collection-clash": "node tools/render-collection-clash-video.js",
+    "render:youtuber": "node tools/mix-youtuber-promo.js",
+    "render:youtuber:collection-clash": "node tools/mix-youtuber-collection-clash-promo.js",
+    "build": "npm run capture && npm run render"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0"
+  }
+}
