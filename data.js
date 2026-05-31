@@ -34,6 +34,8 @@ const TAZZO_TRADE_VALUES = {
   "Mistico Secreto": 450
 };
 
+const TOURNAMENTS_AVAILABLE = false;
+
 const MONSTERS = [
   mon("artilheiro-brasil", 1, "Menino Ney", ["Atacante"], "Mistico", 78, 89, 95, 94, "Atacante"),
   keeperCard("goleiro-brasil-alison", 2, ASSETS[1], "Allishow", "Epico", "extraTurn"),
@@ -135,7 +137,7 @@ const MONSTERS = [
   mon("dayot-upa-mecano-tazzo", 98, "Dayot Upa-Mecano", ["Defensor"], "Comum", 84, 74, 72, 78, "Zagueiro"),
   mon("warren-zaire-emery-tazzo", 99, "Warren Zaïre-Emery", ["Meia"], "Incomum", 79, 76, 80, 81, "Meia"),
   mon("ibrahima-konate-tazzo", 100, "Ibrahima Konate", ["Defensor"], "Incomum", 84, 77, 72, 79, "Zagueiro"),
-  mon("zinedao-sidane-tazzo", 101, "Zinedão Sidane", ["Meia"], "Mistico", 99, 80, 85, 50, "Meia"),
+  mon("zinedao-sidane-tazzo", 101, "Zinedão Sidane", ["Meia"], "Mistico Secreto", 99, 80, 85, 50, "Meia"),
   mon("lucas-digne-tazzo", 102, "Lucas Digne", ["Defensor"], "Comum", 81, 74, 77, 75, "Zagueiro"),
   mon("ngolo-kantche-tazzo", 103, "N'Golo Kantche", ["Meia"], "Raro", 85, 73, 81, 80, "Meia"),
   mon("manu-kone-tazzo", 104, "Manu Kone", ["Meia"], "Incomum", 81, 75, 79, 78, "Meia"),
@@ -276,7 +278,7 @@ const MISSIONS = [
   { id: "album-franca", title: "Completar Cheirosos", target: 22, reward: 1300, period: "album", scope: "album", range: [89, 110] },
   { id: "album-alemanha", title: "Completar Cervejeiros", target: 21, reward: 1300, period: "album", scope: "album", range: [111, 131] },
   { id: "album-espanha", title: "Completar Touros", target: 21, reward: 1300, period: "album", scope: "album", range: [132, 152] }
-];
+].filter((mission) => TOURNAMENTS_AVAILABLE || (mission.event || mission.id) !== "tournament");
 
 const ECONOMY_REWARD_RULES = Object.freeze({
   trainingAi: { merreis: 25, dailyMatches: 10 },
@@ -651,6 +653,7 @@ window.TAZZOMON_DATA = {
   MONSTER_BY_ID,
   RANKS,
   TOURNAMENTS,
+  TOURNAMENTS_AVAILABLE,
   SHOP_ITEMS,
   PACKS,
   MISSIONS,

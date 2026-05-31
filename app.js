@@ -9,6 +9,7 @@ const {
   MONSTER_BY_ID,
   RANKS,
   TOURNAMENTS,
+  TOURNAMENTS_AVAILABLE,
   SHOP_ITEMS,
   PACKS,
   MISSIONS,
@@ -6249,6 +6250,7 @@ function menuViewContext() {
     MONSTERS,
     MONSTER_BY_ID,
     TOURNAMENTS,
+    TOURNAMENTS_AVAILABLE,
     TOURNAMENT_OPPONENTS,
     SHOP_ITEMS,
     MISSIONS,
@@ -8399,6 +8401,11 @@ async function resolveRankedBattleOnServer(outcome, reason = "") {
 }
 
 async function runTournament(tournamentId) {
+  if (!TOURNAMENTS_AVAILABLE) {
+    state.competitiveLog.unshift("Torneios indisponiveis por agora. Ranqueadas seguem liberadas.");
+    renderCompetitive();
+    return;
+  }
   const savedCompetitive = activeSavedCompetitive();
   if (savedCompetitive?.type === "tournament") {
     resumeSavedCompetitiveBattle(savedCompetitive);

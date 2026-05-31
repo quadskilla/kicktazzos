@@ -145,6 +145,7 @@ const {
   TAZZO_TRADE_VALUES,
   RANKS,
   TOURNAMENTS,
+  TOURNAMENTS_AVAILABLE,
   PACKS,
   SHOP_ITEMS,
   MISSIONS,
@@ -5789,6 +5790,11 @@ function fallbackCompetitiveOpponent(type, save, tournamentId = "") {
 
 async function validateCompetitiveTicket(playerId, type, options = {}) {
   const profile = await requireProfileForPlayer(playerId);
+  if (type === "tournament" && !TOURNAMENTS_AVAILABLE) {
+    const error = new Error("Torneios indisponiveis por agora. Ranqueadas seguem liberadas.");
+    error.status = 403;
+    throw error;
+  }
   const tournament = type === "tournament"
     ? TOURNAMENTS.find((item) => item.id === options.tournamentId)
     : null;

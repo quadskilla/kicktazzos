@@ -17,6 +17,7 @@
     const savedCompetitive = ctx.activeSavedCompetitive();
     const savedTournamentId = savedCompetitive?.type === "tournament" ? savedCompetitive.tournamentId : "";
     const savedRanked = savedCompetitive?.type === "ranked";
+    const tournamentsAvailable = ctx.TOURNAMENTS_AVAILABLE !== false;
     const matchmakingElapsed = searching ? Math.max(0, Date.now() - (Number(ctx.state.matchmaking.startedAt) || Date.now())) : 0;
     const matchmakingRemaining = searching ? Math.max(0, Math.ceil((ctx.COMPETITIVE_MATCHMAKING_TIMEOUT_MS - matchmakingElapsed) / 1000)) : 0;
     const matchmakingLabel = searching
@@ -66,9 +67,11 @@
 
     document.getElementById("tournament-list").innerHTML = ctx.TOURNAMENTS.map((tournament) => {
       const active = activeTournamentId === tournament.id;
-      const disabled = searching || (activeTournamentId && !active) || activeRanked || (!active && (ctx.state.save.merreis < tournament.entry || !legal));
+      const disabled = !tournamentsAvailable || searching || (activeTournamentId && !active) || activeRanked || (!active && (ctx.state.save.merreis < tournament.entry || !legal));
       const label = searching
         ? `Procurando (${matchmakingLabel})`
+        : !tournamentsAvailable
+        ? "Indisponivel"
         : active
         ? ctx.activeTournamentBattle() ? "Voltar para batalha" : "Retomar torneio"
         : "Entrar e batalhar";
@@ -76,7 +79,7 @@
       return `
         <article class="tournament-card${active ? " is-active" : ""}">
           <h3>${tournament.name}</h3>
-          <p>Entrada ${ctx.formatNumber(tournament.entry)} Merreis. Premio: ${tournament.prize}.</p>
+          <p>${tournamentsAvailable ? `Entrada ${ctx.formatNumber(tournament.entry)} Merreis. Premio: ${tournament.prize}.` : "Torneios pausados por agora. Ranqueadas seguem liberadas."}</p>
           <div class="tournament-opponent">
             <span class="eyebrow">Oponente</span>
             <strong>${opponent.name}</strong>
