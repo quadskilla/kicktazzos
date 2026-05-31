@@ -48,7 +48,12 @@ const LOBBIES_FILE = path.join(DATA_DIR, "lobbies.json");
 const DB_FILE = path.join(DATA_DIR, "kick-tazzos.db");
 const ROOT_PREFIX = `${ROOT_DIR}${path.sep}`;
 const PLAYER_COOKIE = "kick_tazzos_player";
+const PLAYER_SESSION_TTL_SECONDS = 60 * 60 * 24 * 365;
 const MAX_SAVE_BYTES = 1024 * 1024 * 2;
+const RATE_LIMIT_WINDOW_MS = Math.max(1000, Math.floor(Number(process.env.RATE_LIMIT_WINDOW_MS)) || 60000);
+const RATE_LIMIT_MAX = Math.max(1, Math.floor(Number(process.env.RATE_LIMIT_MAX)) || 240);
+const RATE_LIMIT_SENSITIVE_MAX = Math.max(1, Math.floor(Number(process.env.RATE_LIMIT_SENSITIVE_MAX)) || 40);
+const RATE_LIMIT_BUCKET_LIMIT = 10000;
 const ONLINE_LOBBY_CAPACITY = 2;
 const ONLINE_LOBBY_TTL_MS = 45 * 60 * 1000;
 const ONLINE_PLAYER_IDLE_MS = 8 * 60 * 1000;
@@ -130,6 +135,43 @@ const MIME_TYPES = {
   ".pdf": "application/pdf"
 };
 
+const SECURITY_HEADERS = Object.freeze({
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "X-Frame-Options": "DENY",
+  "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
+  "Origin-Agent-Cluster": "?1",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=()"
+});
+
+const SAFE_HTTP_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+const ORIGIN_CHECK_EXEMPT_PATHS = new Set(["/api/mercadopago/webhook"]);
+const SENSITIVE_RATE_LIMIT_PATHS = new Set([
+  "/api/admin/login",
+  "/api/mercadopago/webhook",
+  "/api/open-pack",
+  "/api/profile/firebase",
+  "/api/profile/login",
+  "/api/ranked/start",
+  "/api/shop",
+  "/api/shop/checkout",
+  "/api/starter-pack",
+  "/api/tournament/start",
+  "/api/upgrade"
+]);
+const SENSITIVE_RATE_LIMIT_PREFIXES = [
+  "/api/competitive/",
+  "/api/friends/",
+  "/api/lobbies/",
+  "/api/social/",
+  "/api/training-ai/"
+];
+const rateLimitBuckets = new Map();
+const PLAYER_SESSION_FALLBACK_SECRET = crypto.randomBytes(32).toString("hex");
+const ALLOW_LEGACY_PLAYER_COOKIES = !IS_PRODUCTION || ["1", "true", "yes"].includes(
+  String(process.env.ALLOW_LEGACY_PLAYER_COOKIES || "").trim().toLowerCase()
+);
+
 function loadGameData() {
   const source = require("node:fs").readFileSync(path.join(ROOT_DIR, "data.js"), "utf8");
   const sandbox = { window: {} };
@@ -172,6 +214,10 @@ const ADMIN_COOKIE = "tazzo-admin-session";
 const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_ADMIN_EMAILS = ["quadskilla@gmail.com"];
 const ADMIN_TOKEN = String(process.env.ADMIN_TOKEN || "").trim();
+
+if (IS_PRODUCTION && !configuredPlayerSessionSecret()) {
+  console.warn("SESSION_SECRET ou PLAYER_SESSION_SECRET ausente; sessoes de jogador serao invalidadas a cada reinicio.");
+}
 
 function missionPeriod(mission) {
   return mission?.period || (mission?.scope === "album" ? "album" : "daily");
@@ -221,6 +267,7 @@ function defaultMissionStatuses() {
 function json(res, status, payload, headers = {}) {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
+    ...securityHeaders(),
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
     "Content-Length": Buffer.byteLength(body),
@@ -229,10 +276,18 @@ function json(res, status, payload, headers = {}) {
   res.end(body);
 }
 
+function decodeCookieValue(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch (error) {
+    return "";
+  }
+}
+
 function parseCookies(header = "") {
   return Object.fromEntries(header.split(";").map((entry) => {
     const [rawKey, ...rawValue] = entry.trim().split("=");
-    return [rawKey, decodeURIComponent(rawValue.join("=") || "")];
+    return [rawKey, decodeCookieValue(rawValue.join("=") || "")];
   }).filter(([key]) => key));
 }
 
@@ -240,24 +295,77 @@ function isValidPlayerId(value) {
   return /^[a-f0-9-]{36}$/i.test(String(value || ""));
 }
 
+function configuredPlayerSessionSecret() {
+  return String(
+    process.env.PLAYER_SESSION_SECRET
+    || process.env.SESSION_SECRET
+    || process.env.ADMIN_SESSION_SECRET
+    || ADMIN_TOKEN
+    || ""
+  ).trim();
+}
+
+function playerSessionSecret() {
+  return configuredPlayerSessionSecret() || PLAYER_SESSION_FALLBACK_SECRET;
+}
+
+function signPlayerSession(playerId) {
+  return crypto.createHmac("sha256", playerSessionSecret()).update(`v1.${playerId}`).digest("hex");
+}
+
+function encodePlayerSession(playerId) {
+  return `v1.${playerId}.${signPlayerSession(playerId)}`;
+}
+
+function decodePlayerSession(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const [version, playerId, signature, ...extra] = raw.split(".");
+  if (version === "v1" && !extra.length && isValidPlayerId(playerId) && signature) {
+    return safeEqualText(signature, signPlayerSession(playerId)) ? { playerId, legacy: false } : null;
+  }
+  if (ALLOW_LEGACY_PLAYER_COOKIES && isValidPlayerId(raw)) {
+    return { playerId: raw, legacy: true };
+  }
+  return null;
+}
+
 function getPlayer(req) {
   const cookies = parseCookies(req.headers.cookie);
-  const existingId = cookies[PLAYER_COOKIE];
-  const playerId = isValidPlayerId(existingId) ? existingId : crypto.randomUUID();
-  const isNew = playerId !== existingId;
+  const session = decodePlayerSession(cookies[PLAYER_COOKIE]);
+  const playerId = session?.playerId || crypto.randomUUID();
+  const isNew = !session || session.legacy;
   return { playerId, isNew };
 }
 
-function playerCookie(playerId) {
-  return `${PLAYER_COOKIE}=${encodeURIComponent(playerId)}; Path=/; Max-Age=31536000; SameSite=Lax`;
+function playerCookieFlags(req, maxAgeSeconds) {
+  return [
+    "Path=/",
+    `Max-Age=${Math.max(0, Math.floor(Number(maxAgeSeconds)) || 0)}`,
+    "HttpOnly",
+    "SameSite=Lax",
+    isHttpsRequest(req) ? "Secure" : ""
+  ].filter(Boolean).join("; ");
 }
 
-function clearPlayerCookie() {
-  return `${PLAYER_COOKIE}=; Path=/; Max-Age=0; SameSite=Lax`;
+function playerCookie(playerId, req = null) {
+  return `${PLAYER_COOKIE}=${encodeURIComponent(encodePlayerSession(playerId))}; ${playerCookieFlags(req, PLAYER_SESSION_TTL_SECONDS)}`;
+}
+
+function clearPlayerCookie(req = null) {
+  return `${PLAYER_COOKIE}=; ${playerCookieFlags(req, 0)}`;
 }
 
 function isHttpsRequest(req) {
   return req.socket?.encrypted || String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https";
+}
+
+function securityHeaders(req = null) {
+  const headers = { ...SECURITY_HEADERS };
+  if (req && isHttpsRequest(req)) {
+    headers["Strict-Transport-Security"] = "max-age=15552000; includeSubDomains";
+  }
+  return headers;
 }
 
 function adminCookieFlags(req, maxAgeSeconds) {
@@ -869,6 +977,89 @@ function requestPublicBaseUrl(req) {
   return normalizePublicBaseUrl(`https://${host}`);
 }
 
+function normalizeOrigin(value) {
+  const raw = String(value || "").trim();
+  if (!raw || raw === "null") return "";
+  try {
+    const url = new URL(raw);
+    if (!["http:", "https:"].includes(url.protocol)) return "";
+    return url.origin;
+  } catch (error) {
+    return "";
+  }
+}
+
+function requestHostOrigin(req) {
+  const forwardedHost = String(req.headers["x-forwarded-host"] || "").split(",")[0].trim();
+  const host = forwardedHost || String(req.headers.host || "").split(",")[0].trim();
+  if (!host) return "";
+  return normalizeOrigin(`${isHttpsRequest(req) ? "https" : "http"}://${host}`);
+}
+
+function allowedRequestOrigins(req) {
+  const origins = new Set([
+    requestHostOrigin(req),
+    normalizeOrigin(configuredPublicBaseUrl()),
+    normalizeOrigin(requestPublicBaseUrl(req))
+  ].filter(Boolean));
+  return origins;
+}
+
+function hasAllowedRequestOrigin(req, { allowMissing = !IS_PRODUCTION, useRefererFallback = true } = {}) {
+  const origin = normalizeOrigin(req.headers.origin);
+  const referer = useRefererFallback ? normalizeOrigin(req.headers.referer) : "";
+  const suppliedOrigin = origin || referer;
+  if (!suppliedOrigin) return allowMissing;
+  return allowedRequestOrigins(req).has(suppliedOrigin);
+}
+
+function enforceMutationOrigin(req, url) {
+  if (SAFE_HTTP_METHODS.has(req.method) || ORIGIN_CHECK_EXEMPT_PATHS.has(url.pathname)) return;
+  if (hasAllowedRequestOrigin(req)) return;
+  const error = new Error("Origem da requisicao nao permitida.");
+  error.status = 403;
+  throw error;
+}
+
+function isSensitiveRateLimitPath(pathname) {
+  return SENSITIVE_RATE_LIMIT_PATHS.has(pathname)
+    || SENSITIVE_RATE_LIMIT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
+function clientIp(req) {
+  const forwardedFor = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  return forwardedFor || req.socket?.remoteAddress || "unknown";
+}
+
+function pruneRateLimitBuckets(now = Date.now()) {
+  if (rateLimitBuckets.size < RATE_LIMIT_BUCKET_LIMIT) return;
+  for (const [key, bucket] of rateLimitBuckets) {
+    if (bucket.resetAt <= now) rateLimitBuckets.delete(key);
+  }
+}
+
+function enforceRateLimit(req, url) {
+  if (req.method === "OPTIONS") return;
+  const now = Date.now();
+  const sensitive = !SAFE_HTTP_METHODS.has(req.method) && isSensitiveRateLimitPath(url.pathname);
+  const limit = sensitive ? RATE_LIMIT_SENSITIVE_MAX : RATE_LIMIT_MAX;
+  const group = sensitive ? url.pathname : "api";
+  const key = `${clientIp(req)}:${group}`;
+  let bucket = rateLimitBuckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    bucket = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+    rateLimitBuckets.set(key, bucket);
+    pruneRateLimitBuckets(now);
+  }
+  bucket.count += 1;
+  if (bucket.count <= limit) return;
+  const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
+  const error = new Error("Muitas tentativas. Tente novamente em instantes.");
+  error.status = 429;
+  error.headers = { "Retry-After": String(retryAfterSeconds) };
+  throw error;
+}
+
 function mercadoPagoCheckoutConfig(req = null) {
   const publicBaseUrl = configuredPublicBaseUrl() || requestPublicBaseUrl(req);
   const missing = [];
@@ -1250,7 +1441,7 @@ function timingSafeEqualHex(left, right) {
 }
 
 function verifyMercadoPagoWebhookSignature(req, url, paymentId) {
-  if (!MERCADO_PAGO_WEBHOOK_SECRET) return true;
+  if (!MERCADO_PAGO_WEBHOOK_SECRET) return !IS_PRODUCTION;
   const xSignature = String(req.headers["x-signature"] || "");
   const xRequestId = String(req.headers["x-request-id"] || "");
   const parts = Object.fromEntries(xSignature.split(",").map((part) => {
@@ -1480,6 +1671,7 @@ function redirectToPaymentReturn(res, status, params = {}, extraHeaders = {}) {
     if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, String(value));
   });
   res.writeHead(status, {
+    ...securityHeaders(),
     ...extraHeaders,
     Location: `${url.pathname}${url.search}`,
     "Cache-Control": "no-store"
@@ -1489,6 +1681,7 @@ function redirectToPaymentReturn(res, status, params = {}, extraHeaders = {}) {
 
 function redirectToExternalCheckout(res, checkoutUrl, headers = {}) {
   res.writeHead(303, {
+    ...securityHeaders(),
     ...headers,
     Location: String(checkoutUrl || ""),
     "Cache-Control": "no-store"
@@ -4718,8 +4911,9 @@ function handleWebSocketUpgrade(req, socket) {
   }
   const key = req.headers["sec-websocket-key"];
   const cookies = parseCookies(req.headers.cookie);
-  const playerId = cookies[PLAYER_COOKIE];
-  if (!key || !isValidPlayerId(playerId)) {
+  const session = decodePlayerSession(cookies[PLAYER_COOKIE]);
+  const playerId = session?.playerId || "";
+  if (!key || !isValidPlayerId(playerId) || !hasAllowedRequestOrigin(req, { useRefererFallback: false })) {
     socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
     socket.destroy();
     return;
@@ -6750,7 +6944,22 @@ async function resolveCompetitiveForPlayer(playerId, payload = {}) {
 
 async function handleApi(req, res, url) {
   const { playerId, isNew } = getPlayer(req);
-  const headers = isNew ? { "Set-Cookie": playerCookie(playerId) } : {};
+  let headers = securityHeaders(req);
+  if (isNew) headers = appendSetCookie(headers, playerCookie(playerId, req));
+
+  try {
+    enforceRateLimit(req, url);
+    enforceMutationOrigin(req, url);
+  } catch (error) {
+    json(res, error.status || 500, {
+      ok: false,
+      error: error.message || "Requisicao bloqueada."
+    }, {
+      ...headers,
+      ...(error.headers || {})
+    });
+    return;
+  }
 
   if (url.pathname === "/api/health") {
     json(res, 200, {
@@ -7347,7 +7556,7 @@ async function handleApi(req, res, url) {
         profile: publicProfile(result.profile),
         save: result.save,
         migratedGuestSave: Boolean(result.migratedGuestSave)
-      }, { "Set-Cookie": playerCookie(result.profile.playerId) });
+      }, appendSetCookie(headers, playerCookie(result.profile.playerId, req)));
     } catch (error) {
       json(res, error.status || 500, {
         ok: false,
@@ -7379,7 +7588,7 @@ async function handleApi(req, res, url) {
         profile: publicProfile(result.profile),
         save: result.save,
         migratedGuestSave: Boolean(result.migratedGuestSave)
-      }, { "Set-Cookie": playerCookie(result.profile.playerId) });
+      }, appendSetCookie(headers, playerCookie(result.profile.playerId, req)));
     } catch (error) {
       json(res, error.status || 500, {
         ok: false,
@@ -7399,7 +7608,7 @@ async function handleApi(req, res, url) {
     }
     const profile = await profileForPlayer(playerId);
     if (profile) recordAccountEvent(playerId, "account:logout", {});
-    json(res, 200, { ok: true }, { "Set-Cookie": clearPlayerCookie() });
+    json(res, 200, { ok: true }, appendSetCookie(headers, clearPlayerCookie(req)));
     return;
   }
 
@@ -8181,13 +8390,21 @@ async function handleApi(req, res, url) {
 }
 
 async function serveStatic(req, res, url) {
+  const headers = securityHeaders(req);
   if (!["GET", "HEAD"].includes(req.method)) {
-    res.writeHead(405, { Allow: "GET, HEAD" });
+    res.writeHead(405, { ...headers, Allow: "GET, HEAD" });
     res.end("Metodo nao permitido.");
     return;
   }
 
-  const decodedPath = decodeURIComponent(url.pathname);
+  let decodedPath = "";
+  try {
+    decodedPath = decodeURIComponent(url.pathname);
+  } catch (error) {
+    res.writeHead(400, headers);
+    res.end("Bad request");
+    return;
+  }
   const relativePath = decodedPath === "/"
     ? "index.html"
     : decodedPath === "/admin" || decodedPath === "/admin/"
@@ -8195,7 +8412,7 @@ async function serveStatic(req, res, url) {
     : decodedPath.replace(/^\/+/, "");
   const filePath = path.resolve(ROOT_DIR, relativePath);
   if (filePath !== ROOT_DIR && !filePath.startsWith(ROOT_PREFIX)) {
-    res.writeHead(403);
+    res.writeHead(403, headers);
     res.end("Forbidden");
     return;
   }
@@ -8203,13 +8420,14 @@ async function serveStatic(req, res, url) {
   try {
     const stat = await fs.stat(filePath);
     if (stat.isDirectory()) {
-      res.writeHead(302, { Location: "/" });
+      res.writeHead(302, { ...headers, Location: "/" });
       res.end();
       return;
     }
     const contentType = MIME_TYPES[path.extname(filePath).toLowerCase()] || "application/octet-stream";
     const cacheControl = contentType.startsWith("text/html") ? "no-store" : "public, max-age=3600";
     res.writeHead(200, {
+      ...headers,
       "Content-Type": contentType,
       "Content-Length": stat.size,
       "Cache-Control": cacheControl
@@ -8222,7 +8440,7 @@ async function serveStatic(req, res, url) {
     res.end(data);
   } catch (error) {
     if (error.code === "ENOENT") {
-      res.writeHead(404);
+      res.writeHead(404, headers);
       res.end("Not found");
       return;
     }
@@ -8241,10 +8459,10 @@ const server = http.createServer(async (req, res) => {
   } catch (error) {
     const status = error.status || 500;
     if (req.url?.startsWith("/api/")) {
-      json(res, status, { ok: false, error: error.message || "Erro interno." });
+      json(res, status, { ok: false, error: error.message || "Erro interno." }, securityHeaders(req));
       return;
     }
-    res.writeHead(status);
+    res.writeHead(status, securityHeaders(req));
     res.end(error.message || "Erro interno.");
   }
 });
