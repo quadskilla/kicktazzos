@@ -145,6 +145,25 @@ const MIME_TYPES = {
   ".pdf": "application/pdf"
 };
 
+const PUBLIC_STATIC_FILES = new Set([
+  "admin.css",
+  "admin.html",
+  "admin.js",
+  "app.js",
+  "battle-engine.js",
+  "battle-render.js",
+  "data.js",
+  "index.html",
+  "styles.css"
+]);
+const PUBLIC_STATIC_DIRS = Object.freeze({
+  "assets": new Set([".gif", ".jpg", ".jpeg", ".mp3", ".ogg", ".png", ".svg", ".wav", ".webp"]),
+  "musics": new Set([".mp3", ".ogg", ".wav"]),
+  "scripts": new Set([".js"]),
+  "tazzos": new Set([".png", ".webp"]),
+  "tazzos back": new Set([".png", ".webp"])
+});
+
 const BASE_CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "base-uri 'self'",
@@ -8654,6 +8673,18 @@ async function handleApi(req, res, url) {
   });
 }
 
+function isPublicStaticFile(filePath) {
+  const relativePath = path.relative(ROOT_DIR, filePath);
+  if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) return false;
+  const normalized = relativePath.split(path.sep).join("/");
+  const segments = normalized.split("/");
+  if (!segments.length || segments.some((segment) => !segment || segment.startsWith("."))) return false;
+  if (segments.length === 1) return PUBLIC_STATIC_FILES.has(segments[0]);
+  const extensions = PUBLIC_STATIC_DIRS[segments[0]];
+  if (!extensions) return false;
+  return extensions.has(path.extname(filePath).toLowerCase());
+}
+
 async function serveStatic(req, res, url) {
   const headers = securityHeaders(req);
   if (!["GET", "HEAD"].includes(req.method)) {
@@ -8679,6 +8710,11 @@ async function serveStatic(req, res, url) {
   if (filePath !== ROOT_DIR && !filePath.startsWith(ROOT_PREFIX)) {
     res.writeHead(403, headers);
     res.end("Forbidden");
+    return;
+  }
+  if (!isPublicStaticFile(filePath)) {
+    res.writeHead(404, headers);
+    res.end("Not found");
     return;
   }
 

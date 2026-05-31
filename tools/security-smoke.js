@@ -162,6 +162,25 @@ async function main() {
     const playerCookie = responseCookie(health.headers, "kick_tazzos_player");
     assert.match(playerCookie, /^kick_tazzos_player=v1\./);
 
+    const publicStyle = await request(port, { method: "HEAD", pathname: "/styles.css" });
+    assert.equal(publicStyle.status, 200);
+    assert.match(headerValue(publicStyle.headers, "content-type"), /text\/css/);
+    const publicScript = await request(port, { method: "HEAD", pathname: "/scripts/menu-shared.js" });
+    assert.equal(publicScript.status, 200);
+    assert.match(headerValue(publicScript.headers, "content-type"), /javascript/);
+    const publicTazzo = await request(port, { method: "HEAD", pathname: "/tazzos/1.webp" });
+    assert.equal(publicTazzo.status, 200);
+    assert.match(headerValue(publicTazzo.headers, "content-type"), /image\/webp/);
+
+    const blockedPackage = await request(port, { pathname: "/package.json" });
+    assert.equal(blockedPackage.status, 404);
+    const blockedServerSource = await request(port, { pathname: "/server.js" });
+    assert.equal(blockedServerSource.status, 404);
+    const blockedEnv = await request(port, { pathname: "/.env.crypto.local" });
+    assert.equal(blockedEnv.status, 404);
+    const blockedDatabase = await request(port, { pathname: "/server-data/kick-tazzos.db" });
+    assert.equal(blockedDatabase.status, 404);
+
     const evilPost = await request(port, {
       method: "POST",
       pathname: "/api/telemetry",
